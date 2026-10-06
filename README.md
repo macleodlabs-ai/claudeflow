@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.1" src="https://img.shields.io/badge/version-0.3.1-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.2" src="https://img.shields.io/badge/version-0.3.2-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 51 passing" src="https://img.shields.io/badge/tests-51%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 55 passing" src="https://img.shields.io/badge/tests-55%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -181,6 +181,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
+| Read a stream in full | In a stream's view, `▤ full` draws its chat as the session does: markdown, syntax-highlighted code and diffs. `≡ compact` goes back to one line per row |
 
 ### Keyboard
 
@@ -203,7 +204,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "diagnostics": false }
+      "options": { "chatStyle": "compact", "diagnostics": false }
     }
   }
 }
@@ -211,6 +212,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Setting | Default | Description |
 | --- | :---: | --- |
+| `chatStyle` | `compact` | How a stream's own view draws its chat: `compact`, one line per row, or `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs. The `▤ full` / `≡ compact` button switches it for the session. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 
 ### Model use

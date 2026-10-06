@@ -1,6 +1,6 @@
 {
   "name": "streams",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {
@@ -16,6 +16,16 @@
       "title": "Diagnostics",
       "description": "Write debug.json into the plugin folder every few seconds (for troubleshooting).",
       "default": false
+    },
+    "chatStyle": {
+      "type": "string",
+      "title": "Stream chat style",
+      "description": "How a stream's own view draws its chat: compact (one line per row) or full (as the session draws it, with markdown, highlighted code and diffs). The \u2261/\u25a4 button in the pane switches it for the session.",
+      "options": [
+        "compact",
+        "full"
+      ],
+      "default": "compact"
     }
   }
 }
