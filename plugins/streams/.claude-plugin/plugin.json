@@ -1,6 +1,6 @@
 {
   "name": "streams",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {

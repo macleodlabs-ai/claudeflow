@@ -14,6 +14,24 @@ export const parseTag = (text: string): { name: string; rest: string } | undefin
   return m?.[1] && m[2] !== undefined ? { name: m[1], rest: m[2] } : undefined
 }
 
+/** The `#tag` being typed at the start of a draft, up to the cursor: `#bil` gives `bil`; anything else none. */
+export const partialTag = (text: string, cursor: number): string | undefined => /^\s*#([\w-]*)$/.exec(text.slice(0, cursor))?.[1]
+
+/** Streams a partial tag could complete to, live ones first, most recently active first; at most `limit`. */
+export const tagMatches = (streams: readonly { id: string; lastAt: number; archived?: boolean }[], partial: string, limit = 6): string[] =>
+  streams
+    .filter(s => s.id.startsWith(partial.toLowerCase()))
+    .sort((a, b) => Number(!!a.archived) - Number(!!b.archived) || b.lastAt - a.lastAt)
+    .slice(0, limit)
+    .map(s => s.id)
+
+/** The draft with the partial tag before the cursor replaced by `#id `, and the cursor after it. */
+export const completeTag = (text: string, cursor: number, id: string): { text: string; cursor: number } => {
+  const head = text.slice(0, cursor).replace(/#[\w-]*$/, `#${id} `)
+  const tail = text.slice(cursor).replace(/^\s+/, '')
+  return { text: head + tail, cursor: head.length }
+}
+
 /**
  * The key a transcript row is filed under. The transcript draws a row under its uuid with the last group
  * zeroed (stored 61ec327a-403c-4478-84b7-4b8d64663b0d, drawn 61ec327a-403c-4478-84b7-000000000000), so a

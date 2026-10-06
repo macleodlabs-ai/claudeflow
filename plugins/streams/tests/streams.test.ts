@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -87,9 +87,9 @@ describe('a prompt sent while a turn runs', () => {
     { type: 'user', uuid: 'u1', message: { role: 'user', content: 'build the streams mod' } },
     { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] } },
     { type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
-    { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'what is french for pain medication?' } },
+    { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'how do I convert UTC to local time?' } },
     { type: 'attachment', uuid: 'n1', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: 'The person enabled mod hot-reloading' } },
-    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Un antidouleur.' }] } },
+    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Use Intl.DateTimeFormat with the local zone.' }] } },
     { type: 'assistant', uuid: 's1', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'subagent chatter' }] } },
   ]
   const items = readTranscript(lines.map(l => JSON.stringify(l)).join('\n'))
@@ -97,7 +97,7 @@ describe('a prompt sent while a turn runs', () => {
   test('is read from the transcript as a prompt of its own, marked as sent mid-turn', () => {
     expect(items.filter(i => i.kind === 'prompt')).toEqual([
       { kind: 'prompt', uuid: 'u1', text: 'build the streams mod', isFolded: false },
-      { kind: 'prompt', uuid: 'q1', text: 'what is french for pain medication?', isFolded: true },
+      { kind: 'prompt', uuid: 'q1', text: 'how do I convert UTC to local time?', isFolded: true },
     ])
   })
   // Seen live: a mid-turn prompt with a screenshot is stored as blocks, and reading it as a string crashed the import.
@@ -110,8 +110,8 @@ describe('a prompt sent while a turn runs', () => {
   })
   test('the reply that answers it goes to its stream, not the running turn', () => {
     const turn = { streamId: 'streams-mod', text: 'build the streams mod' }
-    const folded = [{ streamId: 'french-translation', text: 'what is french for pain medication?' }]
-    expect(pickReplyStream('french-translation', turn, folded)).toBe('french-translation')
+    const folded = [{ streamId: 'timezones', text: 'how do I convert UTC to local time?' }]
+    expect(pickReplyStream('timezones', turn, folded)).toBe('timezones')
     expect(pickReplyStream('no idea', turn, folded)).toBe('streams-mod')
   })
 })
@@ -158,7 +158,7 @@ describe('the running turn', () => {
     const status = watchStatus(on)
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
     await $.prompt.submit({ text: '#streams-mod build the mod', wait: false, origin: { kind: 'composer' } })
-    await $.prompt.submit({ text: '#french how do you say painkiller?', wait: false, origin: { kind: 'composer' }, turnId: 'turn-1' })
+    await $.prompt.submit({ text: '#timezones how do I convert UTC to local time?', wait: false, origin: { kind: 'composer' }, turnId: 'turn-1' })
     expect(status.at(-1)).toBe('stream streams-mod')
   })
 })
@@ -254,7 +254,7 @@ describe('stream colours', () => {
     on('fs.stat', async () => ({ value: { kind: 'file', size: TRANSCRIPT.length, mtimeMs: 0, isLink: false } }) as never)
     on('fs.read', async () => ({ value: TRANSCRIPT }) as never)
     // The one model call: which thread each reply piece after the mid-turn question answers.
-    on('model.complete', async () => ({ value: { isAnswered: true, text: '["french", "billing"]', usage: USAGE } }) as never)
+    on('model.complete', async () => ({ value: { isAnswered: true, text: '["timezones", "billing"]', usage: USAGE } }) as never)
     on('classic.UserPromptSubmit', async () => ({}) as never)
     on('ui.toast', async () => ({ value: undefined }))
     watchStatus(on)
@@ -268,7 +268,7 @@ describe('stream colours', () => {
     expect((line?.props as { color?: string } | undefined)?.color).toBe(PASTELS[0])
     expect(await row.find({ type: 'Text', text: /engine row/ })).toBeDefined()
 
-    // The mid-turn question, and the reply that answers it, wear the French stream's line; the rest stay with billing.
+    // The mid-turn question, and the reply that answers it, wear the timezones stream's line; the rest stay with billing.
     const lineOf = async (component: 'UserMessage' | 'AssistantMessage', requestId: string) => {
       const drawn = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component, requestId, props: { text: 'x', origin: { kind: 'composer' }, isExpanded: false, isFirstOfReply: true } as never })
       return ((await drawn.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color
@@ -288,8 +288,8 @@ describe('stream colours', () => {
 const TRANSCRIPT = [
   { type: 'user', uuid: 'u1', message: { role: 'user', content: '#billing why is the invoice total off?' } },
   { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'grep total' } }] } },
-  { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '#french what is french for painkiller?' } },
-  { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Un antidouleur.' }] } },
+  { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '#timezones how do I convert UTC to local time?' } },
+  { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Use Intl.DateTimeFormat with the local zone.' }] } },
   { type: 'assistant', uuid: 'a3', message: { role: 'assistant', content: [{ type: 'text', text: 'Back to the invoice: it was rounding.' }] } },
 ]
   .map(l => JSON.stringify(l))
@@ -369,7 +369,7 @@ describe('rows filed under an older key scheme', () => {
     on('classic.UserPromptSubmit', async () => ({}) as never)
     on('ui.toast', async () => ({ value: undefined }))
     on('ui.status', async () => ({ value: undefined }))
-    on('model.complete', async () => ({ value: { isAnswered: true, text: '["french", "billing"]', usage: USAGE } }) as never)
+    on('model.complete', async () => ({ value: { isAnswered: true, text: '["timezones", "billing"]', usage: USAGE } }) as never)
     await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
     await clock.advance(1500)
     expect(reads).toBe(1)
@@ -402,6 +402,92 @@ describe('active loops', () => {
   })
 })
 
+describe('#tag autocomplete', () => {
+  // Filing a prompt by hand only works if the person can recall the exact stream id; completion makes it cheap.
+  const known = [
+    { id: 'billing-rounding', lastAt: 5 },
+    { id: 'billing-tax', lastAt: 9 },
+    { id: 'auth-jwt', lastAt: 7 },
+    { id: 'billing-old', lastAt: 99, archived: true },
+  ]
+
+  test('a tag is only completed while it is the first thing in the box and the cursor is on it', () => {
+    expect(partialTag('#bil', 4)).toBe('bil')
+    expect(partialTag('#', 1)).toBe('')
+    expect(partialTag('#bil why', 8)).toBe(undefined)
+    expect(partialTag('fix #bil', 8)).toBe(undefined)
+  })
+
+  test('live streams come before archived ones, most recent first', () => {
+    expect(tagMatches(known, 'bil')).toEqual(['billing-tax', 'billing-rounding', 'billing-old'])
+    expect(tagMatches(known, 'zzz')).toEqual([])
+  })
+
+  test('completing replaces just the partial tag and leaves the cursor ready to type the prompt', () => {
+    expect(completeTag('#bil', 4, 'billing-tax')).toEqual({ text: '#billing-tax ', cursor: 13 })
+    expect(completeTag('#bil  why is it off', 4, 'billing-tax')).toEqual({ text: '#billing-tax why is it off', cursor: 13 })
+  })
+
+  test('Tab in the prompt box completes a partial tag to the best matching stream', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('prompt.edit', async (_$, e) => {
+      const text = e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end)
+      return { text, cursor: e.start + e.inputText.length }
+    })
+    await $.prompt.submit({ text: '#billing-rounding why is the total off?', wait: false, origin: { kind: 'composer' } })
+    // The kit raises prompt.edit like any event, though its types leave it off the prompt noun.
+    const edit = ($.prompt as unknown as { edit: (e: unknown) => Promise<{ text: string; cursor: number; decorations?: unknown[] }> }).edit
+    const box = await edit({ origin: { kind: 'composer' }, key: { key: 'tab' }, text: '#bill', cursor: 5, start: 5, end: 5, inputText: '' } as never)
+    expect(box).toMatchObject({ text: '#billing-rounding ', cursor: 18 })
+    const typed = await edit({ origin: { kind: 'composer' }, key: { key: 'g' }, text: '#billing-roundin', cursor: 16, start: 16, end: 16, inputText: 'g' } as never)
+    expect(typed.decorations?.length).toBe(1)
+  })
+})
+
+describe('finished loops', () => {
+  // A /loop ends by not scheduling another tick, or by a stop filed while another stream is current.
+  // Either way it must stop shining yellow, or every past loop looks like it is still running.
+  const mountPane = ($: never) => ($ as { ui: { mount: (o: unknown) => Promise<{ find: (q: unknown) => Promise<unknown>; redraw: (p: unknown) => Promise<void> }> } }).ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: { title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' } })
+  const props = { title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' }
+
+  test('a wakeup that lapses without re-arming no longer shows as a running loop', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('tool.call', async () => ({ result: 'ok', text: 'ok' }) as never)
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.prompt.submit({ text: '#ux-loop polish the agent rows', wait: false, origin: { kind: 'composer' } })
+    await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w1', delaySeconds: 60, reason: 'next pass', prompt: '/loop x' } as never)
+    const pane = await mountPane($ as never)
+    expect(await pane.find({ type: 'Text', text: /↻ LOOP/ })).toBeDefined()
+    await clock.advance(15 * 60_000)
+    await pane.redraw(props)
+    expect(await pane.find({ type: 'Text', text: /↻ LOOP/ })).toBe(undefined)
+  })
+
+  test('stopping the loop clears it even when another stream is current', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('tool.call', async () => ({ result: 'ok', text: 'ok' }) as never)
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.prompt.submit({ text: '#ux-loop polish the agent rows', wait: false, origin: { kind: 'composer' } })
+    await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w1', delaySeconds: 60, reason: 'next pass', prompt: '/loop x' } as never)
+    await $.prompt.submit({ text: '#docs tidy the install guide', wait: false, origin: { kind: 'composer' } })
+    await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w2', stop: true } as never)
+    const pane = await mountPane($ as never)
+    expect(await pane.find({ type: 'Text', text: /↻ LOOP/ })).toBe(undefined)
+  })
+})
+
 describe('a long session', () => {
   // Seen live: a 4.76 MiB transcript made every import fail, since a read refuses past 4 MiB.
   test('a transcript over the read limit is streamed whole, not refused', ENGINE, async ($, on) => {
@@ -421,7 +507,7 @@ describe('a long session', () => {
       yield { stream: 'stdout', text: TRANSCRIPT.slice(half) }
       return { value: { code: 0, signal: null } }
     } as never)
-    on('model.complete', async () => ({ value: { isAnswered: true, text: '["french", "billing"]', usage: USAGE } }) as never)
+    on('model.complete', async () => ({ value: { isAnswered: true, text: '["timezones", "billing"]', usage: USAGE } }) as never)
     on('classic.UserPromptSubmit', async () => ({}) as never)
     on('ui.toast', async () => ({ value: undefined }))
     on('ui.status', async () => ({ value: undefined }))
@@ -435,7 +521,7 @@ describe('a long session', () => {
     await clock.advance(1500)
     expect(logs).toEqual([])
     expect(streamed).toBe(true)
-    const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AssistantMessage', requestId: 'a2', props: { text: 'Un antidouleur.', isFirstOfReply: true } as never })
+    const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AssistantMessage', requestId: 'a2', props: { text: 'Use Intl.DateTimeFormat with the local zone.', isFirstOfReply: true } as never })
     expect(((await row.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color).toBe(PASTELS[1])
   })
 })
@@ -443,7 +529,7 @@ describe('a long session', () => {
 describe('painting rows', () => {
   // Seen live: a `!` command's output kept its colour codes, and the stream holding it painted an empty pane.
   test('terminal colour codes and control characters never reach a pane line', () => {
-    expect(oneLine('\x1b[32m✔\x1b[0m Added tokensave\u0007 MCP server', 80)).toBe('✔ Added tokensave MCP server')
+    expect(oneLine('\x1b[32m✔\x1b[0m Added example\u0007 MCP server', 80)).toBe('✔ Added example MCP server')
   })
 })
 
