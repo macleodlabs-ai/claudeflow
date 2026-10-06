@@ -395,54 +395,59 @@ async function importHistory($: $, path: string) {
     let at = startedAt
     let n = 0
     for (const turn of turns) {
-      const rows: StreamRow[] = []
-      const fileRow = async (item: HistoryItem, sid: string, kind: StreamRowKind, text: string) => {
-        await fileAs($, item.kind === 'tool' ? item.id : item.uuid, sid)
-        if (item.kind === 'reply') await fileAs($, textKey(item.text), sid)
-        rows.push({ id: `h:${item.uuid}:${at}`, streamId: sid, kind, text, at: at++ })
-      }
-      const promptOf = async (text: string) => {
-        const tag = parseTag(text)
-        const rest = tag ? tag.rest : text
-        return { rest, sid: tag ? await ensureStream($, tag.name, oneLine(rest, 120)) : await classify($, rest) }
-      }
-      const head = await promptOf(turn.prompt.text)
-      const turnSid = head.sid
-      await update($, currentA, () => turnSid)
-      await fileRow(turn.prompt, turnSid, 'prompt', head.rest)
-      n += 1
-      const folded: Folded[] = []
-      const replies: HistoryItem[] = []
-      for (const item of turn.items) if (item.kind === 'prompt') folded.push({ streamId: (await promptOf(item.text)).sid, text: item.text })
-      // Replies before the first prompt sent into the turn are the turn's own; the rest are asked about at once.
-      const firstFolded = turn.items.findIndex(i => i.kind === 'prompt')
-      let picks: string[] = []
-      if (firstFolded >= 0) {
-        for (const item of turn.items.slice(firstFolded)) if (item.kind === 'reply') replies.push(item)
-        if (replies.length > 0) {
-          const self = { streamId: turnSid, text: head.rest }
-          const texts = replies.map(i => (i.kind === 'reply' ? i.text : ''))
-          const r = await $.model.complete({ model: 'haiku', system: REPLIES_SYSTEM, prompt: buildRepliesPrompt(self, folded, texts), maxTokens: 400 })
-          picks = r.isAnswered ? pickReplyStreams(r.text, self, folded, replies.length) : replies.map(() => turnSid)
+      // One turn that cannot be filed is skipped, not the whole history: it was cleared above.
+      try {
+        const rows: StreamRow[] = []
+        const fileRow = async (item: HistoryItem, sid: string, kind: StreamRowKind, text: string) => {
+          await fileAs($, item.kind === 'tool' ? item.id : item.uuid, sid)
+          if (item.kind === 'reply') await fileAs($, textKey(item.text), sid)
+          rows.push({ id: `h:${item.uuid}:${at}`, streamId: sid, kind, text, at: at++ })
         }
-      }
-      let k = 0
-      for (const item of turn.items) {
-        if (item.kind === 'prompt') {
-          const sid = folded[k++]?.streamId ?? turnSid
-          await fileRow(item, sid, 'prompt', item.text)
-          n += 1
-        } else if (item.kind === 'reply') {
-          const j = replies.indexOf(item)
-          await fileRow(item, j >= 0 ? (picks[j] ?? turnSid) : turnSid, 'reply', item.text)
-        } else {
-          const input = (item.input ?? {}) as { description?: string }
-          await (item.name === 'Agent'
-            ? fileRow(item, turnSid, 'agent', input.description ?? 'subagent')
-            : fileRow(item, turnSid, 'tool', `${item.name} ${oneLine(JSON.stringify(item.input ?? {}), 100)}`))
+        const promptOf = async (text: string) => {
+          const tag = parseTag(text)
+          const rest = tag ? tag.rest : text
+          return { rest, sid: tag ? await ensureStream($, tag.name, oneLine(rest, 120)) : await classify($, rest) }
         }
+        const head = await promptOf(turn.prompt.text)
+        const turnSid = head.sid
+        await update($, currentA, () => turnSid)
+        await fileRow(turn.prompt, turnSid, 'prompt', head.rest)
+        n += 1
+        const folded: Folded[] = []
+        const replies: HistoryItem[] = []
+        for (const item of turn.items) if (item.kind === 'prompt') folded.push({ streamId: (await promptOf(item.text)).sid, text: item.text })
+        // Replies before the first prompt sent into the turn are the turn's own; the rest are asked about at once.
+        const firstFolded = turn.items.findIndex(i => i.kind === 'prompt')
+        let picks: string[] = []
+        if (firstFolded >= 0) {
+          for (const item of turn.items.slice(firstFolded)) if (item.kind === 'reply') replies.push(item)
+          if (replies.length > 0) {
+            const self = { streamId: turnSid, text: head.rest }
+            const texts = replies.map(i => (i.kind === 'reply' ? i.text : ''))
+            const r = await $.model.complete({ model: 'haiku', system: REPLIES_SYSTEM, prompt: buildRepliesPrompt(self, folded, texts), maxTokens: 400 })
+            picks = r.isAnswered ? pickReplyStreams(r.text, self, folded, replies.length) : replies.map(() => turnSid)
+          }
+        }
+        let k = 0
+        for (const item of turn.items) {
+          if (item.kind === 'prompt') {
+            const sid = folded[k++]?.streamId ?? turnSid
+            await fileRow(item, sid, 'prompt', item.text)
+            n += 1
+          } else if (item.kind === 'reply') {
+            const j = replies.indexOf(item)
+            await fileRow(item, j >= 0 ? (picks[j] ?? turnSid) : turnSid, 'reply', item.text)
+          } else {
+            const input = (item.input ?? {}) as { description?: string }
+            await (item.name === 'Agent'
+              ? fileRow(item, turnSid, 'agent', input.description ?? 'subagent')
+              : fileRow(item, turnSid, 'tool', `${item.name} ${oneLine(JSON.stringify(item.input ?? {}), 100)}`))
+          }
+        }
+        await update($, rowsA, list => [...list, ...rows].sort((a, b) => a.at - b.at).slice(-MAX_ROWS))
+      } catch (err) {
+        lastError = `skipped a turn: ${String(err)}`.slice(0, 600)
       }
-      await update($, rowsA, list => [...list, ...rows].sort((a, b) => a.at - b.at).slice(-MAX_ROWS))
     }
     const counts: Record<string, number> = {}
     for (const row of await read($, rowsA)) counts[row.streamId] = (counts[row.streamId] ?? 0) + 1
