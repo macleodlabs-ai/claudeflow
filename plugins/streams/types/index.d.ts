@@ -72,6 +72,8 @@ declare module 'claude-code' {
       historyFiled: boolean
       /** The row-key scheme this session's rows were filed under; an older one means file them again. */
       keyVersion: number
+      /** A history import under way: what it is doing and how far it has got; total 0 when none runs. */
+      importProgress: { label: string; done: number; total: number }
       /** This session's transcript file, as the prompt hook names it. */
       transcript: string
       /** Prompts sent into the running turn, still waiting for the reply that answers them. */

@@ -4,7 +4,7 @@
 
 [![License: Proprietary](https://img.shields.io/badge/License-Proprietary-7c5cff.svg?style=flat-square)](LICENSE)
 ![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-a78bfa.svg?style=flat-square)
-![Version](https://img.shields.io/badge/version-0.2.0-22d3ee.svg?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.3.0-22d3ee.svg?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-34d399.svg?style=flat-square)
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-2.1.287%2B-febc2e.svg?style=flat-square)
 
@@ -74,8 +74,9 @@ claude plugin uninstall streams@claudeflow
 | Fold a stream | Its `▾ all` button cycles all → last 10 → last 1 → header only |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
 | Drive the bar from the keyboard | ctrl+x then tab, then `0` all, `1`–`9` streams, `s` the pane |
+| Organise a past session | `/streams import` lists this project's sessions; `/streams import <id>` files one into streams |
 
-Streams persist per project directory. When the mod first loads in a session, it files that session's history into streams in the background.
+Streams persist per project directory. When the mod first loads in a session, it files that session's history into streams in the background, and `/streams import` does the same for any earlier session of the project. Long histories are sorted in parallel: prompts go to Haiku in batches with several requests in flight, one pass merges the stream names the batches proposed, and a progress line at the top of the pane shows how far it has got.
 
 ---
 
@@ -97,7 +98,7 @@ Settings appear in Claude Code's config menu (`/config`) under **streams**, or i
 | --- | --- | --- |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin's folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn it on only when troubleshooting. |
 
-**Model use.** Each new prompt is sorted into a stream with one small Haiku request. Follow-ups ("yes", "continue"), slash commands and `#tag`ged prompts need none. Filing a session's history makes one request per prompt, plus one per turn that had a prompt sent mid-turn.
+**Model use.** Each new prompt is sorted into a stream with one small Haiku request. Follow-ups ("yes", "continue"), slash commands and `#tag`ged prompts need none. Filing a session's history makes one request per 25 prompts, one to merge stream names, and one per turn that had a prompt sent mid-turn.
 
 ---
 
