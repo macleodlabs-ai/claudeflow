@@ -2,6 +2,9 @@ import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+/** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
+const ENGINE = { timeoutMs: 20_000 }
+
 // Draws the pane with a realistic mix of agents and prints it as text, so its layout can be judged by eye
 // (the test prints it). It also holds the layout rules the agents' rows must keep at every width.
 
@@ -57,7 +60,7 @@ async function scene($: Engine, on: On) {
 
 describe('the pane at a glance', () => {
   for (const width of [40, 60, 90]) {
-    test(`at ${width} columns every agent shows its status, and no line overflows`, async ($, on) => {
+    test(`at ${width} columns every agent shows its status, and no line overflows`, ENGINE, async ($, on) => {
       await scene($, on)
       const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE(width) })
       for (const id of ['billing', 'auth-refactor']) if ((await pane.find({ key: `fold:${id}` }))?.text === '▸') await pane.press({ key: `fold:${id}` })

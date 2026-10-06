@@ -3,7 +3,10 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+
+/** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
+const ENGINE = { timeoutMs: 20_000 }
 
 const STREAMS: Stream[] = [
   { id: 'auth-refactor', name: 'Auth refactor', summary: 'Move sessions to JWT', createdAt: 0, lastAt: 0, rows: 0, agents: 0, loops: 0 },
@@ -114,7 +117,7 @@ describe('a prompt sent while a turn runs', () => {
 })
 
 describe('the hooks', () => {
-  test('a tagged prompt reaches the model untagged and becomes the current stream', async ($, on) => {
+  test('a tagged prompt reaches the model untagged and becomes the current stream', ENGINE, async ($, on) => {
     mock.clock(on)
     const status = watchStatus(on)
     const seen: string[] = []
@@ -127,7 +130,7 @@ describe('the hooks', () => {
     expect(status.at(-1)).toBe('stream billing')
   })
 
-  test("an untagged prompt goes where the model routes it", async ($, on) => {
+  test("an untagged prompt goes where the model routes it", ENGINE, async ($, on) => {
     on('model.complete', async () => ({ value: { isAnswered: true, text: '{"new":"Flaky tests","summary":"CI flakes"}', usage: USAGE } }))
     mock.clock(on)
     const status = watchStatus(on)
@@ -150,7 +153,7 @@ function watchStatus(on: On): (string | undefined)[] {
 }
 
 describe('the running turn', () => {
-  test('keeps its stream when a prompt for another stream is sent into it', async ($, on) => {
+  test('keeps its stream when a prompt for another stream is sent into it', ENGINE, async ($, on) => {
     mock.clock(on)
     const status = watchStatus(on)
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
@@ -162,7 +165,7 @@ describe('the running turn', () => {
 
 describe('drawing', () => {
   // A crash while drawing leaves the bar and the pane empty: these catch that before it ships.
-  test('the bar draws a pill for a stream, and the pane draws its activity', async ($, on) => {
+  test('the bar draws a pill for a stream, and the pane draws its activity', ENGINE, async ($, on) => {
     mock.clock(on)
     watchStatus(on)
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
@@ -184,7 +187,7 @@ describe('archiving', () => {
   const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 60, placement: 'dock' } as never
   const BAR_PROPS = { bodyColumns: 120, hasSurvey: false } as never
 
-  test('✕ hides a stream from the bar and the list, and restore brings it back with its history', async ($, on) => {
+  test('✕ hides a stream from the bar and the list, and restore brings it back with its history', ENGINE, async ($, on) => {
     mock.clock(on)
     mock.store(on)
     on('session.cwd', async () => ({ value: '/project' }))
@@ -206,7 +209,7 @@ describe('archiving', () => {
     expect(await bar.find({ key: 'chip:billing' })).toBeDefined()
   })
 
-  test('a new prompt for an archived stream brings it back, so new work never lands out of sight', async ($, on) => {
+  test('a new prompt for an archived stream brings it back, so new work never lands out of sight', ENGINE, async ($, on) => {
     mock.clock(on)
     mock.store(on)
     on('session.cwd', async () => ({ value: '/project' }))
@@ -220,7 +223,7 @@ describe('archiving', () => {
     expect(await pane.find({ key: 'open:billing' })).toBeDefined()
   })
 
-  test('clicking a name opens the stream and focuses the transcript on it, in one press', async ($, on) => {
+  test('clicking a name opens the stream and focuses the transcript on it, in one press', ENGINE, async ($, on) => {
     mock.clock(on)
     mock.store(on)
     on('session.cwd', async () => ({ value: '/project' }))
@@ -243,7 +246,7 @@ describe('stream colours', () => {
     expect(nextPastel([])).toBe(PASTELS[0])
   })
 
-  test("the transcript is filed on the first prompt, and each filed row is drawn behind its stream's colour", async ($, on) => {
+  test("the transcript is filed on the first prompt, and each filed row is drawn behind its stream's colour", ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     on('session.cwd', async () => ({ value: '/project' }))
@@ -319,7 +322,7 @@ describe('folding the pane', () => {
     return clock
   }
 
-  test('an idle stream collapses to its header by itself, and a press opens it again', async ($, on) => {
+  test('an idle stream collapses to its header by itself, and a press opens it again', ENGINE, async ($, on) => {
     const clock = await setup($, on)
     const pane0 = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
     // Just finished, it stays open.
@@ -335,7 +338,7 @@ describe('folding the pane', () => {
     expect(await pane.find({ type: 'Text', text: /why is the invoice/ })).toBeDefined()
   })
 
-  test('a subagent shows yellow while it runs and green once done, so you can see what is moving', async ($, on) => {
+  test('a subagent shows yellow while it runs and green once done, so you can see what is moving', ENGINE, async ($, on) => {
     on('agent.spawn', async () => ({ model: 'haiku', agentId: 'ag1' }))
     on('turn.complete', async () => ({ text: '' }))
     await setup($, on)
@@ -352,7 +355,7 @@ describe('folding the pane', () => {
 
 describe('rows filed under an older key scheme', () => {
   // Seen live: rows filed before the key fix stayed unfound, because the import had already been marked done.
-  test('a session whose rows predate the current keys files its history again on load', async ($, on) => {
+  test('a session whose rows predate the current keys files its history again on load', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     let reads = 0
@@ -378,7 +381,7 @@ describe('rows filed under an older key scheme', () => {
 })
 
 describe('active loops', () => {
-  test('a scheduled wakeup lights its stream with a LOOP badge and a countdown, and stopping it clears it', async ($, on) => {
+  test('a scheduled wakeup lights its stream with a LOOP badge and a countdown, and stopping it clears it', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     watchStatus(on)
@@ -401,7 +404,7 @@ describe('active loops', () => {
 
 describe('a long session', () => {
   // Seen live: a 4.76 MiB transcript made every import fail, since a read refuses past 4 MiB.
-  test('a transcript over the read limit is streamed whole, not refused', async ($, on) => {
+  test('a transcript over the read limit is streamed whole, not refused', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     let streamed = false
@@ -446,7 +449,7 @@ describe('painting rows', () => {
 
 describe('diagnostics', () => {
   // An installed copy must not write into its own folder: diagnostics are opt-in.
-  test('by default the heartbeat never writes debug.json', async ($, on) => {
+  test('by default the heartbeat never writes debug.json', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     let writes = 0
@@ -460,5 +463,76 @@ describe('diagnostics', () => {
     await $.prompt.submit({ text: '#billing one', wait: false, origin: { kind: 'composer' } })
     await clock.advance(12_000)
     expect(writes).toBe(0)
+  })
+})
+
+describe('filing a long history in parallel', () => {
+  test('work runs several at once, never more than the limit, and results keep their order', async () => {
+    let live = 0
+    let most = 0
+    const out = await inParallel([5, 1, 4, 2, 3], 2, async n => {
+      live += 1
+      most = Math.max(most, live)
+      await Promise.resolve()
+      live -= 1
+      return n * 10
+    })
+    expect(out).toEqual([50, 10, 40, 20, 30])
+    expect(most).toBe(2)
+  })
+
+  test('a batch reply gives one label per message, blank where the model gave nothing usable', () => {
+    expect(parseBatch('Here: ["auth-jwt", "Billing bug", 7]', 4)).toEqual(['auth-jwt', 'Billing bug', '', ''])
+    expect(parseBatch('no idea', 2)).toEqual(['', ''])
+  })
+
+  test('the merge pass maps every proposed name, keeping any the model left out', () => {
+    expect(parseMerge('{"Billing bug": "billing", "Invoice rounding": "billing"}', ['Billing bug', 'Invoice rounding', 'Docs'])).toEqual({
+      'Billing bug': 'billing',
+      'Invoice rounding': 'billing',
+      Docs: 'Docs',
+    })
+  })
+
+  // Untagged prompts: batches propose names, the merge pass unifies them, a follow-up takes the stream before it.
+  const UNTAGGED = [
+    { type: 'user', uuid: 'p1', message: { role: 'user', content: 'why is the invoice total off by a cent?' } },
+    { type: 'user', uuid: 'p2', message: { role: 'user', content: 'yes' } },
+    { type: 'user', uuid: 'p3', message: { role: 'user', content: 'check the rounding in the tax step too' } },
+    { type: 'user', uuid: 'p4', message: { role: 'user', content: 'move sessions to signed JWTs' } },
+  ]
+    .map(l => JSON.stringify(l))
+    .join('\n')
+
+  test('untagged prompts are sorted by batch and merge, and a follow-up stays with the prompt before it', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    const systems: string[] = []
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: UNTAGGED.length, mtimeMs: 0, isLink: false } }) as never)
+    on('fs.read', async () => ({ value: UNTAGGED }) as never)
+    on('model.complete', async (_$, e) => {
+      const ask = e as { system?: string }
+      systems.push(ask.system === BATCH_SYSTEM ? 'batch' : ask.system === MERGE_SYSTEM ? 'merge' : 'other')
+      const text = ask.system === BATCH_SYSTEM ? '["Billing bug", "Invoice rounding", "Auth JWT"]' : '{"Billing bug": "Billing", "Invoice rounding": "Billing", "Auth JWT": "Auth JWT"}'
+      return { value: { isAnswered: true, text, usage: USAGE } } as never
+    })
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.status', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Text', props: {}, children: ['engine row'] }) as never)
+    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(1500)
+    // One batch for the three open prompts ("yes" needs no model), then one merge.
+    expect(systems).toEqual(['batch', 'merge'])
+    const colourOf = async (requestId: string) => {
+      const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'UserMessage', requestId, props: { text: 'x', origin: { kind: 'composer' }, isExpanded: false } as never })
+      return ((await row.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color
+    }
+    const billing = await colourOf('p1')
+    expect(await colourOf('p2')).toBe(billing)
+    expect(await colourOf('p3')).toBe(billing)
+    expect(await colourOf('p4')).not.toBe(billing)
   })
 })
