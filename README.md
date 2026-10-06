@@ -54,10 +54,43 @@ claude plugin test .            # the mod's tests, run against the engine
 
 In a session where the mod is hot-reloaded, a dim `streams: reload failed` line in the transcript means the new version was refused and the old one is still running. One rule neither `validate` nor the tests catch: every function that takes `$` must have a name used nowhere else in the module (no local variable may share it).
 
-## Listing on a mod directory
+## Listing in Anthropic's plugin directory
 
-_Filled in below once confirmed against the current Claude Code docs._
+There is no separate directory for mods: a mod is a plugin, and it is listed the same way. Anthropic's directory is browsable at [claude.ai/directory](https://claude.ai/directory) (also [claude.com/marketplace/plugins](https://claude.com/marketplace/plugins)); submissions go through [claude.ai/directory/manage](https://claude.ai/directory/manage). Re-read [the submission guide](https://claude.com/docs/plugins/submit) before submitting: the process below was current in October 2026 and may have changed.
+
+### Before submitting
+
+1. **Remove the development diagnostics.** `writeDiagnostics` in `plugins/streams/hooks/register.tsx` writes `debug.json` into the plugin's own folder every five seconds. That is for development only and must not ship: delete it, its call in `beat`, and the `noteMatched` / `noteUnmatched` calls.
+2. **Bump the version** in `plugins/streams/.claude-plugin/plugin.json` and give it an `author` with a contact email and a `homepage` or `repository`.
+3. **Pass strict validation and the tests:**
+   ```sh
+   claude plugin validate --strict plugins/streams
+   claude plugin validate --strict .
+   claude plugin test plugins/streams
+   ```
+4. **Be ready to explain what the mod does with data.** Reviewers will see from validation that it calls the model (`$.model.complete`: one small Haiku request per classified prompt, billed to the user), reads the session's transcript file (`$.fs.read`, to file history into streams) and keeps per-project state (`$.store`). Nothing leaves the user's machine apart from those model requests. Say so in the listing.
+5. **Add screenshots** of the bar, the navigator pane and the transcript stripes.
+
+### Submitting
+
+1. Sign in to [claude.ai/directory/manage](https://claude.ai/directory/manage). A paid claude.ai plan (Pro or above) is required.
+2. Give it the repository URL (`https://github.com/macleodlabs-ai/claudeflow`). The repository may stay private while it is validated; grant the access the portal asks for.
+3. Run its validation, then answer the compliance questionnaire.
+4. Anthropic runs a security scan and a reviewer approves or returns it with notes.
+5. Publish it yourself or choose auto-publish. Claude Code users then get it as `streams@synced` once it syncs to their account.
+
+### Without the directory
+
+Anyone with read access can already install it straight from this repository (see [Install](#install)). Docs: [creating a marketplace](https://code.claude.com/docs/en/plugins/create-marketplace.md), [hosting one](https://code.claude.com/docs/en/plugins/host-marketplace.md). Private repositories work: Claude Code fetches them with the user's own git credentials, so each user needs GitHub access and either an SSH key in `ssh-agent` or an HTTPS credential helper (`gh auth setup-git`).
 
 ## Charging for a mod
 
-_Filled in below once confirmed against the current Claude Code docs._
+Neither Claude Code nor Anthropic's directory offers paid listings, licensing or revenue share. The terms ([Anthropic Software Directory Terms](https://support.claude.com/en/articles/13145338-anthropic-software-directory-terms)) do not provide for selling through the directory, so a paid mod is distributed outside it. Ways to charge:
+
+| Model | How | Trade-off |
+| --- | --- | --- |
+| **Paid access to this private repository** | Sell a subscription (Stripe, GitHub Sponsors tiers, Lemon Squeezy); on payment, add the buyer to a GitHub team with read access; remove them when it lapses | Simplest, nothing to build in the mod. The code is readable by every buyer, and a lapsed buyer keeps the copy they installed |
+| **License key in the mod** | Declare a secret `userConfig` field (`licenseKey`); the mod checks it with your licensing server via `$.http` on load and runs in a limited mode without one | Works with any distribution, even a public repo. The check runs in readable code, so it deters rather than prevents |
+| **Free mod, paid service** | Keep the mod free and listable; charge for something it connects to (team-wide stream sync, a hosted dashboard) | Fits the directory and reaches the most users; needs a service worth paying for |
+
+A sensible path is to list **streams** for free to build an audience, and sell a team edition (shared streams across a team's sessions, the web dashboard planned in Phase 2) behind paid repository access or a license key.
