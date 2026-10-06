@@ -456,21 +456,21 @@ describe('full chat style', () => {
     return pane
   }
 
-  test('the toggle in a stream view draws replies as markdown and tool calls with highlighted code', ENGINE, async ($, on) => {
+  test('a stream view draws replies as markdown and tool calls with highlighted code by default, and the toggle switches to compact', ENGINE, async ($, on) => {
     const pane = await openBilling($, on)
-    expect(await pane.find({ type: 'Code' })).toBe(undefined)
-    await pane.press({ key: 'style' })
     const codes = await pane.findAll({ type: 'Code' })
     expect(codes.map(c => (c.props as { format?: string; language?: string }).format ?? (c.props as { language?: string }).language)).toEqual(['diff', 'bash'])
     const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
     expect(texts).toEqual(['why is the invoice total off?', 'Rounding happens here:\n\n```ts\nMath.round(x)\n```'])
     await pane.press({ key: 'style' })
     expect(await pane.find({ type: 'Code' })).toBe(undefined)
+    await pane.press({ key: 'style' })
+    expect(await pane.find({ type: 'Code' })).toBeDefined()
   })
 
-  test('the chatStyle setting picks the style a stream view opens in', { ...ENGINE, options: { chatStyle: 'full' } }, async ($, on) => {
+  test('the chatStyle setting picks the style a stream view opens in', { ...ENGINE, options: { chatStyle: 'compact' } }, async ($, on) => {
     const pane = await openBilling($, on)
-    expect(await pane.find({ type: 'Code' })).toBeDefined()
+    expect(await pane.find({ type: 'Code' })).toBe(undefined)
   })
 })
 

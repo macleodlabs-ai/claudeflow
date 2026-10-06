@@ -181,7 +181,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
-| Read a stream in full | In a stream's view, `▤ full` draws its chat as the session does: markdown, syntax-highlighted code and diffs. `≡ compact` goes back to one line per row |
+| Compact a stream's chat | A stream's view draws its chat as the session does, with markdown, syntax-highlighted code and diffs. `≡ compact` switches to one line per row; `▤ full` switches back |
 
 ### Keyboard
 
@@ -204,7 +204,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "chatStyle": "compact", "diagnostics": false }
+      "options": { "chatStyle": "full", "diagnostics": false }
     }
   }
 }
@@ -212,7 +212,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Setting | Default | Description |
 | --- | :---: | --- |
-| `chatStyle` | `compact` | How a stream's own view draws its chat: `compact`, one line per row, or `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs. The `▤ full` / `≡ compact` button switches it for the session. |
+| `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `≡ compact` / `▤ full` button switches it for the session. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 
 ### Model use

@@ -20,12 +20,12 @@
     "chatStyle": {
       "type": "string",
       "title": "Stream chat style",
-      "description": "How a stream's own view draws its chat: compact (one line per row) or full (as the session draws it, with markdown, highlighted code and diffs). The \u2261/\u25a4 button in the pane switches it for the session.",
+      "description": "How a stream's own view draws its chat: full (as the session draws it, with markdown, highlighted code and diffs) or compact (one line per row). The \u2261/\u25a4 button in the pane switches it for the session.",
       "options": [
         "compact",
         "full"
       ],
-      "default": "compact"
+      "default": "full"
     }
   }
 }

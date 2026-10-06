@@ -705,7 +705,7 @@ async function focusOn($: $, id: string) {
 
 export const register: Register = (on, options) => {
   isDiagnosing = options.diagnostics === true
-  defaultStyle = options.chatStyle === 'full' ? 'full' : 'compact'
+  defaultStyle = options.chatStyle === 'compact' ? 'compact' : 'full'
 
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get(storeKey(e.cwd))) as Saved | undefined
@@ -1294,7 +1294,7 @@ const markdownOf = (text: string): string => {
 }
 
 /** The `chatStyle` setting: how a stream's own view draws its rows until the pane's toggle says otherwise. */
-let defaultStyle: ChatStyle = 'compact'
+let defaultStyle: ChatStyle = 'full'
 
 const GLYPH: Record<StreamRowKind, string> = { prompt: '>', reply: '⏺', tool: '⎿', agent: '↳', loop: '↻', notice: '·' }
 
