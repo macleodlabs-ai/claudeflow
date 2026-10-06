@@ -46,6 +46,8 @@ export type StreamRow = {
   agentId?: string
   at: number
   code?: RowCode
+  /** A tool row's call id: the key its transcript row is filed under. */
+  toolId?: string
 }
 
 /** How a stream's own view draws its rows: one line each, or as the session's transcript draws them. */

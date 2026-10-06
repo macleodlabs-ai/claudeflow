@@ -280,13 +280,54 @@ async function refreshStatus($: $) {
 async function classify($: $, text: string): Promise<string> {
   const [streams, current] = await Promise.all([read($, streamsA), read($, currentA)])
   if (current && isFollowUp(text)) return current
-  const recent = [...streams].sort((a, b) => b.lastAt - a.lastAt).slice(0, 15)
-  const r = await $.model.complete({ model: 'haiku', system: SYSTEM, prompt: buildPrompt(recent, current, text), maxTokens: 150 })
+  // Archived streams are put away: only a #tag brings one back. The rest are offered with their state, so a
+  // finished side task is not taken for open work in the same area.
+  const recent = streams.filter(s => !s.archived).sort((a, b) => b.lastAt - a.lastAt).slice(0, 15)
+  const [now, health] = await Promise.all([$.clock.now(), healthNow($, recent)])
+  const r = await $.model.complete({ model: 'haiku', system: SYSTEM, prompt: buildPrompt(recent, current, text, now, health), maxTokens: 150 })
   const v = r.isAnswered ? parseVerdict(r.text, recent) : undefined
   if (!v) return current || ensureStream($, fallbackName(text), oneLine(text, 120))
   if (v.kind === 'new') return ensureStream($, v.name, v.summary)
-  if (v.summary) await touch($, v.id, () => ({ summary: v.summary }))
+  // A stream keeps the goal it was created with: a summary rewritten on every match drifts wider until it
+  // matches everything nearby.
   return v.id
+}
+
+/** The transcript id a row was filed under: its message's uuid. */
+const uuidOf = (row: StreamRow): string => (row.id.startsWith('h:') ? row.id.split(':')[1] : row.id.split(':')[0]) ?? row.id
+
+/**
+ * `/stream move <name>`: the current stream's last prompt, and everything after it (replies, tools,
+ * subagents), filed under `<name>` instead, created when no stream has that name. Fixes a wrong guess.
+ */
+async function moveLast($: $, name: string): Promise<string> {
+  const [rows, from, streams] = await Promise.all([read($, rowsA), read($, currentA), read($, streamsA)])
+  if (!from) return 'No prompt has been filed yet.'
+  const known = streams.find(s => s.id === slug(name) || s.name.toLowerCase() === name.trim().toLowerCase())
+  const own = rows.filter(r => r.streamId === from)
+  const start = own.findLastIndex(r => r.kind === 'prompt' && !r.agentId)
+  if (start < 0) return `Nothing in ${from} to move.`
+  const moving = own.slice(start)
+  const to = known?.id ?? (await ensureStream($, name.trim(), oneLine(moving[0]?.text ?? '', 120)))
+  if (to === from) return `That prompt is already in ${to}.`
+  const ids = new Set(moving.map(r => r.id))
+  const agentIds = new Set(moving.flatMap(r => (r.agentId ? [r.agentId] : [])))
+  await update($, rowsA, list => list.map(r => (ids.has(r.id) ? { ...r, streamId: to } : r)))
+  await Promise.all(
+    moving.flatMap(r => [
+      fileAs($, uuidOf(r), to),
+      ...(r.toolId ? [fileAs($, r.toolId, to)] : []),
+      ...(r.kind === 'reply' ? [fileAs($, textKey(r.text), to)] : []),
+    ]),
+  )
+  if (agentIds.size) await update($, agentStreamA, m => Object.fromEntries(Object.entries(m).map(([a, sid]) => [a, agentIds.has(a) ? to : sid])))
+  await touch($, to, s => ({ rows: s.rows + moving.length, archived: false }))
+  await touch($, from, s => ({ rows: Math.max(0, s.rows - moving.length) }))
+  await update($, currentA, () => to)
+  await paintStreams($)
+  await refreshStatus($)
+  await save($)
+  return `Moved the last prompt and ${moving.length - 1} row${moving.length === 2 ? '' : 's'} after it from ${from} to ${to}.`
 }
 
 /** A background task's notification names its task; route it to whoever spawned that. */
@@ -354,7 +395,7 @@ async function record($: $, e: AppendedRow, uuid: string) {
       rows.push(
         b.name === 'Agent'
           ? { ...base, kind: 'agent', text: input.description ?? 'subagent' }
-          : { ...base, kind: 'tool', text: toolLine(b.name ?? '', b.input), ...withCode(b.name ?? '', b.input) },
+          : { ...base, kind: 'tool', text: toolLine(b.name ?? '', b.input), toolId: b.id, ...withCode(b.name ?? '', b.input) },
       )
     }
   })
@@ -564,7 +605,8 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
                   : toolLine(item.name, item.input)
           const kind: StreamRowKind = item.kind === 'tool' ? (item.name === 'Agent' ? 'agent' : 'tool') : item.kind
           const code = kind === 'tool' && item.kind === 'tool' ? withCode(item.name, item.input) : {}
-          rows.push({ id: `h:${item.uuid}:${item.kind === 'tool' ? item.id : rows.length}`, streamId: sid, kind, text, at: when, ...code })
+          const toolId = item.kind === 'tool' ? { toolId: item.id } : {}
+          rows.push({ id: `h:${item.uuid}:${item.kind === 'tool' ? item.id : rows.length}`, streamId: sid, kind, text, at: when, ...code, ...toolId })
         } catch (err) {
           lastError = `skipped a row: ${String(err)}`.slice(0, 600)
         }
@@ -752,6 +794,8 @@ export const register: Register = (on, options) => {
       await focusOn($, '')
       return { text: 'Showing every stream.' }
     }
+    const move = /^move\s+(.+)$/.exec(arg)
+    if (move?.[1]) return { text: await moveLast($, move[1]) }
     const id = await ensureStream($, arg, '')
     await update($, currentA, () => id)
     await update($, viewA, () => id)
