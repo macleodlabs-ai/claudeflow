@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { NEXT_FOLD, PASTELS, STALL_MS, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 const STREAMS: Stream[] = [
   { id: 'auth-refactor', name: 'Auth refactor', summary: 'Move sessions to JWT', createdAt: 0, lastAt: 0, rows: 0, agents: 0, loops: 0 },
@@ -434,5 +434,12 @@ describe('a long session', () => {
     expect(streamed).toBe(true)
     const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AssistantMessage', requestId: 'a2', props: { text: 'Un antidouleur.', isFirstOfReply: true } as never })
     expect(((await row.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color).toBe(PASTELS[1])
+  })
+})
+
+describe('painting rows', () => {
+  // Seen live: a `!` command's output kept its colour codes, and the stream holding it painted an empty pane.
+  test('terminal colour codes and control characters never reach a pane line', () => {
+    expect(oneLine('\x1b[32m✔\x1b[0m Added tokensave\u0007 MCP server', 80)).toBe('✔ Added tokensave MCP server')
   })
 })

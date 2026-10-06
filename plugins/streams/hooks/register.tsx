@@ -324,7 +324,10 @@ async function record($: $, e: AppendedRow, uuid: string) {
         marks.push(fileAs($, textKey(b.text), sid))
         // Filed under the turn now; the worker moves it if it answers a prompt sent mid-turn.
         if (folded.length > 0) work($, { kind: 'route', uuid, rowId: id, text: b.text, turnSid: sid, folded })
-      } else if (msg.role === 'user') rows.push({ ...base, kind: e.agentId ? 'prompt' : pendingKind, text: b.text })
+      } else if (msg.role === 'user' && !b.text.trim().startsWith('<')) {
+        // A typed shell command and its output (<bash-input>, <bash-stdout>) are not prompts, as the import has it.
+        rows.push({ ...base, kind: e.agentId ? 'prompt' : pendingKind, text: b.text })
+      }
     } else if (b.type === 'tool_use' && b.id) {
       marks.push(fileAs($, b.id, sid))
       const input = (b.input ?? {}) as { description?: string }
@@ -883,7 +886,7 @@ export const register: Register = on => {
           {badge(l.status, `${STATUS_GLYPH[l.status]} ${l.status.toUpperCase()}${l.clock ? ` ${l.clock}` : ''}`)}
           <Text bold={l.status === 'running'} dimColor={l.status !== 'running'}>
             {'  '}
-            {l.label}
+            {oneLine(l.label, width - 20)}
           </Text>
         </Text>,
         l.last ? (
@@ -914,7 +917,7 @@ export const register: Register = on => {
             {loops[shown.id] ? '  ' : ''}
             {loopBadge(shown)}
           </Text>
-          <Text dimColor wrap="truncate">{shown.summary || ' '}</Text>
+          <Text dimColor wrap="truncate">{oneLine(shown.summary, width) || ' '}</Text>
           {activity}
           {own.length === 0 && <Text dimColor>Nothing recorded yet.</Text>}
           {own.map(r => (
@@ -970,7 +973,7 @@ export const register: Register = on => {
           </Text>
           {f === 'none' ? null : (
             <Box flexDirection="column">
-              {s.summary ? <Text dimColor wrap="truncate">{s.summary}</Text> : null}
+              {s.summary ? <Text dimColor wrap="truncate">{oneLine(s.summary, width)}</Text> : null}
               {workOf(s, f === '1' ? 2 : 5)}
               {recent.map(row => (
                 <Text key={row.id} color={row.kind === 'prompt' ? colorOf(s) : undefined} dimColor={row.kind !== 'prompt'} wrap="truncate">

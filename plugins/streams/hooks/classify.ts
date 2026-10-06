@@ -94,8 +94,11 @@ export const ago = (ms: number): string => {
   return `${Math.round(s / 86400)}d`
 }
 
+/** Terminal colour codes and other control characters: a pane line holding one does not paint. */
+const CONTROL = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]/g
+
 export const oneLine = (text: string, n: number): string => {
-  const t = text.replace(/\s+/g, ' ').trim()
+  const t = text.replace(CONTROL, '').replace(/\s+/g, ' ').trim()
   return t.length > n ? `${t.slice(0, n - 1)}…` : t
 }
 
