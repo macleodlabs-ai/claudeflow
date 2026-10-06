@@ -128,7 +128,7 @@ claude plugin install streams@claudeflow
 New sessions load it automatically; in a running session, run `/reload-plugins`. The pane opens by itself in fullscreen terminals at least **144 columns** wide. Anywhere else, type `/streams`.
 
 > [!TIP]
-> **Several Claude Code accounts?** Plugins install per config directory, so run the install once per account, e.g. once from each `cc-<client>` launcher if you use [claude-sessions](https://github.com/macleodlabs-ai/claude-sessions).
+> **Several Claude Code accounts?** Plugins install per account, so sign in to each one and run the install there (or, if you use [claude-sessions](https://github.com/macleodlabs-ai/claude-sessions), once from each `cc-<client>` launcher).
 
 <details>
 <summary><b>From a local checkout</b> (live edits, no reinstall)</summary>
