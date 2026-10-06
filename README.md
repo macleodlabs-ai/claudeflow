@@ -37,7 +37,7 @@ A real Claude Code session is never one task. You start a feature, ask a side qu
 
 **streams**, the mod in this repository, sorts that work into **semantic streams** as it happens, and gives each one its own colour, status and history.
 
-![A tangle of interleaved work separating into five colour-coded streams, each with a live status dot](assets/streams.jpg)
+![The streams pane beside a transcript: coloured stripes per stream, live agent status, loop countdowns and the pill bar](assets/preview.jpg)
 
 ## ✨ What you get
 
@@ -83,10 +83,6 @@ Hide finished streams with `✕` and bring them back later. Fold any stream to i
 </td>
 </tr>
 </table>
-
-<h3 align="center">What it looks like</h3>
-
-![The streams pane beside a transcript: coloured stripes per stream, live agent status, loop countdowns and the pill bar](assets/preview.jpg)
 
 ### Status at a glance
 
