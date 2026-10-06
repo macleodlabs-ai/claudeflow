@@ -342,11 +342,11 @@ describe('folding the pane', () => {
     await $.agent.spawn({ prompt: 'look into it', description: 'check rounding', subagentType: 'Explore' } as never)
     const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
     await pane.press({ key: 'fold:billing' })
-    const badge = async (word: RegExp) => (await pane.find({ type: 'Text', text: word }))?.props as { backgroundColor?: string } | undefined
+    const badge = async (word: RegExp) => (await pane.find({ type: 'Text', text: word }))?.props as { color?: string } | undefined
     expect(await pane.find({ type: 'Text', text: /check rounding/ })).toBeDefined()
-    expect((await badge(/● RUNNING/))?.backgroundColor).toBe('#ffd33d')
+    expect((await badge(/^● RUNNING/))?.color).toBe('#ffd33d')
     await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't', agentId: 'ag1', reason: 'answer' } as never)
-    expect((await badge(/✓ DONE/))?.backgroundColor).toBe('#2ea043')
+    expect((await badge(/^✓ DONE/))?.color).toBe('#7ee787')
   })
 })
 
@@ -389,8 +389,8 @@ describe('active loops', () => {
     await $.prompt.submit({ text: '#ux-loop polish the agent rows', wait: false, origin: { kind: 'composer' } })
     await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w1', delaySeconds: 90, reason: 'next pass', prompt: '/loop x' } as never)
     const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: { title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' } as never })
-    const loop = await pane.find({ type: 'Text', text: /↻ LOOP next 1:30/ })
-    expect((loop?.props as { backgroundColor?: string } | undefined)?.backgroundColor).toBe('#ffd33d')
+    const loop = await pane.find({ type: 'Text', text: /^↻ LOOP next 1:30/ })
+    expect((loop?.props as { color?: string } | undefined)?.color).toBe('#ffd33d')
     await clock.advance(30_000)
     await pane.redraw({ title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' } as never)
     expect(await pane.find({ type: 'Text', text: /↻ LOOP next 1:00/ })).toBeDefined()
