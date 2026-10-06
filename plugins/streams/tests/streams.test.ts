@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -415,6 +415,12 @@ describe('full chat style', () => {
     })
     expect(codeOf('Write', { file_path: 'a.py', content: 'print(1)\n' })).toEqual({ source: 'print(1)\n', path: 'a.py' })
     expect(codeOf('Read', { file_path: 'src/a.ts' })).toBe(undefined)
+  })
+
+  test('a tool row is titled as the session titles it, by the file or command it acts on', () => {
+    expect(toolLine('Edit', { file_path: 'src/a.ts', old_string: 'x', new_string: 'y' })).toBe('Edit(src/a.ts)')
+    expect(toolLine('Bash', { command: 'npm test', description: 'run tests' })).toBe('Bash(npm test)')
+    expect(toolLine('TodoWrite', { todos: [] })).toBe('TodoWrite {"todos":[]}')
   })
 
   test('an oversized diff is drawn as whole hunks, never cut mid-hunk where it would stop parsing as a diff', () => {

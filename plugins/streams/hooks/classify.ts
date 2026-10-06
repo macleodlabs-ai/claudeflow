@@ -430,3 +430,12 @@ export const codeOf = (tool: string, input: unknown): RowCode | undefined => {
   for (const h of hunks) if ([...fit, h].join('\n').length <= CODE_LIMIT) fit.push(h)
   return fit.length ? { source: fit.join('\n'), format: 'diff', ...(path ? { path } : {}) } : { source: clip(hunks[0]!, CODE_LIMIT), ...(path ? { path } : {}) }
 }
+
+/** A tool call as the session titles it: `Edit(src/a.ts)`, `Bash(npm test)`; the raw input when no field names it. */
+export const toolLine = (tool: string, input: unknown): string => {
+  const i = (input ?? {}) as Record<string, unknown>
+  const arg = ['file_path', 'notebook_path', 'command', 'pattern', 'url', 'query', 'path', 'skill', 'prompt']
+    .map(k => i[k])
+    .find((v): v is string => typeof v === 'string' && v.trim() !== '')
+  return arg !== undefined ? `${tool}(${oneLine(arg, 100)})` : `${tool} ${oneLine(JSON.stringify(input ?? {}), 100)}`
+}

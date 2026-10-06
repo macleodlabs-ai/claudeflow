@@ -26,6 +26,7 @@ import {
   pastelOf,
   partialTag,
   codeOf,
+  toolLine,
   tagMatches,
   completeTag,
   REPLY_SYSTEM,
@@ -353,7 +354,7 @@ async function record($: $, e: AppendedRow, uuid: string) {
       rows.push(
         b.name === 'Agent'
           ? { ...base, kind: 'agent', text: input.description ?? 'subagent' }
-          : { ...base, kind: 'tool', text: `${b.name} ${oneLine(JSON.stringify(b.input ?? {}), 100)}`, ...withCode(b.name ?? '', b.input) },
+          : { ...base, kind: 'tool', text: toolLine(b.name ?? '', b.input), ...withCode(b.name ?? '', b.input) },
       )
     }
   })
@@ -560,7 +561,7 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
                 ? item.text
                 : item.name === 'Agent'
                   ? (input.description ?? 'subagent')
-                  : `${item.name} ${oneLine(JSON.stringify(item.input ?? {}), 100)}`
+                  : toolLine(item.name, item.input)
           const kind: StreamRowKind = item.kind === 'tool' ? (item.name === 'Agent' ? 'agent' : 'tool') : item.kind
           const code = kind === 'tool' && item.kind === 'tool' ? withCode(item.name, item.input) : {}
           rows.push({ id: `h:${item.uuid}:${item.kind === 'tool' ? item.id : rows.length}`, streamId: sid, kind, text, at: when, ...code })
@@ -1134,14 +1135,16 @@ export const register: Register = (on, options) => {
                   </Box>
                 )
               if (r.kind === 'tool') {
-                const [name = '', ...rest] = r.text.split(' ')
+                const cut = r.text.search(/[( ]/)
+                const name = cut < 0 ? r.text : r.text.slice(0, cut)
+                const rest = [cut < 0 ? '' : r.text.slice(cut).trim()]
                 return (
                   <Box key={r.id} flexDirection="column" marginTop={1}>
                     <Text wrap="truncate">
                       <Text color={STATUS_WORD.done}>⏺ </Text>
                       <Text bold>{name}</Text>
                       <Text dimColor>
-                        {' '}
+                        {rest[0]?.startsWith('(') && !who ? '' : ' '}
                         {who}
                         {oneLine(rest.join(' '), width - name.length - 4)}
                       </Text>
