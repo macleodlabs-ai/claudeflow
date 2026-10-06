@@ -1,0 +1,44 @@
+# Daily: fold GitHub's 14-day clone traffic into a running total and publish it as a shields.io badge.
+# Each `claude plugin marketplace add` and each update clones the repo, so unique cloners per day
+# approximates installs. GitHub keeps traffic for 14 days only, so the totals live on the `stats` branch.
+#
+# Needs a repo secret TRAFFIC_TOKEN: a fine-grained token on this repo with "Administration: read"
+# (traffic is owner-only; the workflow's own GITHUB_TOKEN cannot read it).
+name: traffic
+on:
+  schedule: [{ cron: '17 3 * * *' }]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: stats }
+      - name: Fold today's traffic into the totals
+        env:
+          GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/traffic/clones > clones.json
+          gh api repos/${{ github.repository }}/traffic/views > views.json
+          python3 - <<'PY'
+          import json, os
+          hist = json.load(open('history.json')) if os.path.exists('history.json') else {'clones': {}, 'views': {}}
+          for kind in ('clones', 'views'):
+              for day in json.load(open(f'{kind}.json'))[kind]:
+                  hist[kind][day['timestamp'][:10]] = {'count': day['count'], 'uniques': day['uniques']}
+          json.dump(hist, open('history.json', 'w'), indent=1, sort_keys=True)
+          def badge(path, label, n, color):
+              json.dump({'schemaVersion': 1, 'label': label, 'message': f'{n:,}', 'color': color}, open(path, 'w'))
+          badge('installs.json', 'installs', sum(d['uniques'] for d in hist['clones'].values()), '7c5cff')
+          badge('views.json', 'readme views', sum(d['uniques'] for d in hist['views'].values()), '22d3ee')
+          PY
+          rm clones.json views.json
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet || git commit -m "traffic: $(date -u +%F)"
+          git push
