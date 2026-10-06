@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -399,6 +399,86 @@ describe('active loops', () => {
     expect(await pane.find({ type: 'Text', text: /↻ LOOP next 1:00/ })).toBeDefined()
     await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w2', stop: true } as never)
     expect(await pane.find({ type: 'Text', text: /↻ LOOP/ })).toBe(undefined)
+  })
+})
+
+describe('finished streams do not swallow new work', () => {
+  const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' } as never
+  // Seen live: a short "repo setup" stream kept taking every later README, badge and git request, because the
+  // classifier saw no sign it was done and each match widened its summary.
+  const HOUR = 60 * 60_000
+  const streams: Stream[] = [
+    { id: 'repo-setup', name: 'Repo setup', summary: 'Create the GitHub repo', createdAt: 0, lastAt: 0, rows: 9, agents: 0, loops: 0 },
+    { id: 'billing', name: 'Billing', summary: 'Invoice totals off', createdAt: 0, lastAt: 3 * HOUR - 60_000, rows: 4, agents: 0, loops: 0 },
+  ]
+
+  test('the classifier is told which streams are finished and how long ago they were last active', () => {
+    const prompt = buildPrompt(streams, 'billing', 'add badges to the README', 3 * HOUR, { billing: 'running' })
+    expect(prompt).toContain('id: repo-setup\n  name: Repo setup\n  goal: Create the GitHub repo\n  state: finished, last active 3h ago')
+    expect(prompt).toContain('id: billing (current)\n  name: Billing\n  goal: Invoice totals off\n  state: working now')
+    expect(FINISHED_MS).toBeLessThan(HOUR)
+  })
+
+  test("matching a stream leaves its goal as it was created, and archived streams are never offered", ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const status = watchStatus(on)
+    const asked: string[] = []
+    on('model.complete', async (_$, e) => {
+      asked.push(String((e as { prompt?: unknown }).prompt))
+      return { value: { isAnswered: true, text: '{"stream":"billing","summary":"billing, badges, README and everything else"}', usage: USAGE } } as never
+    })
+    await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
+    await $.prompt.submit({ text: '#old-chore tidy the changelog', wait: false, origin: { kind: 'composer' } })
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+    await pane.press({ key: 'archive:old-chore' })
+    await $.prompt.submit({ text: 'and check the rounding in refunds as well', wait: false, origin: { kind: 'composer' } })
+    expect(status.at(-1)).toBe('stream billing')
+    expect(asked.at(-1)).not.toContain('old-chore')
+    await pane.press({ key: 'open:billing' })
+    expect(await pane.find({ type: 'Text', text: 'why is the invoice total off?' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: /badges/ })).toBe(undefined)
+  })
+
+  // Two prompts filed by tag, then the second moved by hand: its rows and transcript lines follow.
+  const TWO = [
+    { type: 'user', uuid: 'u1', message: { role: 'user', content: '#auth-jwt move sessions to signed JWTs' } },
+    { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Starting with the session store.' }] } },
+    { type: 'user', uuid: 'u2', message: { role: 'user', content: '#auth-jwt why is the invoice total off by a cent?' } },
+    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'grep -rn round src/billing' } }] } },
+    { type: 'assistant', uuid: 'a3', message: { role: 'assistant', content: [{ type: 'text', text: 'Totals are rounded per line.' }] } },
+  ].map(l => JSON.stringify(l)).join('\n')
+
+  test('/stream move refiles the last prompt and everything after it, transcript lines included', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: TWO.length, mtimeMs: 0, isLink: false } }) as never)
+    on('fs.read', async () => ({ value: TWO }) as never)
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(1500)
+    await $.prompt.submit({ text: '#auth-jwt', wait: false, origin: { kind: 'composer' } })
+    const run = ($.command as unknown as { run: (e: unknown) => Promise<{ text: string }> }).run
+    const done = await run({ command: 'stream', args: 'move billing', origin: { kind: 'composer' } })
+    expect(done.text).toBe('Moved the last prompt and 2 rows after it from auth-jwt to billing.')
+    const lineOf = async (component: 'UserMessage' | 'AssistantMessage' | 'ToolUse', requestId: string) => {
+      const drawn = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component, requestId, props: { text: 'x', origin: { kind: 'composer' }, isExpanded: false, isFirstOfReply: true } as never })
+      return ((await drawn.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color
+    }
+    const auth = await lineOf('UserMessage', 'u1')
+    const billing = await lineOf('UserMessage', 'u2')
+    expect(billing).toBeDefined()
+    expect(billing).not.toBe(auth)
+    expect(await lineOf('AssistantMessage', 'a3')).toBe(billing)
   })
 })
 
