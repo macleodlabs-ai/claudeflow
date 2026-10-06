@@ -443,3 +443,22 @@ describe('painting rows', () => {
     expect(oneLine('\x1b[32m✔\x1b[0m Added tokensave\u0007 MCP server', 80)).toBe('✔ Added tokensave MCP server')
   })
 })
+
+describe('diagnostics', () => {
+  // An installed copy must not write into its own folder: diagnostics are opt-in.
+  test('by default the heartbeat never writes debug.json', async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    let writes = 0
+    on('fs.write', async () => {
+      writes += 1
+      return { value: undefined } as never
+    })
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('ui.status', async () => ({ value: undefined }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    await $.prompt.submit({ text: '#billing one', wait: false, origin: { kind: 'composer' } })
+    await clock.advance(12_000)
+    expect(writes).toBe(0)
+  })
+})
