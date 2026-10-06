@@ -80,6 +80,8 @@ type Job =
   | { kind: 'import'; path: string }
 const jobs: Job[] = []
 let draining = false
+/** The last failure of background work, for the diagnostics file. */
+let lastError = ''
 let isWorking = false
 
 /** Starts the worker's timer once per load, from whichever hook first has work: timers outlive the hook. */
@@ -88,7 +90,10 @@ function work($: $, job?: Job) {
   if (isWorking) return
   isWorking = true
   $.clock.every(1000, () => {
-    void drain($).catch(err => $.ui.log(`streams: background work failed: ${String(err)}`))
+    void drain($).catch(err => {
+      lastError = `${String(err)} ${(err as Error)?.stack ?? ''}`.slice(0, 600)
+      $.ui.log(`streams: background work failed: ${String(err)}`)
+    })
     void tick($).catch(() => {})
   })
 }
@@ -148,6 +153,7 @@ async function writeDiagnostics($: $) {
         at: await $.clock.now(),
         historyFiled,
         importing,
+        lastError,
         queuedJobs: jobs.map(j => j.kind),
         streams: streams.map(s => s.id),
         rowsPerStream: perStream,
@@ -245,10 +251,16 @@ async function record($: $, e: AppendedRow, uuid: string) {
     // A prompt sent mid-turn is stored as this row: link it to the stream prompt.submit filed it in.
     const prompt = (msg.content as readonly Block[]).find(b => b.type === 'text')?.text ?? ''
     const hit = (await read($, foldedA)).findLast(f => prompt.includes(f.text) || f.text.includes(prompt.trim()))
-    if (hit && prompt.trim()) await fileAs($, uuid, hit.streamId)
+    // Matched to the prompt it carries; any other attachment wears the current stream's line.
+    await fileAs($, uuid, hit && prompt.trim() ? hit.streamId : await inStream($, e.agentId))
     return
   }
-  if (msg.isMeta) return
+  if (msg.isMeta) {
+    // Notices, reminders and deliveries are not activity, but they sit in the stream's part of the transcript.
+    const sid = await inStream($, e.agentId)
+    if (sid) await fileAs($, uuid, sid)
+    return
+  }
   let sid: string
   let folded: readonly Folded[] = []
   if (e.agentId) {
@@ -350,6 +362,20 @@ async function beat($: $) {
   if (changed) await update($, healthA, () => after)
 }
 
+/** Under this, one read; over it (a long session's transcript), the file is streamed: a read refuses past 4 MiB. */
+const READ_LIMIT = 4_000_000
+
+/** A file's whole text, however long: long transcripts are exactly the sessions that need filing. */
+async function readWhole($: $, path: string): Promise<string> {
+  const { size } = await $.fs.stat(path)
+  if (size < READ_LIMIT) return String(await $.fs.read(path))
+  const parts: string[] = []
+  for await (const piece of $.process.spawn({ argv: ['cat', path] })) {
+    if ('text' in piece && piece.stream === 'stdout') parts.push(piece.text)
+  }
+  return parts.join('')
+}
+
 // One import at a time in this environment; a reload starts a fresh one, which is safe (see below).
 let importing = false
 
@@ -363,7 +389,7 @@ async function importHistory($: $, path: string) {
   if (importing) return
   importing = true
   try {
-    const [jsonl, { startedAt }, began] = await Promise.all([$.fs.read(path), $.session.usage(), $.clock.now()])
+    const [jsonl, { startedAt }, began] = await Promise.all([readWhole($, path), $.session.usage(), $.clock.now()])
     await update($, rowsA, list => list.filter(row => row.at < startedAt || row.at >= began))
     const turns = turnsOf(readTranscript(String(jsonl)).slice(-1500))
     let at = startedAt

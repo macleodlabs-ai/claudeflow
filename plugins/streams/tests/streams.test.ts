@@ -243,6 +243,7 @@ describe('stream colours', () => {
     mock.store(on)
     on('session.cwd', async () => ({ value: '/project' }))
     on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: TRANSCRIPT.length, mtimeMs: 0, isLink: false } }) as never)
     on('fs.read', async () => ({ value: TRANSCRIPT }) as never)
     // The one model call: which thread each reply piece after the mid-turn question answers.
     on('model.complete', async () => ({ value: { isAnswered: true, text: '["french", "billing"]', usage: USAGE } }) as never)
@@ -352,6 +353,7 @@ describe('rows filed under an older key scheme', () => {
     let reads = 0
     on('session.cwd', async () => ({ value: '/project' }))
     on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: TRANSCRIPT.length, mtimeMs: 0, isLink: false } }) as never)
     on('fs.read', async () => {
       reads += 1
       return { value: TRANSCRIPT } as never
@@ -389,5 +391,43 @@ describe('active loops', () => {
     expect(await pane.find({ type: 'Text', text: /↻ LOOP next 1:00/ })).toBeDefined()
     await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w2', stop: true } as never)
     expect(await pane.find({ type: 'Text', text: /↻ LOOP/ })).toBe(undefined)
+  })
+})
+
+describe('a long session', () => {
+  // Seen live: a 4.76 MiB transcript made every import fail, since a read refuses past 4 MiB.
+  test('a transcript over the read limit is streamed whole, not refused', async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    let streamed = false
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: 5_000_000, mtimeMs: 0, isLink: false } }) as never)
+    on('fs.read', async () => {
+      throw new Error('over 4 MiB')
+    })
+    on('process.spawn', async function* () {
+      streamed = true
+      const half = Math.floor(TRANSCRIPT.length / 2)
+      yield { stream: 'stdout', text: TRANSCRIPT.slice(0, half) }
+      yield { stream: 'stdout', text: TRANSCRIPT.slice(half) }
+      return { value: { code: 0, signal: null } }
+    } as never)
+    on('model.complete', async () => ({ value: { isAnswered: true, text: '["french", "billing"]', usage: USAGE } }) as never)
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.status', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Text', props: {}, children: ['engine row'] }) as never)
+    const logs: string[] = []
+    on('ui.log', async (_$, e) => {
+      logs.push(String((e as { text?: string }).text))
+      return { value: undefined } as never
+    })
+    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(1500)
+    expect(logs).toEqual([])
+    expect(streamed).toBe(true)
+    const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AssistantMessage', requestId: 'a2', props: { text: 'Un antidouleur.', isFirstOfReply: true } as never })
+    expect(((await row.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color).toBe(PASTELS[1])
   })
 })
