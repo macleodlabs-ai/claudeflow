@@ -1,0 +1,7 @@
+# Written by Claude Code each time it loads the mod
+plugins/*/.claude-plugin/types/
+# The streams mod's development diagnostics
+plugins/streams/debug.json
+.claude/
+node_modules/
+.DS_Store

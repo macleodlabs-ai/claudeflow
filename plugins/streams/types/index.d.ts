@@ -1,0 +1,96 @@
+export type StreamRowKind = 'prompt' | 'reply' | 'tool' | 'agent' | 'loop' | 'notice'
+
+/** What the heartbeat makes of a stream: working, quiet too long while working, finished lately, failed, or asleep. */
+export type Health = 'running' | 'stalled' | 'done' | 'error' | 'idle'
+
+/** A prompt sent while a turn ran: it waits, filed in its own stream, for the reply that answers it. */
+export type Folded = { streamId: string; text: string }
+
+/** A subagent's run, as the pane shows it live. */
+export type AgentRun = {
+  id: string
+  streamId: string
+  description: string
+  status: 'running' | 'done' | 'error'
+  startedAt: number
+  endedAt?: number
+  lastAt: number
+  /** What it did last: a tool call or the head of its latest text. */
+  last: string
+  tools: number
+}
+
+export type Stream = {
+  id: string
+  name: string
+  summary: string
+  createdAt: number
+  lastAt: number
+  rows: number
+  agents: number
+  loops: number
+  /** The stream's own pastel, fixed at creation: its line down the transcript, its name in the pane. */
+  color?: string
+  /** Hidden from the bar and the list until restored; its history stays. */
+  archived?: boolean
+}
+
+export type StreamRow = {
+  id: string
+  streamId: string
+  kind: StreamRowKind
+  text: string
+  agentId?: string
+  at: number
+}
+
+declare module 'claude-code' {
+  interface PluginState {
+    streams: {
+      streams: Stream[]
+      /** The stream the main loop is working on now; '' before the first prompt. */
+      current: string
+      /** The stream the transcript is focused on; '' shows everything. */
+      focus: string
+      /** The stream the pane shows in detail; '' shows the list. */
+      view: string
+      /** Whether a main-loop turn is running. */
+      busy: boolean
+      /** Subagent runs by id. */
+      agents: Record<string, AgentRun>
+      /** How much of each stream the pane shows. */
+      fold: Record<string, 'all' | '10' | '1' | 'none'>
+      /** When the main turn started, for its running clock. */
+      turnStartedAt: number
+      /** A clock the pane reads while anything runs, so elapsed times move. */
+      tick: number
+      /** Loops waiting to fire, per stream: a self-paced wakeup or a cron job. */
+      loops: Record<string, { kind: 'wakeup' | 'cron'; nextAt: number; label: string }>
+      /** Whether the pane lists archived streams too. */
+      showArchived: boolean
+      /** Whether this session's transcript has been filed into streams (once per session). */
+      historyFiled: boolean
+      /** The row-key scheme this session's rows were filed under; an older one means file them again. */
+      keyVersion: number
+      /** This session's transcript file, as the prompt hook names it. */
+      transcript: string
+      /** Prompts sent into the running turn, still waiting for the reply that answers them. */
+      folded: Folded[]
+      rows: StreamRow[]
+      agentStream: Record<string, string>
+      /** Subagents still running, by id, to the stream they work for. */
+      live: Record<string, string>
+      /** Tool calls running now, per stream. */
+      inflight: Record<string, number>
+      /** How each stream's last main-loop turn ended. */
+      outcome: Record<string, 'answer' | 'aborted' | 'refusal' | 'error'>
+      /** The heartbeat's verdict per stream. */
+      health: Record<string, Health>
+      loopStream: Record<string, string>
+      /** Which stream each transcript row (message uuid, tool_use_id, text key) belongs to. */
+      rowStream: StateFamily<string>
+      /** Each stream's colour by stream id, so a transcript row reads its own and redraws on nothing else. */
+      streamColor: StateFamily<string>
+    }
+  }
+}

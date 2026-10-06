@@ -1,0 +1,16 @@
+{
+  "name": "claudeflow",
+  "owner": {
+    "name": "MacLeod Labs"
+  },
+  "metadata": {
+    "description": "MacLeod Labs mods for Claude Code: workflow and session-navigation tools."
+  },
+  "plugins": [
+    {
+      "name": "streams",
+      "source": "./plugins/streams",
+      "description": "Untangles the interleaved work in a Claude Code session into colour-coded streams with a live navigator pane."
+    }
+  ]
+}
