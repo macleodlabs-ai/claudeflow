@@ -65,16 +65,35 @@ export const textKey = (text: string): string => {
 }
 
 export const SYSTEM = `You sort a developer's messages to a coding agent into workstreams.
-A workstream is one coherent goal (a feature, a bug, an investigation, a question).
+A workstream is one coherent goal (a feature, a bug, an investigation, a question), not a topic area.
 Reply with JSON only, one of:
-{"stream":"<existing id>","summary":"<updated one-line summary>"}
+{"stream":"<existing id>"}
 {"new":"<2-4 word name>","summary":"<one-line summary>"}
-Prefer an existing stream when the message continues, refines or asks about its goal.
-Start a new one only for a clearly different goal.`
+Use an existing stream when the message continues, refines or asks about that stream's own goal.
+A stream marked finished is done: use it only when the message plainly reopens that same goal
+(the same bug, the same files, "that didn't work"). A new request in the same area is a new stream:
+after a finished "repo setup" stream, "add badges to the README" is new work, not more repo setup.
+When unsure between a finished stream and a new one, start a new one.`
 
-export const buildPrompt = (streams: readonly Stream[], current: string, text: string): string => {
+/** A stream idle this long, or one whose work is done, is offered to the classifier as finished. */
+export const FINISHED_MS = 30 * 60_000
+
+export const buildPrompt = (
+  streams: readonly Stream[],
+  current: string,
+  text: string,
+  now = 0,
+  health: Readonly<Record<string, Health>> = {},
+): string => {
+  const stateOf = (s: Stream): string => {
+    const verdict = health[s.id] ?? 'idle'
+    if (verdict === 'running' || verdict === 'stalled') return 'working now'
+    return now - s.lastAt > FINISHED_MS || verdict === 'done' ? `finished, last active ${ago(now - s.lastAt)} ago` : `active ${ago(now - s.lastAt)} ago`
+  }
   const list = streams.length
-    ? streams.map(s => `- id: ${s.id}${s.id === current ? ' (current)' : ''}\n  name: ${s.name}\n  summary: ${s.summary}`).join('\n')
+    ? streams
+        .map(s => `- id: ${s.id}${s.id === current ? ' (current)' : ''}\n  name: ${s.name}\n  goal: ${s.summary}\n  state: ${stateOf(s)}`)
+        .join('\n')
     : '(none yet)'
   return `Workstreams:\n${list}\n\nNew message:\n"""\n${text.slice(0, 2000)}\n"""`
 }
