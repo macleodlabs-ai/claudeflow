@@ -24,6 +24,9 @@ import {
   turnsOf,
   nextPastel,
   pastelOf,
+  partialTag,
+  tagMatches,
+  completeTag,
   REPLY_SYSTEM,
   buildReplyPrompt,
   pickReplyStream,
@@ -58,6 +61,7 @@ const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const turnStartedAtA = atom({ plugin: 'streams', key: 'turnStartedAt' } as const, 0)
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
 const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
@@ -124,6 +128,8 @@ async function tick($: $) {
   const [busy, agents, loops] = await Promise.all([read($, busyA), read($, agentsA), read($, loopsA)])
   if (!busy && !Object.values(agents).some(a => a.status === 'running') && Object.keys(loops).length === 0) return
   const now = await $.clock.now()
+  if (Object.values(loops).some(l => lapsed(l, now)))
+    await update($, loopsA, m => Object.fromEntries(Object.entries(m).filter(([, l]) => !lapsed(l, now))))
   await update($, tickA, () => now)
 }
 
@@ -613,14 +619,23 @@ async function healthNow($: $, streams: readonly Stream[]): Promise<Record<strin
   )
 }
 
+type Loops = Record<string, { kind: 'wakeup' | 'cron'; nextAt: number; label: string }>
+
+/** A wakeup that fired this long ago without re-arming ended by not scheduling another tick. */
+const LAPSE_MS = 10 * 60_000
+const lapsed = (l: { kind: string; nextAt: number }, now: number) => l.kind === 'wakeup' && now > l.nextAt + LAPSE_MS
+
 type LoopArgs = { delaySeconds?: number; stop?: boolean; cron?: string; reason?: string }
 
 /** A self-paced wakeup or a cron job arms a loop in its stream; stopping or deleting it disarms it. */
 async function noteLoop($: $, sid: string, tool: string, args: LoopArgs) {
   if (tool === 'ScheduleWakeup') {
-    if (args.stop) return update($, loopsA, ({ [sid]: _, ...rest }) => rest)
+    // A session has one self-paced loop: stopping it clears it whichever stream it was filed under, and
+    // re-arming it from another stream moves it there.
+    const others = (m: Loops): Loops => Object.fromEntries(Object.entries(m).filter(([, l]) => l.kind !== 'wakeup'))
+    if (args.stop) return update($, loopsA, others)
     const nextAt = (await $.clock.now()) + (args.delaySeconds ?? 60) * 1000
-    return update($, loopsA, m => ({ ...m, [sid]: { kind: 'wakeup' as const, nextAt, label: args.reason ?? '' } }))
+    return update($, loopsA, m => ({ ...others(m), [sid]: { kind: 'wakeup' as const, nextAt, label: args.reason ?? '' } }))
   }
   if (tool === 'CronCreate') return update($, loopsA, m => ({ ...m, [sid]: { kind: 'cron' as const, nextAt: 0, label: args.cron ?? '' } }))
   if (tool === 'CronDelete') return update($, loopsA, ({ [sid]: _, ...rest }) => rest)
@@ -740,6 +755,7 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    await update($, tagHintA, () => null)
     let text = e.text
     let id: string
     pendingKind = 'prompt'
@@ -857,9 +873,52 @@ export const register: Register = (on, options) => {
   })
 
   // The shortcut bar: every stream a colour-coded pill, its colour the heartbeat's verdict.
+  // `#` at the start of the prompt completes stream names: the bar lists the matches, Tab takes the first,
+  // and a tag naming a known stream is painted in that stream's colour.
+  on('prompt.edit', async ($, e, next) => {
+    const streams = await read($, streamsA)
+    const typing = partialTag(e.text, e.cursor)
+    if (e.key?.key === 'tab' && !e.key.shift && typing !== undefined) {
+      const [first] = tagMatches(streams, typing)
+      if (first) {
+        await update($, tagHintA, () => null)
+        return completeTag(e.text, e.cursor, first)
+      }
+    }
+    const box = await next(e)
+    const partial = partialTag(box.text, box.cursor)
+    const matches = partial === undefined ? [] : tagMatches(streams, partial)
+    await update($, tagHintA, () => (partial === undefined ? null : { partial, matches }))
+    const named = /^\s*#([\w-]+)/.exec(box.text)
+    const known = named?.[1] && streams.find(s => s.id === named[1])
+    if (!named || !known) return box
+    const start = box.text.indexOf('#')
+    return { ...box, decorations: [...(box.decorations ?? []), { start, end: start + named[0].trim().length, color: colorOf(known), bold: true }] }
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const [streams, focus, live] = await Promise.all([read($, streamsA), read($, focusA), read($, liveA)])
     const health = await healthNow($, streams)
+    const hint = await read($, tagHintA)
+    if (hint && !e.props.hasSurvey) {
+      const { Box, Text } = $.ui.resolve(e)
+      if (hint.matches.length === 0)
+        return <Text dimColor>{`#${hint.partial}  new stream`}</Text>
+      return (
+        <Box gap={1}>
+          <Text dimColor>{`#${hint.partial} →`}</Text>
+          {hint.matches.map((id, i) => {
+            const s = streams.find(x => x.id === id)
+            return (
+              <Text key={`tag:${id}`} color={s ? colorOf(s) : undefined} bold={i === 0}>
+                {id}
+              </Text>
+            )
+          })}
+          <Text dimColor>tab to complete</Text>
+        </Box>
+      )
+    }
     if (e.props.hasSurvey || !streams.some(s => !s.archived)) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const width = e.props.bodyColumns
@@ -877,7 +936,8 @@ export const register: Register = (on, options) => {
       await openStream($, focus === id ? '' : id)
       await $.ui.open({ id: PANE, title: 'Streams' })
     }
-    const loops = await read($, loopsA)
+    const now = await $.clock.now()
+    const loops = Object.fromEntries(Object.entries(await read($, loopsA)).filter(([, l]) => !lapsed(l, now)))
     return (
       <Box gap={1}>
         <Button key="all" plain label={focus ? 'all' : 'all ◉'} hotkey="0" onPress={() => focusOn($, '')} />
@@ -947,12 +1007,12 @@ export const register: Register = (on, options) => {
       read($, turnStartedAtA),
       read($, outcomeA),
     ])
-    const loops = await read($, loopsA)
     const filing = await read($, importProgressA)
     // Read only to move the clocks: it changes once a second while something runs.
     await read($, tickA)
     Object.assign(health, await healthNow($, streams))
     const now = await $.clock.now()
+    const loops = Object.fromEntries(Object.entries(await read($, loopsA)).filter(([, l]) => !lapsed(l, now)))
     const width = Math.max(20, e.props.bodyColumns)
     const room = Math.max(3, (e.viewport?.rows ?? 30) - 8)
     const shown = streams.find(s => s.id === view)

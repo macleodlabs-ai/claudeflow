@@ -5,3 +5,4 @@ plugins/streams/debug.json
 .claude/
 node_modules/
 .DS_Store
+assets/full/

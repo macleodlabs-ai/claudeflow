@@ -1,50 +1,131 @@
 <div align="center">
 
-![claudeflow — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.png)
+![claudeflow — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
 
-[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-7c5cff.svg?style=flat-square)](LICENSE)
-![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-a78bfa.svg?style=flat-square)
-![Version](https://img.shields.io/badge/version-0.3.0-22d3ee.svg?style=flat-square)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-34d399.svg?style=flat-square)
-![Claude Code](https://img.shields.io/badge/Claude%20Code-2.1.287%2B-febc2e.svg?style=flat-square)
+<h1>claudeflow</h1>
+
+<p>
+  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.1" src="https://img.shields.io/badge/version-0.3.1-22d3ee?style=for-the-badge"></a>
+  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
+  <img alt="Tests 51 passing" src="https://img.shields.io/badge/tests-51%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+</p>
+<p>
+  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-a78bfa?style=flat-square">
+  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-34d399?style=flat-square&logo=apple&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-febc2e?style=flat-square">
+  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=flat-square&color=fcc2d7&logo=github"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffd8a8"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8b90c4"></a>
+  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-12164a?style=flat-square"></a>
+</p>
+
+<p>
+  <a href="#-install">Install</a> ·
+  <a href="#-what-you-get">What you get</a> ·
+  <a href="#-use">Use</a> ·
+  <a href="#%EF%B8%8F-configure">Configure</a> ·
+  <a href="#-troubleshooting">Troubleshooting</a>
+</p>
 
 </div>
 
-# claudeflow
+---
 
-A single **Claude Code** session ends up doing several things at once: a feature, a side question sent mid-turn, a `/loop` ticking away, subagents fanning out. It all lands in one transcript, interleaved.
+A real Claude Code session is never one task. You start a feature, ask a side question mid-turn, leave a `/loop` watching a deploy, and fan out three subagents to chase a bug. It all lands in **one transcript**, interleaved.
 
-**streams**, the mod in this repository, sorts that work into semantic streams and shows each one on its own:
+**streams**, the mod in this repository, sorts that work into **semantic streams** as it happens, and gives each one its own colour, status and history.
 
-- **A navigator pane** beside the transcript: every stream, its main turn and subagents with live status (yellow running, green done, red error) and what each is doing, active loops with a countdown, and recent activity.
-- **A bar of pills** above the prompt, one per stream, coloured by status. Number keys jump between them.
-- **A coloured line** down the left of every prompt, reply and tool row, in its stream's colour. Focus a stream and the others collapse to one-line stubs.
+![A tangle of interleaved work separating into five colour-coded streams, each with a live status dot](assets/streams.jpg)
+
+## ✨ What you get
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🧭 Navigator pane
+Every stream beside the transcript: its main turn and subagents with **live status**, what each is doing right now, elapsed time, tool count, and loop countdowns.
+
+</td>
+<td width="33%" valign="top">
+
+### 💊 Pill bar
+One pill per stream above the prompt, coloured by health. **Number keys** jump between them; `0` shows everything.
+
+</td>
+<td width="33%" valign="top">
+
+### 🎨 Stream stripes
+A thin pastel line down the left of every prompt, reply and tool row. **Focus** a stream and the rest fold to one-line stubs.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🧠 Semantic routing
+Structure first (subagents, loops, follow-ups, `#tags` with autocomplete), then one small **Haiku** call for anything new. Prompts sent mid-turn go to the right stream.
+
+</td>
+<td valign="top">
+
+### 🗂️ History, in parallel
+Existing sessions are filed into streams in the background, with batched, **parallel** classification and a live progress line.
+
+</td>
+<td valign="top">
+
+### 📦 Archive & fold
+Hide finished streams with `✕` and bring them back later. Fold any stream to its last 10 rows, last row, or header. Idle streams fold themselves.
+
+</td>
+</tr>
+</table>
+
+<h3 align="center">What it looks like</h3>
+
+![The streams pane beside a transcript: coloured stripes per stream, live agent status, loop countdowns and the pill bar](assets/preview.jpg)
+
+### Status at a glance
+
+| Colour | Status | Meaning |
+| :---: | --- | --- |
+| 🟨 | **RUNNING** | A turn, subagent or loop is working now |
+| 🟩 | **DONE** | Finished cleanly |
+| 🟥 | **ERROR** | A subagent or turn failed |
+| 🟧 | **STALLED** | No activity for longer than expected |
+| ↻ | **LOOP** | A `/loop` or cron is armed, with a countdown to the next tick. A loop that stops, or lapses 10 minutes without re-arming, drops back to its stream's status |
 
 ---
 
-## Install
+## 🚀 Install
 
 ```bash
 claude plugin marketplace add macleodlabs-ai/claudeflow
 claude plugin install streams@claudeflow
 ```
 
-Or from inside Claude Code:
+<details>
+<summary><b>From inside Claude Code</b></summary>
 
 ```text
 /plugin marketplace add macleodlabs-ai/claudeflow
 /plugin install streams@claudeflow
 ```
 
-New sessions load it on their own. In a session that is already running, run `/reload-plugins`.
+</details>
 
-The pane opens by itself on a terminal at least 144 columns wide in fullscreen mode; anywhere else, type `/streams`.
+New sessions load it automatically; in a running session, run `/reload-plugins`. The pane opens by itself in fullscreen terminals at least **144 columns** wide. Anywhere else, type `/streams`.
 
-> **Several Claude Code accounts?** Plugins install per config directory. Run the install once in each account (for example once from each `cc-<client>` launcher if you use [claude-sessions](https://github.com/macleodlabs-ai/claude-sessions)).
+> [!TIP]
+> **Several Claude Code accounts?** Plugins install per config directory, so run the install once per account, e.g. once from each `cc-<client>` launcher if you use [claude-sessions](https://github.com/macleodlabs-ai/claude-sessions).
 
-### From a local checkout
+<details>
+<summary><b>From a local checkout</b> (live edits, no reinstall)</summary>
 
-To run a copy you are editing, add the folder as the marketplace instead. Claude Code reads it straight from disk, so `/reload-plugins` picks up your changes with no reinstall:
+Add the folder as the marketplace. Claude Code reads it straight from disk, so `/reload-plugins` picks up your changes:
 
 ```bash
 git clone https://github.com/macleodlabs-ai/claudeflow
@@ -52,37 +133,63 @@ claude plugin marketplace add ./claudeflow
 claude plugin install streams@claudeflow
 ```
 
-Or for a single session, without installing: `claude --plugin-dir ./claudeflow/plugins/streams`.
-
-### Update and remove
+Or for one session only, without installing:
 
 ```bash
-claude plugin update streams@claudeflow
-claude plugin uninstall streams@claudeflow
+claude --plugin-dir ./claudeflow/plugins/streams
 ```
+
+</details>
+
+### Update or remove
+
+| Action | Command |
+| --- | --- |
+| Update | `claude plugin update streams@claudeflow` |
+| Uninstall | `claude plugin uninstall streams@claudeflow` |
 
 ---
 
-## Use
+## 🎛 Use
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `/streams` | Open the navigator pane |
+| `/stream <name>` | Focus one stream; others fold to stubs |
+| `/stream off` | Show every stream again |
+| `/stream` | List streams with their summaries |
+| `/streams import` | List this project's past sessions |
+| `/streams import <id>` | File a past session into streams (re-importing replaces, never duplicates) |
+
+### In the pane and bar
 
 | To | Do |
 | --- | --- |
-| Open the navigator | `/streams` |
-| Focus one stream | Click its name in the pane, press its pill, or `/stream <name>` |
-| Show everything again | `← all streams`, the `all` pill, or `/stream off` |
-| File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` |
-| Fold a stream | Its `▾ all` button cycles all → last 10 → last 1 → header only |
+| Focus a stream | Click its name in the pane, or press its pill |
+| Show everything | `← all streams`, or the `all` pill |
+| File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` Type `#` and the bar lists matching streams; <kbd>tab</kbd> completes the first |
+| Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
-| Drive the bar from the keyboard | ctrl+x then tab, then `0` all, `1`–`9` streams, `s` the pane |
-| Organise a past session | `/streams import` lists this project's sessions; `/streams import <id>` files one into streams |
+| Collapse everything | `collapse all` / `expand all` at the top of the pane |
 
-Streams persist per project directory. When the mod first loads in a session, it files that session's history into streams in the background, and `/streams import` does the same for any earlier session of the project. Long histories are sorted in parallel: prompts go to Haiku in batches with several requests in flight, one pass merges the stream names the batches proposed, and a progress line at the top of the pane shows how far it has got.
+### Keyboard
+
+| Keys | Action |
+| --- | --- |
+| <kbd>ctrl</kbd>+<kbd>x</kbd> then <kbd>tab</kbd> | Move focus to the pill bar |
+| <kbd>0</kbd> | All streams |
+| <kbd>1</kbd>–<kbd>9</kbd> | Jump to stream *n* |
+| <kbd>s</kbd> | Open the pane |
+
+Streams persist **per project directory**, across sessions.
 
 ---
 
-## Configure
+## ⚙️ Configure
 
-Settings appear in Claude Code's config menu (`/config`) under **streams**, or in `settings.json`:
+Settings live in `/config` under **streams**, or in `settings.json`:
 
 ```json
 {
@@ -94,25 +201,33 @@ Settings appear in Claude Code's config menu (`/config`) under **streams**, or i
 }
 ```
 
-| Setting | Default | What it does |
-| --- | --- | --- |
-| `diagnostics` | `false` | Writes `debug.json` into the plugin's folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn it on only when troubleshooting. |
+| Setting | Default | Description |
+| --- | :---: | --- |
+| `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 
-**Model use.** Each new prompt is sorted into a stream with one small Haiku request. Follow-ups ("yes", "continue"), slash commands and `#tag`ged prompts need none. Filing a session's history makes one request per 25 prompts, one to merge stream names, and one per turn that had a prompt sent mid-turn.
+### Model use
+
+| Event | Haiku requests |
+| --- | --- |
+| New prompt | 1 |
+| Follow-up (`yes`, `continue`), slash command, `#tag`ged prompt | 0 |
+| Filing history | 1 per 25 prompts, plus 1 merge pass, plus 1 per turn that had a mid-turn prompt |
 
 ---
 
-## Troubleshooting
+## 🩺 Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| No bar above the prompt | It appears after the first prompt has been sorted. Check the mod loaded: `/plugin` should list `streams` as enabled |
-| The pane does not open | Your terminal is narrower than 144 columns or not fullscreen; type `/streams` |
-| A dim `streams: …` line in the transcript | Claude Code is reporting a hook that failed; the line says which and why. Please include it in an issue |
-| Older rows have no coloured line | History is still being filed; it finishes within a minute or two on a long session |
+| No pill bar | It appears once the first prompt is sorted. Check `/plugin` lists **streams** as enabled. |
+| Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
+| Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
+| Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
 
 ---
 
-## License
+<div align="center">
 
-Proprietary. © 2026 Macleod Labs, https://macleodlabs.ai. See [LICENSE](LICENSE).
+**Proprietary** · © 2026 [Macleod Labs](https://macleodlabs.ai) · See [LICENSE](LICENSE)
+
+</div>

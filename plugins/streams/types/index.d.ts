@@ -66,6 +66,8 @@ declare module 'claude-code' {
       tick: number
       /** Loops waiting to fire, per stream: a self-paced wakeup or a cron job. */
       loops: Record<string, { kind: 'wakeup' | 'cron'; nextAt: number; label: string }>
+      /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */
+      tagHint: { partial: string; matches: string[] } | null
       /** Whether the pane lists archived streams too. */
       showArchived: boolean
       /** Whether this session's transcript has been filed into streams (once per session). */
