@@ -201,13 +201,24 @@ export type TranscriptLine = {
   isMeta?: boolean
   isSidechain?: boolean
   message?: { role?: string; content?: unknown }
-  attachment?: { type?: string; prompt?: string; commandMode?: string }
+  attachment?: { type?: string; prompt?: unknown; commandMode?: string }
 }
 
 export type HistoryItem =
   | { kind: 'prompt'; uuid: string; text: string; isFolded: boolean }
   | { kind: 'reply'; uuid: string; text: string }
   | { kind: 'tool'; uuid: string; id: string; name: string; input: unknown }
+
+/** A message's text: a string as it is, a list of blocks by its text blocks (a prompt with an image is one). */
+export const textOf = (content: unknown): string =>
+  typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content
+          .filter(b => b?.type === 'text' && typeof b.text === 'string')
+          .map(b => b.text as string)
+          .join('\n')
+      : ''
 
 /** The main conversation's prompts (typed or sent mid-turn), replies and tool calls, in order. */
 export const readTranscript = (jsonl: string): HistoryItem[] => {
@@ -222,13 +233,15 @@ export const readTranscript = (jsonl: string): HistoryItem[] => {
     }
     if (d.isSidechain || d.isMeta || !d.uuid) continue
     // A queued task notification is the engine's, not the person's: only queued prompts count.
-    if (d.type === 'attachment' && d.attachment?.type === 'queued_command' && d.attachment.commandMode === 'prompt' && d.attachment.prompt) {
-      items.push({ kind: 'prompt', uuid: d.uuid, text: d.attachment.prompt, isFolded: true })
+    const queued = d.type === 'attachment' && d.attachment?.type === 'queued_command' && d.attachment.commandMode === 'prompt'
+    if (queued) {
+      const text = textOf(d.attachment?.prompt).trim()
+      if (text) items.push({ kind: 'prompt', uuid: d.uuid, text, isFolded: true })
       continue
     }
     const content = d.message?.content
     if (d.type === 'user') {
-      const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter(b => b?.type === 'text').map(b => b.text).join('\n') : ''
+      const text = textOf(content)
       if (text.trim() && !text.trim().startsWith('<')) items.push({ kind: 'prompt', uuid: d.uuid, text: text.trim(), isFolded: false })
     } else if (d.type === 'assistant' && Array.isArray(content)) {
       for (const b of content) {

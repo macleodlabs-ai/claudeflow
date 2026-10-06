@@ -97,6 +97,11 @@ describe('a prompt sent while a turn runs', () => {
       { kind: 'prompt', uuid: 'q1', text: 'what is french for pain medication?', isFolded: true },
     ])
   })
+  // Seen live: a mid-turn prompt with a screenshot is stored as blocks, and reading it as a string crashed the import.
+  test('a mid-turn prompt stored as text and image blocks is read by its text', () => {
+    const line = { type: 'attachment', uuid: 'q9', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: [{ type: 'text', text: '[Image #4] nothing is happening' }, { type: 'image', source: {} }] } }
+    expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', text: '[Image #4] nothing is happening', isFolded: true }])
+  })
   test('tool results and engine notifications are not prompts, and a subagent line is not main conversation', () => {
     expect(items.map(i => i.uuid)).toEqual(['u1', 'a1', 'q1', 'a2'])
   })
