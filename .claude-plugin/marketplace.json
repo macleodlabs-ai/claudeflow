@@ -1,10 +1,11 @@
 {
   "name": "claudeflow",
   "owner": {
-    "name": "Macleod Labs"
+    "name": "Macleod Labs",
+    "url": "https://macleodlabs.ai"
   },
   "metadata": {
-    "description": "MacLeod Labs mods for Claude Code: workflow and session-navigation tools."
+    "description": "Macleod Labs mods for Claude Code: workflow and session-navigation tools."
   },
   "plugins": [
     {

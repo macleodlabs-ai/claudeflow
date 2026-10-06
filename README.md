@@ -28,13 +28,17 @@
   <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8b90c4"></a>
   <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-12164a?style=flat-square"></a>
 </p>
+<p>
+  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff7b72?style=for-the-badge&labelColor=12164a"></a>
+</p>
 
 <p>
   <a href="#-install">Install</a> ·
   <a href="#-what-you-get">What you get</a> ·
   <a href="#-use">Use</a> ·
   <a href="#%EF%B8%8F-configure">Configure</a> ·
-  <a href="#-troubleshooting">Troubleshooting</a>
+  <a href="#-troubleshooting">Troubleshooting</a> ·
+  <a href="#-work-with-macleod-labs"><b>Hire us</b></a>
 </p>
 
 </div>
@@ -227,6 +231,22 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
+
+---
+
+## 🤝 Work with Macleod Labs
+
+<table>
+<tr>
+<td>
+
+**claudeflow is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
+
+<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
+
+</td>
+</tr>
+</table>
 
 ---
 
