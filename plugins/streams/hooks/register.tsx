@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import type { AgentRun, Folded, Health, Stream, StreamRow, StreamRowKind } from '../types'
+import type { AgentRun, ChatStyle, Folded, Health, Stream, StreamRow, StreamRowKind } from '../types'
 import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal } from './classify'
 import {
   BATCH_SYSTEM,
@@ -25,6 +25,8 @@ import {
   nextPastel,
   pastelOf,
   partialTag,
+  codeOf,
+  toolLine,
   tagMatches,
   completeTag,
   REPLY_SYSTEM,
@@ -61,6 +63,7 @@ const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const turnStartedAtA = atom({ plugin: 'streams', key: 'turnStartedAt' } as const, 0)
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const chatStyleA = atom({ plugin: 'streams', key: 'chatStyle' } as const, '')
 const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
@@ -351,7 +354,7 @@ async function record($: $, e: AppendedRow, uuid: string) {
       rows.push(
         b.name === 'Agent'
           ? { ...base, kind: 'agent', text: input.description ?? 'subagent' }
-          : { ...base, kind: 'tool', text: `${b.name} ${oneLine(JSON.stringify(b.input ?? {}), 100)}` },
+          : { ...base, kind: 'tool', text: toolLine(b.name ?? '', b.input), ...withCode(b.name ?? '', b.input) },
       )
     }
   })
@@ -558,9 +561,10 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
                 ? item.text
                 : item.name === 'Agent'
                   ? (input.description ?? 'subagent')
-                  : `${item.name} ${oneLine(JSON.stringify(item.input ?? {}), 100)}`
+                  : toolLine(item.name, item.input)
           const kind: StreamRowKind = item.kind === 'tool' ? (item.name === 'Agent' ? 'agent' : 'tool') : item.kind
-          rows.push({ id: `h:${item.uuid}:${item.kind === 'tool' ? item.id : rows.length}`, streamId: sid, kind, text, at: when })
+          const code = kind === 'tool' && item.kind === 'tool' ? withCode(item.name, item.input) : {}
+          rows.push({ id: `h:${item.uuid}:${item.kind === 'tool' ? item.id : rows.length}`, streamId: sid, kind, text, at: when, ...code })
         } catch (err) {
           lastError = `skipped a row: ${String(err)}`.slice(0, 600)
         }
@@ -701,6 +705,7 @@ async function focusOn($: $, id: string) {
 
 export const register: Register = (on, options) => {
   isDiagnosing = options.diagnostics === true
+  defaultStyle = options.chatStyle === 'compact' ? 'compact' : 'full'
 
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get(storeKey(e.cwd))) as Saved | undefined
@@ -993,7 +998,7 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     timedPane($, e, async () => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Markdown, Code } = $.ui.resolve(e)
     const [streams, view, focus, health, showArchived, agents, fold, busy, current, turnStartedAt, outcome] = await Promise.all([
       read($, streamsA),
       read($, viewA),
@@ -1077,7 +1082,10 @@ export const register: Register = (on, options) => {
     if (shown) {
       const verdict = health[shown.id] ?? 'idle'
       const activity = workOf(shown, 8)
-      const own = rows.filter(r => r.streamId === shown.id).slice(-Math.max(3, room - activity.length * 2))
+      const style: ChatStyle = (await read($, chatStyleA)) || defaultStyle
+      // Full rows run several lines each, so fewer of them fit; the pane scrolls for the rest.
+      const own = rows.filter(r => r.streamId === shown.id).slice(style === 'full' ? -FULL_ROWS : -Math.max(3, room - activity.length * 2))
+      const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
       return (
         <Box flexDirection="column">
           <Button key="back" plain label="← all streams" onPress={() => openStream($, '')} />
@@ -1087,6 +1095,12 @@ export const register: Register = (on, options) => {
               {shown.name}
             </Text>
             {archiveButton(shown)}
+            <Button
+              key="style"
+              plain
+              label={style === 'full' ? '≡ compact' : '▤ full'}
+              onPress={() => update($, chatStyleA, () => nextStyle)}
+            />
           </Box>
           <Text wrap="truncate">
             {badge(verdict, verdict.toUpperCase())}
@@ -1096,12 +1110,65 @@ export const register: Register = (on, options) => {
           <Text dimColor wrap="truncate">{oneLine(shown.summary, width) || ' '}</Text>
           {activity}
           {own.length === 0 && <Text dimColor>Nothing recorded yet.</Text>}
-          {own.map(r => (
-            <Text key={r.id} dimColor={r.kind === 'tool' || r.kind === 'notice'} wrap="truncate">
-              {GLYPH[r.kind]} {r.agentId ? `[${r.agentId.slice(0, 6)}] ` : ''}
-              {oneLine(r.text, width)}
-            </Text>
-          ))}
+          {style === 'compact' &&
+            own.map(r => (
+              <Text key={r.id} dimColor={r.kind === 'tool' || r.kind === 'notice'} wrap="truncate">
+                {GLYPH[r.kind]} {r.agentId ? `[${r.agentId.slice(0, 6)}] ` : ''}
+                {oneLine(r.text, width)}
+              </Text>
+            ))}
+          {style === 'full' &&
+            own.map(r => {
+              const who = r.agentId ? `[${r.agentId.slice(0, 6)}] ` : ''
+              // Prompts and replies through the session's own markdown renderer; a tool call as its name
+              // and one line, with the command, file or edit beneath in the engine's highlighter.
+              if (r.kind === 'prompt' || r.kind === 'reply')
+                return (
+                  <Box key={r.id} flexDirection="row" marginTop={1}>
+                    <Text bold color={r.kind === 'prompt' ? colorOf(shown) : undefined}>
+                      {r.kind === 'prompt' ? '❯ ' : '⏺ '}
+                    </Text>
+                    <Box flexDirection="column" flexGrow={1}>
+                      {who ? <Text dimColor>{who}</Text> : null}
+                      <Markdown key={`md:${r.id}`} text={markdownOf(r.text)} />
+                    </Box>
+                  </Box>
+                )
+              if (r.kind === 'tool') {
+                const cut = r.text.search(/[( ]/)
+                const name = cut < 0 ? r.text : r.text.slice(0, cut)
+                const rest = [cut < 0 ? '' : r.text.slice(cut).trim()]
+                return (
+                  <Box key={r.id} flexDirection="column" marginTop={1}>
+                    <Text wrap="truncate">
+                      <Text color={STATUS_WORD.done}>⏺ </Text>
+                      <Text bold>{name}</Text>
+                      <Text dimColor>
+                        {rest[0]?.startsWith('(') && !who ? '' : ' '}
+                        {who}
+                        {oneLine(rest.join(' '), width - name.length - 4)}
+                      </Text>
+                    </Text>
+                    {r.code ? (
+                      <Box marginLeft={2}>
+                        <Code
+                          source={r.code.source}
+                          {...(r.code.language ? { language: r.code.language } : {})}
+                          {...(r.code.path ? { path: r.code.path } : {})}
+                          {...(r.code.format ? { format: r.code.format } : {})}
+                        />
+                      </Box>
+                    ) : null}
+                  </Box>
+                )
+              }
+              return (
+                <Text key={r.id} dimColor wrap="truncate">
+                  {GLYPH[r.kind]} {who}
+                  {oneLine(r.text, width)}
+                </Text>
+              )
+            })}
         </Box>
       )
     }
@@ -1210,6 +1277,24 @@ const STATUS_WORD: Record<BadgeKind, string> = {
 }
 const STATUS_TEXT: Record<AgentRun['status'], string> = { running: '#f2cc60', done: '#7ee787', error: '#ff7b72' }
 const STATUS_GLYPH: Record<AgentRun['status'], string> = { running: '●', done: '✓', error: '✗' }
+
+/** A tool row's code for the full chat style, as a spread: nothing when the tool has none. */
+const withCode = (tool: string, input: unknown): { code?: StreamRow['code'] } => {
+  const code = codeOf(tool, input)
+  return code ? { code } : {}
+}
+
+/** Rows the full chat style draws in a stream's view; older ones stay in compact. */
+const FULL_ROWS = 30
+
+/** Markdown text within the element's bound, control characters but tab and newline removed. */
+const markdownOf = (text: string): string => {
+  const clean = text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
+  return clean.length <= 9000 ? clean : `${clean.slice(0, 9000)}\n\n…`
+}
+
+/** The `chatStyle` setting: how a stream's own view draws its rows until the pane's toggle says otherwise. */
+let defaultStyle: ChatStyle = 'full'
 
 const GLYPH: Record<StreamRowKind, string> = { prompt: '>', reply: '⏺', tool: '⎿', agent: '↳', loop: '↻', notice: '·' }
 
