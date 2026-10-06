@@ -886,7 +886,7 @@ export const register: Register = on => {
           {badge(l.status, `${STATUS_GLYPH[l.status]} ${l.status.toUpperCase()}${l.clock ? ` ${l.clock}` : ''}`)}
           <Text bold={l.status === 'running'} dimColor={l.status !== 'running'}>
             {'  '}
-            {oneLine(l.label, width - 20)}
+            {oneLine(l.label, 120)}
           </Text>
         </Text>,
         l.last ? (
