@@ -35,6 +35,9 @@ export type Stream = {
   archived?: boolean
 }
 
+/** A tool call's input as the full chat style draws it: highlighted source, or a unified diff. */
+export type RowCode = { source: string; language?: string; path?: string; format?: 'diff' }
+
 export type StreamRow = {
   id: string
   streamId: string
@@ -42,7 +45,11 @@ export type StreamRow = {
   text: string
   agentId?: string
   at: number
+  code?: RowCode
 }
+
+/** How a stream's own view draws its rows: one line each, or as the session's transcript draws them. */
+export type ChatStyle = 'compact' | 'full'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -66,6 +73,8 @@ declare module 'claude-code' {
       tick: number
       /** Loops waiting to fire, per stream: a self-paced wakeup or a cron job. */
       loops: Record<string, { kind: 'wakeup' | 'cron'; nextAt: number; label: string }>
+      /** The chat style chosen in the pane this session; '' follows the `chatStyle` setting. */
+      chatStyle: ChatStyle | ''
       /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */
       tagHint: { partial: string; matches: string[] } | null
       /** Whether the pane lists archived streams too. */

@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -399,6 +399,78 @@ describe('active loops', () => {
     expect(await pane.find({ type: 'Text', text: /↻ LOOP next 1:00/ })).toBeDefined()
     await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w2', stop: true } as never)
     expect(await pane.find({ type: 'Text', text: /↻ LOOP/ })).toBe(undefined)
+  })
+})
+
+describe('full chat style', () => {
+  const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' } as never
+  // Compact rows are one line each; the full style is for reading a stream's work as the session shows it,
+  // so the command, the edit and the reply's code must keep their structure and highlighting.
+  test('a Bash call keeps its command as bash, an Edit becomes a diff, and a Read needs nothing beneath', () => {
+    expect(codeOf('Bash', { command: 'npm test -- --watch' })).toEqual({ source: 'npm test -- --watch', language: 'bash' })
+    expect(codeOf('Edit', { file_path: 'src/a.ts', old_string: 'let x = 1', new_string: 'const x = 1' })).toEqual({
+      source: '@@ -1,1 +1,1 @@\n-let x = 1\n+const x = 1',
+      format: 'diff',
+      path: 'src/a.ts',
+    })
+    expect(codeOf('Write', { file_path: 'a.py', content: 'print(1)\n' })).toEqual({ source: 'print(1)\n', path: 'a.py' })
+    expect(codeOf('Read', { file_path: 'src/a.ts' })).toBe(undefined)
+  })
+
+  test('a tool row is titled as the session titles it, by the file or command it acts on', () => {
+    expect(toolLine('Edit', { file_path: 'src/a.ts', old_string: 'x', new_string: 'y' })).toBe('Edit(src/a.ts)')
+    expect(toolLine('Bash', { command: 'npm test', description: 'run tests' })).toBe('Bash(npm test)')
+    expect(toolLine('TodoWrite', { todos: [] })).toBe('TodoWrite {"todos":[]}')
+  })
+
+  test('an oversized diff is drawn as whole hunks, never cut mid-hunk where it would stop parsing as a diff', () => {
+    const big = 'x\n'.repeat(CODE_LIMIT)
+    const code = codeOf('MultiEdit', { file_path: 'a.ts', edits: [{ old_string: 'a', new_string: 'b' }, { old_string: big, new_string: big }] })
+    expect(code?.format).toBe('diff')
+    expect(code?.source).toBe('@@ -1,1 +1,1 @@\n-a\n+b')
+  })
+
+  // One tagged prompt, a reply with a fenced block, an Edit and a Bash call: filed by the history import.
+  const WORK = [
+    { type: 'user', uuid: 'u1', message: { role: 'user', content: '#billing why is the invoice total off?' } },
+    { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Rounding happens here:\n\n```ts\nMath.round(x)\n```' }] } },
+    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'src/total.ts', old_string: 'Math.round(x)', new_string: 'roundHalfEven(x)' } }] } },
+    { type: 'assistant', uuid: 'a3', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' } }] } },
+  ].map(l => JSON.stringify(l)).join('\n')
+
+  const openBilling = async ($: Engine, on: On) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: WORK.length, mtimeMs: 0, isLink: false } }) as never)
+    on('fs.read', async () => ({ value: WORK }) as never)
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(1500)
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+    await pane.press({ key: 'open:billing' })
+    return pane
+  }
+
+  test('a stream view draws replies as markdown and tool calls with highlighted code by default, and the toggle switches to compact', ENGINE, async ($, on) => {
+    const pane = await openBilling($, on)
+    const codes = await pane.findAll({ type: 'Code' })
+    expect(codes.map(c => (c.props as { format?: string; language?: string }).format ?? (c.props as { language?: string }).language)).toEqual(['diff', 'bash'])
+    const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
+    expect(texts).toEqual(['why is the invoice total off?', 'Rounding happens here:\n\n```ts\nMath.round(x)\n```'])
+    await pane.press({ key: 'style' })
+    expect(await pane.find({ type: 'Code' })).toBe(undefined)
+    await pane.press({ key: 'style' })
+    expect(await pane.find({ type: 'Code' })).toBeDefined()
+  })
+
+  test('the chatStyle setting picks the style a stream view opens in', { ...ENGINE, options: { chatStyle: 'compact' } }, async ($, on) => {
+    const pane = await openBilling($, on)
+    expect(await pane.find({ type: 'Code' })).toBe(undefined)
   })
 })
 
