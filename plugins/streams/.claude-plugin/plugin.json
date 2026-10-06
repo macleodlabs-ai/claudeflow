@@ -1,9 +1,21 @@
 {
   "name": "streams",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {
-    "name": "MacLeod Labs"
+    "name": "Macleod Labs",
+    "url": "https://macleodlabs.ai"
+  },
+  "homepage": "https://github.com/macleodlabs-ai/claudeflow",
+  "repository": "https://github.com/macleodlabs-ai/claudeflow",
+  "license": "SEE LICENSE IN LICENSE",
+  "userConfig": {
+    "diagnostics": {
+      "type": "boolean",
+      "title": "Diagnostics",
+      "description": "Write debug.json into the plugin folder every few seconds (for troubleshooting).",
+      "default": false
+    }
   }
 }

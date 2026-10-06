@@ -142,6 +142,9 @@ function noteUnmatched(component: string, requestId: string, text: string) {
   unmatched.set(`${component}:${requestId}`, { component, requestId, head: text.slice(0, 80) })
 }
 
+/** Off unless the `diagnostics` setting is on: an installed copy should not write into its own folder. */
+let isDiagnosing = false
+
 async function writeDiagnostics($: $) {
   const [rows, streams, historyFiled] = await Promise.all([read($, rowsA), read($, streamsA), read($, historyFiledA)])
   const perStream: Record<string, number> = {}
@@ -373,7 +376,7 @@ async function save($: $) {
 /** Every few seconds: recompute each stream's health, and say so when one stalls or background work finishes. */
 async function beat($: $) {
   await unstick($).catch(() => {})
-  await writeDiagnostics($).catch(() => {})
+  if (isDiagnosing) await writeDiagnostics($).catch(() => {})
   const [streams, current, busy, live, inflight, outcome, before, now] = await Promise.all([
     read($, streamsA),
     read($, currentA),
@@ -573,7 +576,9 @@ async function focusOn($: $, id: string) {
   await refreshStatus($)
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  isDiagnosing = options.diagnostics === true
+
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get(storeKey(e.cwd))) as Saved | undefined
     if (saved && (await read($, streamsA)).length === 0) {
