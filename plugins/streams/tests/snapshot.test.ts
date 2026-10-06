@@ -67,8 +67,8 @@ describe('the pane at a glance', () => {
       const text = lines.join('\n')
       for (const agent of ['trace rounding', 'currency conversion', 'scan tax code', 'session cookie']) expect(text).toContain(agent)
       // A stream with work running says so in its header, the moment it runs: never idle beside a running agent.
-      expect(text).not.toMatch(/ IDLE /)
-      expect(text).toMatch(/ RUNNING .*3 agents/)
+      expect(text).not.toMatch(/IDLE ·/)
+      expect(text).toMatch(/RUNNING .*3 agents/)
       // Every agent carries a solid status badge with its clock.
       expect(text).toMatch(/● RUNNING 0:\d\d .*trace rounding/)
       expect(text).toMatch(/✓ DONE 0:42 .*currency conversion/)

@@ -154,6 +154,7 @@ async function writeDiagnostics($: $) {
         historyFiled,
         importing,
         lastError,
+        lastPane,
         queuedJobs: jobs.map(j => j.kind),
         streams: streams.map(s => s.id),
         rowsPerStream: perStream,
@@ -164,6 +165,43 @@ async function writeDiagnostics($: $) {
       2,
     ),
   )
+}
+
+/**
+ * The pane's window is the engine's: scrolled down while the pane was long, it stays put when the content
+ * shrinks, and the pane looks empty. Past the last drawn row, bring it back to the top.
+ */
+async function unstick($: $) {
+  const scroll = lastPane.scroll as { offset: number } | undefined
+  const rows = Number(lastPane.rows ?? 0)
+  lastPane = { ...lastPane, panes: await $.ui.panes() }
+  if (scroll && scroll.offset > 0 && scroll.offset >= rows) {
+    const r = await $.ui.scroll({ in: PANE, to: 'start' })
+    lastPane = { ...lastPane, unstuck: r }
+  }
+}
+
+/** The pane's last draw, for the diagnostics file: when, how long, what it drew, or what it threw. */
+let lastPane: Record<string, unknown> = {}
+
+type PaneRender = Parameters<$['ui']['resolve']>[0] & {
+  props: { bodyColumns: number; placement: string; scroll?: { offset: number; bodyRows: number } }
+}
+
+async function timedPane($: $, e: PaneRender, draw: () => Promise<RenderElement>): Promise<RenderElement> {
+  const began = Date.now()
+  const view = await read($, viewA)
+  try {
+    const tree = await draw()
+    const drawn = JSON.stringify(tree)
+    // An upper bound on the rows drawn: every Text and Button is at most a row.
+    const rows = (drawn.match(/"type":"(Text|Button)"/g) ?? []).length
+    lastPane = { at: began, ms: Date.now() - began, view, columns: e.props.bodyColumns, placement: e.props.placement, surface: e.surface, size: drawn.length, rows, scroll: e.props.scroll }
+    return tree
+  } catch (err) {
+    lastPane = { at: began, ms: Date.now() - began, view, columns: e.props.bodyColumns, error: `${String(err)} ${(err as Error)?.stack ?? ''}`.slice(0, 600) }
+    throw err
+  }
 }
 
 // Lost on reload, and that is fine: both only bridge a moment.
@@ -331,6 +369,7 @@ async function save($: $) {
 
 /** Every few seconds: recompute each stream's health, and say so when one stalls or background work finishes. */
 async function beat($: $) {
+  await unstick($).catch(() => {})
   await writeDiagnostics($).catch(() => {})
   const [streams, current, busy, live, inflight, outcome, before, now] = await Promise.all([
     read($, streamsA),
@@ -514,6 +553,7 @@ async function inStream($: $, agentId: string | undefined): Promise<string> {
 async function openStream($: $, id: string) {
   await update($, viewA, () => id)
   await focusOn($, id)
+  await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})
 }
 
 async function setArchived($: $, id: string, archived: boolean) {
@@ -560,6 +600,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'streams' }, async $ => {
     await $.ui.open({ id: PANE, title: 'Streams', focus: true })
+    await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})
     return { text: 'Streams navigator opened.' }
   })
 
@@ -772,7 +813,8 @@ export const register: Register = on => {
     return stripe($, e, sid, await next(e))
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
+    timedPane($, e, async () => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const [streams, view, focus, health, showArchived, agents, fold, busy, current, turnStartedAt, outcome] = await Promise.all([
       read($, streamsA),
@@ -797,10 +839,10 @@ export const register: Register = on => {
     const shown = streams.find(s => s.id === view)
     const rows = await read($, rowsA)
 
+    // Status words as bold coloured text: the pane's rows stay one Text per line, the shape known to paint.
     const badge = (kind: BadgeKind, text: string) => (
-      <Text backgroundColor={BADGE_BG[kind]} color={BADGE_FG[kind]} bold>
-        {' '}
-        {text}{' '}
+      <Text color={STATUS_WORD[kind]} bold>
+        {text}
       </Text>
     )
     const loopBadge = (s: Stream) => {
@@ -835,23 +877,22 @@ export const register: Register = on => {
           last: a.status === 'running' ? (a.tools || a.last !== 'starting' ? `${a.tools} tools · ${a.last}` : 'starting up…') : '',
         })
       }
-      return lines.slice(0, limit).map(l => (
-        <Box key={l.key} flexDirection="column">
-          <Box gap={1}>
-            <Text> </Text>
-            {badge(l.status, `${STATUS_GLYPH[l.status]} ${l.status.toUpperCase()}${l.clock ? ` ${l.clock}` : ''}`)}
-            <Text bold={l.status === 'running'} color={l.status === 'running' ? STATUS_TEXT.running : undefined} dimColor={l.status !== 'running'} wrap="truncate">
-              {l.label}
-            </Text>
-          </Box>
-          {l.last ? (
-            <Text color={STATUS_TEXT.running} wrap="truncate">
-              {'    ↳ '}
-              {oneLine(l.last, width - 7)}
-            </Text>
-          ) : null}
-        </Box>
-      ))
+      return lines.slice(0, limit).flatMap(l => [
+        <Text key={l.key} wrap="truncate">
+          {'  '}
+          {badge(l.status, `${STATUS_GLYPH[l.status]} ${l.status.toUpperCase()}${l.clock ? ` ${l.clock}` : ''}`)}
+          <Text bold={l.status === 'running'} dimColor={l.status !== 'running'}>
+            {'  '}
+            {l.label}
+          </Text>
+        </Text>,
+        l.last ? (
+          <Text key={`${l.key}:last`} color={STATUS_WORD.running} wrap="truncate">
+            {'    ↳ '}
+            {oneLine(l.last, width - 7)}
+          </Text>
+        ) : null,
+      ])
     }
 
     if (shown) {
@@ -868,10 +909,11 @@ export const register: Register = on => {
             </Text>
             {archiveButton(shown)}
           </Box>
-          <Box gap={1}>
+          <Text wrap="truncate">
             {badge(verdict, verdict.toUpperCase())}
+            {loops[shown.id] ? '  ' : ''}
             {loopBadge(shown)}
-          </Box>
+          </Text>
           <Text dimColor wrap="truncate">{shown.summary || ' '}</Text>
           {activity}
           {own.length === 0 && <Text dimColor>Nothing recorded yet.</Text>}
@@ -917,13 +959,15 @@ export const register: Register = on => {
             )}
             {archiveButton(s)}
           </Box>
-          <Box gap={1}>
+          <Text wrap="truncate">
             {isArchived ? <Text dimColor>{verdict}</Text> : badge(verdict, verdict.toUpperCase())}
+            {!isArchived && loops[s.id] ? '  ' : ''}
             {isArchived ? null : loopBadge(s)}
-            <Text dimColor wrap="truncate">
-              {s.rows} rows · {s.agents} agents · {ago(now - s.lastAt)} ago
+            <Text dimColor>
+              {' '}
+              · {s.rows} rows · {s.agents} agents · {ago(now - s.lastAt)} ago
             </Text>
-          </Box>
+          </Text>
           {f === 'none' ? null : (
             <Box flexDirection="column">
               {s.summary ? <Text dimColor wrap="truncate">{s.summary}</Text> : null}
@@ -967,9 +1011,18 @@ export const register: Register = on => {
         {showArchived ? archived.map(s => card(s, true)) : null}
       </Box>
     )
-  })
+    }),
+  )
 }
 
+const STATUS_WORD: Record<BadgeKind, string> = {
+  running: '#ffd33d',
+  loop: '#ffd33d',
+  stalled: '#ff9500',
+  done: '#7ee787',
+  error: '#ff7b72',
+  idle: '#8b949e',
+}
 const STATUS_TEXT: Record<AgentRun['status'], string> = { running: '#f2cc60', done: '#7ee787', error: '#ff7b72' }
 const STATUS_GLYPH: Record<AgentRun['status'], string> = { running: '●', done: '✓', error: '✗' }
 
