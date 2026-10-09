@@ -79,6 +79,10 @@ declare module 'claude-code' {
       chatStyle: ChatStyle | ''
       /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */
       tagHint: { partial: string; matches: string[] } | null
+      /** Whether the status card is up above the prompt. */
+      statusOpen: boolean
+      /** The card's git rows, read as it opened: branch against upstream and what is uncommitted. */
+      statusGit: { id: string; area: string; state: string; detail: string }[]
       /** Whether the pane lists archived streams too. */
       showArchived: boolean
       /** Whether this session's transcript has been filed into streams (once per session). */

@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -542,9 +542,9 @@ describe('full chat style', () => {
     expect(codes.map(c => (c.props as { format?: string; language?: string }).format ?? (c.props as { language?: string }).language)).toEqual(['diff', 'bash'])
     const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
     expect(texts).toEqual(['why is the invoice total off?', 'Rounding happens here:\n\n```ts\nMath.round(x)\n```'])
-    await pane.press({ key: 'style' })
+    await pane.press({ key: 'style:compact' })
     expect(await pane.find({ type: 'Code' })).toBe(undefined)
-    await pane.press({ key: 'style' })
+    await pane.press({ key: 'style:full' })
     expect(await pane.find({ type: 'Code' })).toBeDefined()
   })
 
@@ -772,5 +772,65 @@ describe('filing a long history in parallel', () => {
     expect(await colourOf('p2')).toBe(billing)
     expect(await colourOf('p3')).toBe(billing)
     expect(await colourOf('p4')).not.toBe(billing)
+  })
+})
+
+describe('the status card', () => {
+  const BAR_PROPS = { bodyColumns: 120, hasSurvey: false } as never
+  const s = (id: string, lastAt = 0) => ({ id, name: id, summary: `${id} work`, lastAt })
+
+  // The card exists to answer "what needs me?": a reply that ends on a question is the person's move,
+  // so it must read as waiting, never as done.
+  test('a stream whose last reply asks a question is waiting for the person, with the question as its detail', () => {
+    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' }, now: 0 })
+    expect(line.kind).toBe('waiting')
+    expect(line.detail).toBe('Shall I commit it?')
+    expect(questionOf('All done.')).toBe(undefined)
+  })
+
+  test('running work says what it is doing now, and running and waiting rows sort above finished ones', () => {
+    const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }], now: 0 })
+    expect(run.detail).toBe('trace rounding: Grep toFixed (6 tools)')
+    const done = statusOf({ stream: s('docs', 9), health: 'done', running: [], now: 10_000 })
+    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' }, now: 0 })
+    expect(sortStatus([done, wait, run], { docs: 9 }).map(l => l.id)).toEqual(['billing', 'auth', 'docs'])
+  })
+
+  test('git rows say whether anything is unpushed or uncommitted', () => {
+    const rows = gitStatus('## main...origin/main [ahead 2]\n M src/a.ts\n?? notes.md\n')
+    expect(rows.map(r => [r.area, r.state, r.detail])).toEqual([
+      ['Git branch', 'main', '2 unpushed'],
+      ['Uncommitted', '2 files', 'src/a.ts, notes.md'],
+    ])
+    expect(gitStatus('## main...origin/main\n')[0]?.detail).toBe('up to date with origin/main')
+  })
+
+  // Asking for status is the most common question: answered locally it costs no model call and works mid-turn.
+  test('typing status shows the card without sending a prompt, and the bar button shows it too', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: BAR_PROPS })
+    expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+
+    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'composer' } })
+    expect(r.drop).toBeDefined()
+    expect(sent).toEqual(['why is the invoice total off?'])
+    expect(await bar.find({ key: 'st-open:billing' })).toBeDefined()
+
+    await bar.press({ key: 'status-close' })
+    expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+    await bar.press({ key: 'status' })
+    expect(await bar.find({ key: 'st-open:billing' })).toBeDefined()
+    await $.prompt.submit({ text: '#billing one more thing', wait: false, origin: { kind: 'composer' } })
+    expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
   })
 })

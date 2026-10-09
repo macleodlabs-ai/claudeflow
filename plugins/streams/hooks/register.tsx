@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { AgentRun, ChatStyle, Folded, Health, Stream, StreamRow, StreamRowKind } from '../types'
-import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal } from './classify'
+import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal, StatusKind, StatusLine } from './classify'
 import {
   BATCH_SYSTEM,
   MERGE_SYSTEM,
@@ -25,6 +25,9 @@ import {
   nextPastel,
   pastelOf,
   partialTag,
+  gitStatus,
+  sortStatus,
+  statusOf,
   codeOf,
   toolLine,
   tagMatches,
@@ -65,6 +68,8 @@ const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const chatStyleA = atom({ plugin: 'streams', key: 'chatStyle' } as const, '')
 const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
+const statusOpenA = atom({ plugin: 'streams', key: 'statusOpen' } as const, false)
+const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, [])
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
 const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
@@ -745,6 +750,55 @@ async function focusOn($: $, id: string) {
   await refreshStatus($)
 }
 
+/** A typed `status` or `status?` is a request for the card, answered here without a model turn. */
+const STATUS_ASK = /^\s*status\s*\??\s*$/i
+
+/** Shows the status card above the prompt, its git rows read now; the stream rows stay live as it shows. */
+async function openStatus($: $) {
+  await update($, statusOpenA, () => true)
+  const git = await $.process
+    .run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 })
+    .then(r => (r.exitCode === 0 ? gitStatus(r.stdout) : []))
+    .catch(() => [])
+  await update($, statusGitA, () => git)
+}
+
+/** Every stream's status row, in the order that needs the person first. */
+async function streamStatus($: $, streams: readonly Stream[], health: Record<string, Health>, now: number): Promise<StatusLine[]> {
+  const [agents, rows, loops] = await Promise.all([read($, agentsA), read($, rowsA), read($, loopsA)])
+  const lines = streams
+    .filter(s => !s.archived)
+    .map(s => {
+      const loop = loops[s.id]
+      return statusOf({
+        stream: s,
+        health: health[s.id] ?? 'idle',
+        ...(loop && !lapsed(loop, now) ? { loop } : {}),
+        running: Object.values(agents)
+          .filter(a => a.streamId === s.id && a.status === 'running')
+          .sort((a, b) => b.lastAt - a.lastAt),
+        lastSaid: rows.findLast(r => r.streamId === s.id && (r.kind === 'prompt' || r.kind === 'reply')),
+        now,
+      })
+    })
+  return sortStatus(lines, Object.fromEntries(streams.map(s => [s.id, s.lastAt])))
+}
+
+/** `/streams update`: fetch the newest release and load it into this session, no restart. */
+async function selfUpdate($: $): Promise<string> {
+  const run = (argv: string[]) => $.process.run(argv, { timeoutMs: 120_000 })
+  await run(['claude', 'plugin', 'marketplace', 'update', 'claudeflow']).catch(() => undefined)
+  const r = await run(['claude', 'plugin', 'update', 'streams@claudeflow']).catch(err => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+  const said = oneLine(r.stdout || r.stderr, 300)
+  if (r.exitCode !== 0) return `Update failed: ${said}`
+  // The reload replaces this module, so it runs after the command has answered.
+  void $.clock
+    .sleep(300)
+    .then(() => $.command.run({ command: 'reload-plugins' }))
+    .catch(() => $.ui.toast('streams updated: run /reload-plugins to load it'))
+  return `${said} Reloading plugins…`
+}
+
 export const register: Register = (on, options) => {
   isDiagnosing = options.diagnostics === true
   defaultStyle = options.chatStyle === 'compact' ? 'compact' : 'full'
@@ -779,6 +833,11 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'streams' }, async ($, e) => {
     const [verb, ...rest] = e.args.trim().split(/\s+/)
     if (verb === 'import') return { text: await importCommand($, rest.join(' ')) }
+    if (verb === 'status') {
+      await openStatus($)
+      return { text: 'Status card shown above the prompt.' }
+    }
+    if (verb === 'update') return { text: await selfUpdate($) }
     await $.ui.open({ id: PANE, title: 'Streams', focus: true })
     await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})
     return { text: 'Streams navigator opened. `/streams import` files a past session of this project into streams.' }
@@ -805,6 +864,11 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, tagHintA, () => null)
+    if (STATUS_ASK.test(e.text) && e.origin.kind === 'composer') {
+      await openStatus($)
+      return { drop: 'status shown above the prompt' }
+    }
+    await update($, statusOpenA, () => false)
     let text = e.text
     let id: string
     pendingKind = 'prompt'
@@ -968,6 +1032,71 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
+    if (!e.props.hasSurvey && (await read($, statusOpenA))) {
+      const { Box, Button, Text } = $.ui.resolve(e)
+      await read($, tickA)
+      const now = await $.clock.now()
+      const lines: StatusLine[] = [...(await read($, statusGitA)), ...(await streamStatus($, streams, health, now))]
+      const shown = lines.slice(0, STATUS_ROWS)
+      const width = e.props.bodyColumns
+      const areaW = Math.min(24, Math.max(10, ...shown.map(l => l.area.length + 2)))
+      const stateW = Math.min(18, Math.max(8, ...shown.map(l => l.state.length + 2)))
+      const close = () => update($, statusOpenA, () => false)
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="#8b949e" paddingX={1}>
+          <Box gap={1}>
+            <Text bold>Status</Text>
+            <Text dimColor>
+              {streams.filter(s => !s.archived).length} streams · {new Date(now).toTimeString().slice(0, 5)}
+            </Text>
+            <Button key="status-close" plain dimColor label="✕ close" onPress={close} />
+          </Box>
+          <Box>
+            <Box width={areaW}>
+              <Text dimColor bold>Area</Text>
+            </Box>
+            <Box width={stateW}>
+              <Text dimColor bold>State</Text>
+            </Box>
+            <Text dimColor bold>Detail</Text>
+          </Box>
+          {shown.map(l => {
+            const isStream = !l.id.startsWith('git:')
+            const s = isStream ? streams.find(x => x.id === l.id) : undefined
+            return (
+              <Box key={`st:${l.id}`}>
+                <Box width={areaW}>
+                  {s ? (
+                    <Button
+                      key={`st-open:${l.id}`}
+                      plain
+                      hover={{ bold: true }}
+                      label={oneLine(l.area, areaW - 2)}
+                      onPress={async () => {
+                        await openStream($, l.id)
+                        await $.ui.open({ id: PANE, title: 'Streams' })
+                      }}
+                    />
+                  ) : (
+                    <Text wrap="truncate">{l.area}</Text>
+                  )}
+                </Box>
+                <Box width={stateW}>
+                  <Text wrap="truncate" bold={!!l.kind} color={l.kind ? STATE_COLOR[l.kind] : '#a5d8ff'}>
+                    {l.state}
+                  </Text>
+                </Box>
+                <Box flexGrow={1} flexShrink={1}>
+                  <Text wrap="wrap">{oneLine(l.detail, Math.max(20, (width - areaW - stateW) * 2))}</Text>
+                </Box>
+              </Box>
+            )
+          })}
+          {lines.length > shown.length ? <Text dimColor>+{lines.length - shown.length} more in the streams pane</Text> : null}
+          {lines.length === 0 ? <Text dimColor>Nothing yet: streams appear as you prompt.</Text> : null}
+        </Box>
+      )
+    }
     if (e.props.hasSurvey || !streams.some(s => !s.archived)) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const width = e.props.bodyColumns
@@ -1003,7 +1132,8 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
-        <Button key="pane" plain label="≡" hotkey="s" onPress={() => $.ui.open({ id: PANE, title: 'Streams', focus: true })} />
+        <Button key="status" plain label="status" hotkey="t" onPress={() => openStatus($)} />
+        <Button key="pane" plain label="≡" hotkey="s"onPress={() => $.ui.open({ id: PANE, title: 'Streams', focus: true })} />
         {pills.length === 0 ? <Text dimColor>widen the terminal to see streams</Text> : null}
       </Box>
     )
@@ -1138,13 +1268,19 @@ export const register: Register = (on, options) => {
             <Text bold color={colorOf(shown)}>
               {shown.name}
             </Text>
+            <Text dimColor>│ view</Text>
+            {(['full', 'compact'] as const).map(s => (
+              // Both choices always drawn, the current one lit: `v` switches to the other.
+              <Button
+                key={`style:${s}`}
+                plain
+                dimColor={s !== style}
+                label={`${s === style ? '◉' : '○'} ${s}`}
+                {...(s === nextStyle ? { hotkey: 'v' } : {})}
+                onPress={() => update($, chatStyleA, () => s)}
+              />
+            ))}
             {archiveButton(shown)}
-            <Button
-              key="style"
-              plain
-              label={style === 'full' ? '≡ compact' : '▤ full'}
-              onPress={() => update($, chatStyleA, () => nextStyle)}
-            />
           </Box>
           <Text wrap="truncate">
             {badge(verdict, verdict.toUpperCase())}
@@ -1319,6 +1455,10 @@ const STATUS_WORD: Record<BadgeKind, string> = {
   error: '#ff7b72',
   idle: '#8b949e',
 }
+/** The status card's state words: the pane's status colours, and a blue that asks for the person. */
+const STATE_COLOR: Record<StatusKind, string> = { ...STATUS_WORD, waiting: '#79c0ff' }
+/** Rows the status card shows before pointing to the pane. */
+const STATUS_ROWS = 14
 const STATUS_TEXT: Record<AgentRun['status'], string> = { running: '#f2cc60', done: '#7ee787', error: '#ff7b72' }
 const STATUS_GLYPH: Record<AgentRun['status'], string> = { running: '●', done: '✓', error: '✗' }
 

@@ -458,3 +458,82 @@ export const toolLine = (tool: string, input: unknown): string => {
     .find((v): v is string => typeof v === 'string' && v.trim() !== '')
   return arg !== undefined ? `${tool}(${oneLine(arg, 100)})` : `${tool} ${oneLine(JSON.stringify(input ?? {}), 100)}`
 }
+
+/** What the status card says of one stream: a state word, its colour kind, and one line of detail. */
+export type StatusKind = BadgeKind | 'waiting'
+export type StatusLine = { id: string; area: string; kind?: StatusKind; state: string; detail: string }
+export type StatusInput = {
+  stream: Pick<Stream, 'id' | 'name' | 'summary' | 'lastAt'>
+  health: Health
+  loop?: { kind: 'wakeup' | 'cron'; nextAt: number; label: string }
+  running: { description: string; last: string; tools: number }[]
+  /** The stream's last prompt or reply: a reply ending in a question is waiting on the person. */
+  lastSaid?: { kind: string; text: string }
+  now: number
+}
+
+const STATE_WORD: Record<StatusKind, string> = {
+  running: 'RUNNING',
+  loop: 'LOOP',
+  waiting: 'WAITING FOR YOU',
+  error: 'ERROR',
+  stalled: 'STALLED',
+  done: 'DONE',
+  idle: 'IDLE',
+}
+const STATE_RANK: Record<StatusKind, number> = { running: 0, loop: 1, waiting: 2, error: 3, stalled: 4, done: 5, idle: 6 }
+
+/** The question a reply ends on, as its last sentence; undefined when it does not end on one. */
+export const questionOf = (text: string): string | undefined => {
+  const t = text.trim().replace(/[*_`\s]+$/, '')
+  if (!t.endsWith('?')) return undefined
+  const last = t.split(/(?<=[.!?:])\s+|\n+/).filter(Boolean).at(-1) ?? t
+  return oneLine(last, 300)
+}
+
+/** One stream's row on the status card: what it is doing, or what it last left the person with. */
+export function statusOf(x: StatusInput): StatusLine {
+  const { stream: s, now } = x
+  const line = (kind: StatusKind, detail: string, state = STATE_WORD[kind]): StatusLine => ({ id: s.id, area: s.name, kind, state, detail })
+  if (x.health === 'running') {
+    const top = x.running[0]
+    if (!top) return line('running', `main turn · ${s.summary}`)
+    const more = x.running.length > 1 ? `${x.running.length} agents · ` : ''
+    return line('running', `${more}${top.description}: ${top.last} (${top.tools} tools)`)
+  }
+  if (x.loop) {
+    const when = x.loop.kind === 'cron' ? x.loop.label : `next tick in ${clockOf(Math.max(0, x.loop.nextAt - now))}`
+    return line('loop', `${when} · ${s.summary}`)
+  }
+  const question = x.lastSaid?.kind === 'reply' ? questionOf(x.lastSaid.text) : undefined
+  if (question && x.health !== 'error') return line('waiting', question)
+  return line(x.health, `${s.summary || '—'} · ${ago(now - s.lastAt)} ago`)
+}
+
+/** Status rows in the order that needs the person: running, looping, waiting, failed, then the finished. */
+export const sortStatus = (lines: StatusLine[], lastAt: Record<string, number>): StatusLine[] =>
+  [...lines].sort((a, b) => STATE_RANK[a.kind ?? 'idle'] - STATE_RANK[b.kind ?? 'idle'] || (lastAt[b.id] ?? 0) - (lastAt[a.id] ?? 0))
+
+/** The card's git rows from `git status --porcelain=v1 --branch`: branch against upstream, and what is uncommitted. */
+export function gitStatus(porcelain: string): StatusLine[] {
+  const [head = '', ...files] = porcelain.split('\n').filter(Boolean)
+  const m = /^## (?:No commits yet on )?([^.\s]+)(?:\.\.\.(\S+))?(?: \[(.*)\])?/.exec(head)
+  if (!m) return []
+  const [, branch = '', upstream, track = ''] = m
+  const ahead = Number(/ahead (\d+)/.exec(track)?.[1] ?? 0)
+  const behind = Number(/behind (\d+)/.exec(track)?.[1] ?? 0)
+  const sync = !upstream
+    ? 'no upstream; nothing pushed'
+    : ahead || behind
+      ? [ahead ? `${ahead} unpushed` : '', behind ? `${behind} behind ${upstream}` : ''].filter(Boolean).join(', ')
+      : `up to date with ${upstream}`
+  const rows: StatusLine[] = [{ id: 'git:branch', area: 'Git branch', state: branch, detail: sync }]
+  const paths = files.map(f => f.slice(3))
+  rows.push({
+    id: 'git:changes',
+    area: 'Uncommitted',
+    state: paths.length ? `${paths.length} file${paths.length === 1 ? '' : 's'}` : 'none',
+    detail: paths.length ? oneLine(paths.slice(0, 4).join(', ') + (paths.length > 4 ? ` +${paths.length - 4} more` : ''), 300) : 'clean',
+  })
+  return rows
+}

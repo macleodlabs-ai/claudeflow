@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.3" src="https://img.shields.io/badge/version-0.3.3-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.4" src="https://img.shields.io/badge/version-0.3.4-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 59 passing" src="https://img.shields.io/badge/tests-59%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 63 passing" src="https://img.shields.io/badge/tests-63%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -164,7 +164,10 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 | Command | What it does |
 | --- | --- |
+| `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
+| `/streams status` | Same as typing `status` |
+| `/streams update` | Update to the latest release and reload it into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
 | `/stream move <name>` | Refile the last prompt, and everything after it, under another stream (created if new) when it was sorted wrongly |
@@ -176,13 +179,14 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 | To | Do |
 | --- | --- |
+| See the status of all work | Press `status` in the bar (<kbd>t</kbd> when the bar has focus), or type `status`. Click a stream's name on the card to open it; `✕ close` or your next prompt hides it |
 | Focus a stream | Click its name in the pane, or press its pill |
 | Show everything | `← all streams`, or the `all` pill |
 | File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` Type `#` and the bar lists matching streams; <kbd>tab</kbd> completes the first |
 | Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
-| Compact a stream's chat | A stream's view draws its chat as the session does, with markdown, syntax-highlighted code and diffs. `≡ compact` switches to one line per row; `▤ full` switches back |
+| Switch a stream's chat view | The stream header shows `view ◉ full ○ compact`: full draws the chat as the session does, with markdown, syntax-highlighted code and diffs; compact is one line per row. Click either, or press <kbd>v</kbd> in the pane |
 
 ### Keyboard
 
@@ -213,7 +217,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Setting | Default | Description |
 | --- | :---: | --- |
-| `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `≡ compact` / `▤ full` button switches it for the session. |
+| `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `view` switch in a stream's header changes it for the session. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 
 ### Model use
