@@ -1175,9 +1175,9 @@ export const register: Register = (on, options) => {
             <Text dimColor>
               {streams.filter(s => !s.archived).length} streams · {new Date(now).toTimeString().slice(0, 5)}
             </Text>
-            <Text dimColor>· ctrl+x tab, then ↑↓ scroll · esc close</Text>
+            <Text dimColor>· ctrl+x tab, then ↑↓ scroll · q close</Text>
             <Box flexGrow={1} />
-            <Button key="status-close" plain dimColor label="✕ close" onPress={close} />
+            <Button key="status-close" plain dimColor label="✕ close" hotkey="q" onPress={close} />
           </Box>
           <Box key="st-head">
             <Box width={areaW} flexShrink={0}>
