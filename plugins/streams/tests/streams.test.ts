@@ -1040,3 +1040,33 @@ describe('plan limits on the status card', () => {
     expect(fixed.every(b => (b.props as { flexShrink?: number }).flexShrink === 0)).toBe(true)
   })
 })
+
+describe('scrolling and closing the status card', () => {
+  // The card can outgrow the band; it must be readable to the end and closed without reaching for the mouse.
+  test('with the card up and nothing typed, arrows scroll it instead of recalling history, and Esc closes it', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    let history = 0
+    on('prompt.edit', async (_$, e) => {
+      history++
+      return { text: e.text, cursor: e.cursor }
+    })
+    await $.prompt.submit({ text: '#billing why is the total off?', wait: false, origin: { kind: 'composer' } })
+    await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 100, hasSurvey: false } as never })
+    const edit = ($.prompt as unknown as { edit: (e: unknown) => Promise<{ text: string }> }).edit
+    await edit({ origin: { kind: 'composer' }, key: { key: 'down' }, text: '', cursor: 0, start: 0, end: 0, inputText: '' } as never)
+    // The kit has no band to scroll, so what is held here is that the arrow was the card's, not the history's.
+    expect(history).toBe(0)
+    expect(await bar.find({ key: 'status-close' })).toBeDefined()
+    await edit({ origin: { kind: 'composer' }, key: { key: 'escape' }, text: '', cursor: 0, start: 0, end: 0, inputText: '' } as never)
+    expect(await bar.find({ key: 'status-close' })).toBe(undefined)
+    // With text in the box the arrows are the person's again.
+    await edit({ origin: { kind: 'composer' }, key: { key: 'up' }, text: 'draft', cursor: 5, start: 5, end: 5, inputText: '' } as never)
+    expect(history).toBe(1)
+  })
+})

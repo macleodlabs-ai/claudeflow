@@ -790,12 +790,27 @@ async function ticketStatus($: $, streamLines: readonly StatusLine[], now: numbe
   })
 }
 
+/** The status card's rows top to bottom by key, and the band they are drawn in: what ↑ and ↓ move through. */
+let statusKeys: string[] = []
+let statusBand = ''
+let statusTop = 0
+
+/** Moves the status card one row up or down in the band's window. */
+async function scrollStatus($: $, by: number) {
+  statusTop = Math.max(0, Math.min(statusKeys.length - 1, statusTop + by))
+  const key = statusKeys[statusTop]
+  if (key && statusBand) await $.ui.scroll({ in: statusBand, to: { key }, block: 'start' }).catch(() => {})
+}
+
 /** A typed `status` or `status?` is a request for the card, answered here without a model turn. */
 const STATUS_ASK = /^\s*status\s*\??\s*$/i
 
 /** Shows the status card above the prompt, its git rows read now; the stream rows stay live as it shows. */
-async function openStatus($: $) {
+async function openStatus($: $, band = '') {
+  statusTop = 0
   await update($, statusOpenA, () => true)
+  // Opened from the bar, the band holds the keys: its ring goes to the card, so ↑↓ scroll it and Esc closes it.
+  if (band) void $.ui.focus({ requestId: band, key: 'status-close' }).catch(() => {})
   const git = await $.process
     .run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 })
     .then(r => (r.exitCode === 0 ? gitStatus(r.stdout) : []))
@@ -974,8 +989,9 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, tagHintA, () => null)
-    if (STATUS_ASK.test(e.text) && e.origin.kind === 'composer') {
+    if (STATUS_ASK.test(e.text) && (e.origin.kind === 'composer' || e.origin.kind === 'bridge')) {
       await openStatus($)
+      if (e.origin.kind === 'bridge') void $.ui.open({ id: PANE, title: 'Streams' }).catch(() => {})
       return { drop: 'status shown above the prompt' }
     }
     await update($, statusOpenA, () => false)
@@ -1100,6 +1116,13 @@ export const register: Register = (on, options) => {
   // and a tag naming a known stream is painted in that stream's colour.
   on('prompt.edit', async ($, e, next) => {
     const streams = await read($, streamsA)
+    // With the status card up and nothing typed, ↑ and ↓ scroll the card and Esc closes it.
+    const k = e.key?.key
+    if ((k === 'up' || k === 'down' || k === 'escape') && !e.text.trim() && (await read($, statusOpenA))) {
+      if (k === 'escape') await update($, statusOpenA, () => false)
+      else await scrollStatus($, k === 'down' ? 1 : -1)
+      return { text: e.text, cursor: e.cursor }
+    }
     const typing = partialTag(e.text, e.cursor)
     if (e.key?.key === 'tab' && !e.key.shift && typing !== undefined) {
       const [first] = tagMatches(streams, typing)
@@ -1117,6 +1140,11 @@ export const register: Register = (on, options) => {
     if (!named || !known) return box
     const start = box.text.indexOf('#')
     return { ...box, decorations: [...(box.decorations ?? []), { start, end: start + named[0].trim().length, color: colorOf(known), bold: true }] }
+  })
+
+  on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!e.element && (await read($, statusOpenA))) await update($, statusOpenA, () => false)
+    return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -1142,8 +1170,9 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-    if (!e.props.hasSurvey && (await read($, statusOpenA))) {
+    if (!e.props.hasSurvey && e.surface !== 'mobile' && (await read($, statusOpenA))) {
       const { Box, Button, Text } = $.ui.resolve(e)
+      statusBand = e.requestId
       await read($, tickA)
       const now = await $.clock.now()
       const git: StatusLine[] = await read($, statusGitA)
@@ -1157,16 +1186,28 @@ export const register: Register = (on, options) => {
       // 16: room for a limit's bar and percent (`▰▰▰▰▱▱▱▱▱▱ 38%`).
       const stateW = Math.min(28, Math.max(limits.length ? 16 : 8, ...shown.map(l => l.state.length + 2)))
       const close = () => update($, statusOpenA, () => false)
+      statusKeys = [
+        'st-title',
+        'st-head',
+        ...shown.flatMap((l, i) => {
+          const headed = tickets.length && (l.id.startsWith('ticket:') ? i === git.length : i === git.length + tickets.length)
+          return headed ? [`st-h:${l.id}`, `st:${l.id}`] : [`st:${l.id}`]
+        }),
+        ...limits.map(l => `limit:${l.label}`),
+      ]
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="#8b949e" paddingX={1}>
-          <Box gap={1}>
+          <Box key="st-title" gap={1}>
             <Text bold>Status</Text>
             <Text dimColor>
               {streams.filter(s => !s.archived).length} streams · {new Date(now).toTimeString().slice(0, 5)}
             </Text>
+            {lines.length + limits.length > Math.max(4, e.props.maxRows - 4) ? <Text dimColor>· ↑↓ scroll</Text> : null}
+            <Text dimColor>· esc</Text>
+            <Box flexGrow={1} />
             <Button key="status-close" plain dimColor label="✕ close" onPress={close} />
           </Box>
-          <Box>
+          <Box key="st-head">
             <Box width={areaW} flexShrink={0}>
               <Text dimColor bold>Area</Text>
             </Box>
@@ -1275,7 +1316,7 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
-        <Button key="status" plain label="status" hotkey="t" onPress={() => openStatus($)} />
+        <Button key="status" plain label="status" hotkey="t" onPress={() => openStatus($, e.requestId)} />
         {updateButton}
         {(await read($, paneCollapsedA)) ? (
           <Box key="tab-box" flexGrow={1} justifyContent="flex-end">
@@ -1466,12 +1507,43 @@ export const register: Register = (on, options) => {
         .map(k => ({ k, n: lines.filter(l => l.kind === k).length }))
         .filter(c => c.n)
       const toggle = (id: string) => update($, mobileOpenA, v => (v === id ? '' : id))
+      // The status card, on the phone, heads the accordion: the pane scrolls by touch.
+      const isStatus = await read($, statusOpenA)
+      const statusRows: StatusLine[] = isStatus ? [...(await read($, statusGitA)), ...(await ticketStatus($, lines, now)).slice(0, TICKET_ROWS)] : []
+      const limits = isStatus ? ((await $.session.usage().catch(() => undefined))?.rateLimits ?? []).map(l => limitView(l, now)) : []
       return (
         <Box flexDirection="column">
           {await updateControl($, e)}
+          {isStatus ? (
+            <Box key="m-status" flexDirection="column" borderStyle="round" borderColor="#8b949e" paddingX={1} marginBottom={1}>
+              <Box gap={1}>
+                <Text bold>Status</Text>
+                <Button key="m-status-close" plain dimColor label="✕ close" onPress={() => update($, statusOpenA, () => false)} />
+              </Box>
+              {statusRows.map(l => (
+                <Box key={`m-st:${l.id}`} flexDirection="column" marginTop={1}>
+                  <Box gap={1}>
+                    <Text bold>{l.area}</Text>
+                    <Text bold color={l.kind ? STATE_COLOR[l.kind] : '#a5d8ff'}>{l.state}</Text>
+                  </Box>
+                  <Text dimColor>{oneLine(l.detail, 240)}</Text>
+                </Box>
+              ))}
+              {limits.map(l => (
+                <Box key={`m-limit:${l.label}`} flexDirection="column" marginTop={1}>
+                  <Box gap={1}>
+                    <Text dimColor>{`Limit ${l.label}`}</Text>
+                    <Text color={limitColor(l.percent)} bold>{`${l.bar} ${l.percent}%`}</Text>
+                  </Box>
+                  <Text dimColor>{l.resetsIn ? `resets in ${l.resetsIn} · ${l.resetsAt}` : ''}</Text>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
           <Box gap={1}>
             <Text bold>Streams</Text>
             <Text dimColor>{lines.length} live</Text>
+            {isStatus ? null : <Button key="m-status-open" plain label="status" onPress={() => openStatus($)} />}
             {openId ? <Button key="m-collapse" plain dimColor label="collapse all" onPress={() => update($, mobileOpenA, () => '')} /> : null}
           </Box>
           <Box gap={1} flexWrap="wrap" marginTop={1}>
