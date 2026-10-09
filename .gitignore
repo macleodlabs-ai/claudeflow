@@ -6,3 +6,5 @@ plugins/streams/debug.json
 node_modules/
 .DS_Store
 assets/full/
+relay/cloudflare/public/
+relay/cloudflare/.wrangler/

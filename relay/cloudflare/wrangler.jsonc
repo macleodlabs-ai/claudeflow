@@ -1,0 +1,11 @@
+{
+  // The Claudeflow relay on Cloudflare's free plan. `./build.sh` copies the phone page into ./public first.
+  "name": "claudeflow-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+  "assets": { "directory": "./public" },
+  "durable_objects": { "bindings": [{ "name": "MACS", "class_name": "MacRoom" }] },
+  // The free plan runs Durable Objects on SQLite storage only.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MacRoom"] }],
+  "observability": { "enabled": false }
+}
