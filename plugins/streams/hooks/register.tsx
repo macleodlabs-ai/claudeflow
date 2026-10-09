@@ -5,7 +5,7 @@ import type { AgentRun, ChatStyle, Folded, Health, Stream, StreamRow, StreamRowK
 import type { Installed, MarketEntry, Update } from './updates'
 import { CHECK_EVERY_MS, manifestPathOf, pluginsDirOf, updatesOf } from './updates'
 import type { Snapshot } from './phone'
-import { BRIDGE_SOCKET, HEARTBEAT_MS, PUSH_EVERY_MS, RETRY_MS, accountOf, isDue, snapshotOf } from './phone'
+import { BRIDGE_FILES, BRIDGE_LABEL, BRIDGE_PORT, BRIDGE_SOCKET, HEARTBEAT_MS, PUSH_EVERY_MS, RETRY_MS, TAILSCALE_BINS, accountOf, isDue, snapshotOf, tailnetHostOf } from './phone'
 import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal, StatusKind, StatusLine } from './classify'
 import {
   BATCH_SYSTEM,
@@ -917,6 +917,53 @@ async function phoneSessionOf($: $, cwd: string): Promise<Snapshot['session']> {
   return { id, account: accountOf(configDir), project: cwd.split('/').pop() || cwd, busy: false }
 }
 
+const run = ($: $, argv: string[], timeoutMs = 10_000) =>
+  $.process.run(argv, { timeoutMs }).catch(err => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+
+/**
+ * Puts the phone bridge where launchd runs it at login (`~/.claudeflow/bridge`) and starts it, when it is
+ * missing, stopped, or older than this plugin's copy. Says what it did, or what is missing.
+ */
+async function ensureBridge($: $): Promise<{ ok: boolean; said: string; home: string }> {
+  const [home, uid, bun] = await Promise.all([
+    run($, ['/usr/bin/printenv', 'HOME']).then(r => r.stdout.trim()),
+    run($, ['/usr/bin/id', '-u']).then(r => r.stdout.trim()),
+    run($, ['/bin/sh', '-c', 'command -v bun']).then(r => r.stdout.trim()),
+  ])
+  if (!home || !uid) return { ok: false, said: 'could not find your home folder', home }
+  if (!bun) return { ok: false, said: 'needs Bun: install it from https://bun.sh, then run `/streams phone`', home }
+  const dir = `${home}/.claudeflow/bridge`
+  let isChanged = false
+  for (const f of BRIDGE_FILES) {
+    const want = String(await $.fs.read(`${$.plugin.root}/bridge/${f}`))
+    const have = await $.fs.read(`${dir}/${f}`).then(String).catch(() => '')
+    if (want !== have) {
+      await $.fs.write(`${dir}/${f}`, want)
+      isChanged = true
+    }
+  }
+  const isRunning = (await run($, ['/bin/launchctl', 'print', `gui/${uid}/${BRIDGE_LABEL}`])).exitCode === 0
+  if (!isChanged && isRunning) return { ok: true, said: 'running', home }
+  const r = await run($, ['/bin/sh', `${dir}/install.sh`], 30_000)
+  return r.exitCode === 0
+    ? { ok: true, said: isRunning ? 'updated and restarted' : 'installed: it starts at login', home }
+    : { ok: false, said: `did not start: ${oneLine(r.stderr || r.stdout, 200)}`, home }
+}
+
+/** Serves the bridge over Tailscale (HTTPS, your devices only) when Tailscale is signed in; says how it stands. */
+async function ensureTailnet($: $): Promise<{ url?: string; said: string }> {
+  for (const bin of TAILSCALE_BINS) {
+    const s = await run($, [bin, 'status', '--json'])
+    if (s.exitCode !== 0 && !s.stdout) continue
+    const host = tailnetHostOf(s.stdout)
+    if (!host) return { said: 'installed but signed out: open the Tailscale app and sign in, then run `/streams phone` again' }
+    const served = await run($, [bin, 'serve', '--bg', String(BRIDGE_PORT)], 20_000)
+    if (served.exitCode !== 0) return { said: `could not serve the bridge: ${oneLine(served.stderr || served.stdout, 200)}` }
+    return { url: `https://${host}`, said: `serving at https://${host}` }
+  }
+  return { said: 'not installed: run `! brew install --cask tailscale-app`, open Tailscale and sign in (on your phone too), then `/streams phone`' }
+}
+
 /** Sends the bridge this session's streams when they changed (or as a heartbeat); quiet when no bridge runs. */
 async function pushPhone($: $) {
   const now = await $.clock.now()
@@ -996,7 +1043,10 @@ export const register: Register = (on, options) => {
     if (e.isInteractive) {
       void checkUpdates($).catch(() => {})
       $.clock.every(CHECK_EVERY_MS, () => void checkUpdates($).catch(() => {}))
-      // The phone bridge, when one runs on this Mac, shows these streams on the phone.
+      // The phone bridge, installed and kept current from here, shows these streams on the phone.
+      void ensureBridge($)
+        .then(b => (b.said.startsWith('installed') ? $.ui.toast('Phone bridge installed: /streams phone pairs your phone') : undefined))
+        .catch(() => {})
       phoneSession = await phoneSessionOf($, e.cwd).catch(() => undefined)
       $.clock.every(PUSH_EVERY_MS, () => void pushPhone($).catch(() => {}))
     }
@@ -1021,6 +1071,23 @@ export const register: Register = (on, options) => {
     if (verb === 'update') {
       await checkUpdates($, true)
       return { text: await applyUpdates($) }
+    }
+    if (verb === 'phone') {
+      const bridge = await ensureBridge($)
+      phoneRetryAt = 0
+      const tailnet = bridge.ok ? await ensureTailnet($) : { said: 'waits for the bridge' }
+      const lines = [`Phone bridge: ${bridge.said}.`, `Tailscale: ${tailnet.said}.`]
+      if (bridge.ok) {
+        // The pairing page opens on this Mac, already paired, and shows the phone's link as a QR code.
+        const token = await $.fs.read(`${bridge.home}/.claudeflow/bridge-token`).then(t => String(t).trim()).catch(() => '')
+        const opened = token ? await run($, ['/usr/bin/open', `http://127.0.0.1:${BRIDGE_PORT}/?t=${token}&next=/pair`]) : undefined
+        lines.push(
+          opened?.exitCode === 0
+            ? 'Opened the pairing page in your browser: scan its QR code with your phone, then Add to Home Screen.'
+            : 'Run `! bun ~/.claudeflow/bridge/server.ts pair` for the pairing link.',
+        )
+      }
+      return { text: lines.join('\n') }
     }
     await update($, paneCollapsedA, () => false)
     const opened = await $.ui.open({ id: PANE, title: 'Streams', focus: true })

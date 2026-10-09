@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.4.1" src="https://img.shields.io/badge/version-0.4.1-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 79 passing" src="https://img.shields.io/badge/tests-79%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 81 passing" src="https://img.shields.io/badge/tests-81%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -122,13 +122,13 @@ Claude Code's Remote Control does not draw plugin UI in the phone app yet, so st
 - **Status underneath:** git, tickets and plan limits with when each resets.
 - It is read-only for now: answering, stopping a turn and approving permissions from the phone come next.
 
-**Set it up** (needs [Bun](https://bun.sh)):
+**Set it up:** the plugin installs the bridge for you. With [Bun](https://bun.sh) on your Mac, the first session after installing streams copies the bridge to `~/.claudeflow/bridge` and runs it at login; each plugin update refreshes it. Then:
 
-```sh
-bridge/install.sh          # runs the bridge at login and prints your pairing link
-```
+1. Install [Tailscale](https://tailscale.com) on your Mac (`brew install --cask tailscale-app`) and your phone, and sign in on both.
+2. Run `/streams phone`. It serves the bridge over Tailscale (HTTPS, only your devices can open it) and opens a pairing page on your Mac with a QR code.
+3. Scan the code with your phone, then **Add to Home Screen**.
 
-The bridge listens on `127.0.0.1:7878`, so reach it from your phone over [Tailscale](https://tailscale.com): `tailscale serve 7878` gives it an HTTPS address only your devices can open. Open the pairing link there once, then **Add to Home Screen**. Sessions reach the bridge over a Unix socket only your user can open, and the phone needs the pairing token (kept in `~/.claudeflow/bridge-token`). Run `bun bridge/server.ts pair` to see the link again.
+`/streams phone` also says what is missing at any step. Sessions reach the bridge over a Unix socket only your user can open, and the phone needs the pairing token kept in `~/.claudeflow/bridge-token`.
 
 When a phone client that draws plugin UI attaches, streams also opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
 
@@ -214,6 +214,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
+| `/streams phone` | Set up the phone bridge: install or refresh it, serve it over Tailscale, and open the pairing QR code |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
