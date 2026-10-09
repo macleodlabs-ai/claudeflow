@@ -122,13 +122,64 @@ Claude Code's Remote Control does not draw plugin UI in the phone app yet, so st
 - **Status underneath:** git, tickets and plan limits with when each resets.
 - It is read-only for now: answering, stopping a turn and approving permissions from the phone come next.
 
-**Set it up:** the plugin installs the bridge for you. With [Bun](https://bun.sh) on your Mac, the first session after installing streams copies the bridge to `~/.claudeflow/bridge` and runs it at login; each plugin update refreshes it. Then:
+#### Set up your phone (about 10 minutes, once)
 
-1. Install [Tailscale](https://tailscale.com) on your Mac (`brew install --cask tailscale-app`) and your phone, and sign in on both.
-2. Run `/streams phone`. It serves the bridge over Tailscale (HTTPS, only your devices can open it) and opens a pairing page on your Mac with a QR code.
-3. Scan the code with your phone, then **Add to Home Screen**.
+Your phone reaches your Mac over **[Tailscale](https://tailscale.com)**, a free private network between your own devices. Nothing is opened to the internet: only devices signed in to your Tailscale account can load the page, and each one also needs a pairing code from your Mac.
 
-`/streams phone` also says what is missing at any step. Sessions reach the bridge over a Unix socket only your user can open, and the phone needs the pairing token kept in `~/.claudeflow/bridge-token`.
+**What you need:** a Mac running Claude Code with streams installed, an iPhone or Android phone, and [Bun](https://bun.sh) on the Mac (`curl -fsSL https://bun.sh/install | bash`). The streams plugin installs and runs the bridge itself; you only set up Tailscale and pair once.
+
+**1. Install Tailscale on your Mac**
+
+```sh
+brew install --cask tailscale-app
+```
+
+Or download it from [tailscale.com/download/mac](https://tailscale.com/download/mac). It asks for your Mac password while it installs.
+
+**2. Allow Tailscale's network extension**
+
+Open the Tailscale app (it lives in the menu bar). macOS asks you to allow it:
+
+- **macOS 15 Sequoia and later:** System Settings → General → **Login Items & Extensions** → scroll to *Extensions* → **Network Extensions** (ⓘ) → turn **Tailscale** on.
+- **macOS 13–14:** System Settings → **Privacy & Security** → *"System software from 'Tailscale' was blocked"* → **Allow**.
+
+When Tailscale asks to **add VPN configurations**, click **Allow**.
+
+**3. Sign in (this creates your Tailscale account)**
+
+Click the Tailscale menu-bar icon → **Log in…** and sign in with Google, Microsoft, GitHub or Apple. There is no separate sign-up: your first sign-in creates a free personal account.
+
+**4. Install Tailscale on your phone**
+
+Get **Tailscale** from the [App Store](https://apps.apple.com/app/tailscale/id1470499037) or [Google Play](https://play.google.com/store/apps/details?id=com.tailscale.ipn), and sign in with **the same account** you used on the Mac. Allow the VPN configuration when it asks, and leave Tailscale connected.
+
+**5. Run `/streams phone` in Claude Code**
+
+```text
+/streams phone
+```
+
+It checks the bridge, serves it to your Tailscale devices over HTTPS, and opens a **Pair your phone** page on your Mac with a QR code. If anything is missing, it says which step to go back to.
+
+> **The first time only:** a new Tailscale account has *Serve* switched off, and `/streams phone` says so. Run the command it gives you, open the link that command prints, click **Enable**, then run `/streams phone` again.
+
+**6. Scan the QR code with your phone**
+
+Open the link in Safari (or Chrome on Android), then **Share → Add to Home Screen**. Streams now opens like an app, live, with a tab for each running Claude Code session.
+
+That's it. The bridge starts at login and every plugin update refreshes it, so there is nothing to keep running. Run `/streams phone` again any time to see the QR code.
+
+**Optional: a nicer address.** Your Mac's Tailscale name comes from its computer name (`your-mac.tail1234.ts.net`). To rename it, run `/Applications/Tailscale.app/Contents/MacOS/Tailscale set --hostname=claudeflow`, then `/streams phone`. This renames the Mac for everything on your Tailscale network, not just streams.
+
+<details>
+<summary><b>How it works and what it can see</b></summary>
+
+- Every Claude Code session with streams sends the bridge a summary of its streams over a Unix socket only your user can open (`/tmp/claudeflow-bridge.sock`). Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters.
+- The bridge (`~/.claudeflow/bridge`, run by launchd) listens on `127.0.0.1:7878` only. `tailscale serve` passes your Tailscale devices through to it over HTTPS.
+- Every page needs the pairing token in `~/.claudeflow/bridge-token`. The QR code carries it once; after that your phone keeps it as a cookie. To unpair every device, delete that file and run `/streams phone`.
+- To remove the bridge: `launchctl bootout gui/$(id -u)/ai.macleodlabs.claudeflow-bridge`, then delete `~/Library/LaunchAgents/ai.macleodlabs.claudeflow-bridge.plist` and `~/.claudeflow`.
+
+</details>
 
 When a phone client that draws plugin UI attaches, streams also opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
 
@@ -195,6 +246,8 @@ claude --plugin-dir ./claudeflow/plugins/streams
 ```
 
 </details>
+
+**Want streams on your phone?** Follow [Set up your phone](#set-up-your-phone-about-10-minutes-once) after installing: Tailscale on your Mac and phone, then `/streams phone`.
 
 ### Update or remove
 
@@ -287,6 +340,11 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
+| Phone page is blank or won't load | Check Tailscale is **connected** on both the Mac and the phone. **Another VPN** on the Mac (NordVPN, ExpressVPN…) blocks Tailscale traffic: disconnect it while you use the phone view. |
+| "This browser isn't paired" | Run `/streams phone` and scan the new QR code. |
+| `/streams phone` says Serve is not enabled | Run the command it shows, open the link that command prints, click **Enable**, then `/streams phone` again. |
+| `/streams phone` says Bun is needed | Install it from [bun.sh](https://bun.sh), then `/streams phone`. |
+| A session is missing on the phone | That session runs an older streams: update the plugin, then `/reload-plugins` in it. |
 
 ---
 

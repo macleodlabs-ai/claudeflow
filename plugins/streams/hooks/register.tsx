@@ -958,7 +958,13 @@ async function ensureTailnet($: $, home: string): Promise<{ url?: string; said: 
     const host = tailnetHostOf(s.stdout)
     if (!host) return { said: 'installed but signed out: open the Tailscale app and sign in, then run `/streams phone` again' }
     const served = await $.process.run([bin, 'serve', '--bg', String(BRIDGE_PORT)], { timeoutMs: 20_000 }).catch(failed)
-    if (served.exitCode !== 0) return { said: `could not serve the bridge: ${oneLine(served.stderr || served.stdout, 200)}` }
+    // A new tailnet has Serve off: the command waits for a one-click approval at a link it prints, and times out here.
+    if (served.exitCode !== 0)
+      return {
+        said: /enable|time|still running/i.test(served.stderr + served.stdout)
+          ? `Serve is not enabled on your tailnet yet: run \`! ${bin} serve --bg ${BRIDGE_PORT}\` and open the link it prints, then \`/streams phone\` again`
+          : `could not serve the bridge: ${oneLine(served.stderr || served.stdout, 200)}`,
+      }
     // The bridge's pairing page reads it here: under launchd it cannot ask the Tailscale app itself.
     await $.fs.write(`${home}/.claudeflow/phone-url`, `https://${host}\n`)
     return { url: `https://${host}`, said: `serving at https://${host}` }
