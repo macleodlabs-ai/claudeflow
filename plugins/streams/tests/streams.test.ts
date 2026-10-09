@@ -1068,3 +1068,23 @@ describe('closing the status card', () => {
     expect(await bar.find({ key: 'status-close' })).toBe(undefined)
   })
 })
+
+describe('status asked from the phone', () => {
+  // Remote Control relays the chat; when the app draws no plugin UI, a dropped prompt would answer nothing.
+  test('a typed status from a phone that draws no plugin UI goes to Claude instead of opening an unseen card', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.surfaces', async () => ({ value: ['terminal'] }) as never)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'bridge' } as never })
+    expect(r.drop).toBe(undefined)
+    expect(sent).toEqual(['status?'])
+  })
+})

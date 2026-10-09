@@ -979,9 +979,11 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     await update($, tagHintA, () => null)
-    if (STATUS_ASK.test(e.text) && (e.origin.kind === 'composer' || e.origin.kind === 'bridge')) {
+    // From the phone the card only helps where the app draws it; otherwise the question goes to Claude as asked.
+    const phoneDraws = e.origin.kind === 'bridge' && (await $.session.surfaces().catch((): readonly string[] => [])).includes('mobile')
+    if (STATUS_ASK.test(e.text) && (e.origin.kind === 'composer' || phoneDraws)) {
       await openStatus($)
-      if (e.origin.kind === 'bridge') void $.ui.open({ id: PANE, title: 'Streams' }).catch(() => {})
+      if (phoneDraws) void $.ui.open({ id: PANE, title: 'Streams' }).catch(() => {})
       return { drop: 'status shown above the prompt' }
     }
     await update($, statusOpenA, () => false)
