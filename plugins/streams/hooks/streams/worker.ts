@@ -1,40 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { Folded, Stream, StreamRow, StreamRowKind } from '../../types'
+import type { Folded, Stream } from '../../types'
 import { KEY_VERSION, MAX_ROWS, PANE, SAVED_ROWS, jobs, mem, storeKey, type Job, type Saved } from '../state'
-import {
-  REPLIES_SYSTEM,
-  REPLY_SYSTEM,
-  ago,
-  buildRepliesPrompt,
-  buildReplyPrompt,
-  fallbackName,
-  isFollowUp,
-  oneLine,
-  parseTag,
-  pickReplyStream,
-  pickReplyStreams,
-  rowKey,
-  slug,
-  textKey,
-} from '../classify'
-import {
-  BATCH_SYSTEM,
-  MERGE_SYSTEM,
-  buildBatchPrompt,
-  buildMergePrompt,
-  inParallel,
-  parseBatch,
-  parseMerge,
-  readTranscript,
-  turnsOf,
-  type HistoryItem,
-  type HistoryTurn,
-  type Proposal,
-} from '../history'
-import { toolLine, withCode } from '../tools'
-import { colorOf, lapsed, touched, withStream } from './model'
+import { REPLY_SYSTEM, ago, buildReplyPrompt, pickReplyStream, rowKey, slug, textKey } from '../classify'
+import { inParallel, readTranscript } from '../history'
+import { importPlan } from './importPlan'
+import { colorOf, lapsed, touched, uuidOf, withStream } from './model'
 
 // The background worker: files a session's history into streams, and moves a reply filed under the running
 // turn to the mid-turn prompt it answers. Hooks queue the work (`jobs`); a timer drains it.
@@ -151,15 +123,12 @@ async function readWhole($: $, path: string): Promise<string> {
 
 /** Model calls in flight at once while filing history. */
 const LANES = 5
-/** Prompts per classifying call: enough for context, few enough to answer reliably. */
-const BATCH = 25
 
 const progress = ($: $, label: string, done: number, total: number) => update($, importProgressA, () => ({ label, done, total }))
 
 /**
- * Files a transcript into streams, in parallel: prompts are classified in batches several calls at once, the
- * names each batch proposed are merged in one pass, and turns with prompts sent mid-turn have their replies
- * routed several at once. Then every row is filed, newest stream state saved, progress shown in the pane.
+ * Files a transcript into streams: the decisions are importPlan.ts's; this runs the model calls it asks for,
+ * several at once with the progress in the pane, then makes its streams and files its rows.
  *
  * This session's own transcript (isCurrent) first clears the rows this session recorded, so a run cut short
  * by a reload is simply run again; another session's rows keep their own times and replace an earlier
@@ -170,119 +139,32 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
   mem.importing = true
   try {
     await progress($, 'reading', 0, 1)
-    const [jsonl, { startedAt }, began] = await Promise.all([readWhole($, path), $.session.usage(), $.clock.now()])
-    const turns = turnsOf(readTranscript(String(jsonl)))
-    const prompts = turns.flatMap(t => [t.prompt, ...t.items.filter(i => i.kind === 'prompt')]) as (HistoryItem & { kind: 'prompt' })[]
-
-    // 1. Prompts that need no model: #tags, and follow-ups (which take the stream of the prompt before them).
-    const sids = new Map<HistoryItem, string>()
-    const texts = new Map<HistoryItem, string>()
-    for (const p of prompts) {
-      const tag = parseTag(p.text)
-      texts.set(p, tag ? tag.rest : p.text)
-      if (tag) sids.set(p, await ensureStream($, tag.name, oneLine(tag.rest, 120)))
-    }
-    const open = prompts.filter(p => !sids.has(p) && !isFollowUp(p.text))
-
-    // 2. The rest, classified in batches, several at once.
-    const streams = await read($, streamsA)
-    const batches = Array.from({ length: Math.ceil(open.length / BATCH) }, (_, i) => open.slice(i * BATCH, (i + 1) * BATCH))
-    let done = 0
-    await progress($, 'sorting prompts', 0, open.length)
-    const labels = (
-      await inParallel(batches, LANES, async batch => {
-        const said = batch.map(p => texts.get(p) ?? p.text)
-        const r = await $.model.complete({ model: 'haiku', system: BATCH_SYSTEM, prompt: buildBatchPrompt(streams, said), maxTokens: 60 + batch.length * 16 })
-        done += batch.length
-        await progress($, 'sorting prompts', done, open.length)
-        return r.isAnswered ? parseBatch(r.text, batch.length) : batch.map(() => '')
+    const [jsonl, { startedAt }, began, streams, current] = await Promise.all([readWhole($, path), $.session.usage(), $.clock.now(), read($, streamsA), read($, currentA)])
+    const steps = importPlan({ items: readTranscript(String(jsonl)), streams, current, startedAt, isCurrent, now: began })
+    let step = steps.next()
+    while (!step.done) {
+      const { label, asks } = step.value
+      let done = 0
+      await progress($, label, 0, asks.length)
+      const replies = await inParallel(asks, LANES, async ask => {
+        const r = await $.model.complete({ model: 'haiku', system: ask.system, prompt: ask.prompt, maxTokens: ask.maxTokens })
+        done += 1
+        await progress($, label, done, asks.length)
+        return r.isAnswered ? r.text : undefined
       })
-    ).flat()
-
-    // 3. One pass merges the names the batches proposed on their own.
-    const known = new Set(streams.map(s => s.id))
-    const proposals = new Map<string, Proposal>()
-    open.forEach((p, i) => {
-      const label = labels[i] || fallbackName(texts.get(p) ?? p.text)
-      labels[i] = label
-      if (known.has(label)) return
-      const one = proposals.get(label) ?? { name: label, count: 0, samples: [] }
-      one.count += 1
-      if (one.samples.length < 2) one.samples.push(texts.get(p) ?? p.text)
-      proposals.set(label, one)
-    })
-    let merged: Record<string, string> = {}
-    if (proposals.size > 1) {
-      await progress($, 'merging streams', 0, 1)
-      const names = [...proposals.keys()]
-      const r = await $.model.complete({ model: 'haiku', system: MERGE_SYSTEM, prompt: buildMergePrompt(streams, [...proposals.values()]), maxTokens: 80 + names.length * 24 })
-      merged = r.isAnswered ? parseMerge(r.text, names) : {}
+      step = steps.next(replies)
     }
-    for (const [i, p] of open.entries()) {
-      const label = labels[i] ?? ''
-      const final = merged[label] ?? label
-      sids.set(p, known.has(final) ? final : await ensureStream($, final, oneLine(texts.get(p) ?? p.text, 120)))
-    }
-    // Follow-ups, in order: the stream of the prompt before them.
-    let previous = await read($, currentA)
-    for (const p of prompts) {
-      const sid = sids.get(p) ?? previous
-      sids.set(p, sid)
-      previous = sid
-    }
-
-    // 4. Replies in turns that had prompts sent mid-turn: which thread each answers, several turns at once.
-    const mixed = turns.filter(t => t.items.some(i => i.kind === 'prompt') && t.items.some(i => i.kind === 'reply'))
-    const replyTo = new Map<HistoryItem, string>()
-    done = 0
-    await progress($, 'routing replies', 0, mixed.length)
-    await inParallel(mixed, LANES, async (turn: HistoryTurn) => {
-      const turnSid = sids.get(turn.prompt) ?? previous
-      const first = turn.items.findIndex(i => i.kind === 'prompt')
-      const folded: Folded[] = turn.items.filter(i => i.kind === 'prompt').map(i => ({ streamId: sids.get(i) ?? turnSid, text: texts.get(i) ?? '' }))
-      const replies = turn.items.slice(first).filter(i => i.kind === 'reply') as (HistoryItem & { kind: 'reply' })[]
-      const self = { streamId: turnSid, text: texts.get(turn.prompt) ?? '' }
-      const r = await $.model.complete({ model: 'haiku', system: REPLIES_SYSTEM, prompt: buildRepliesPrompt(self, folded, replies.map(i => i.text)), maxTokens: 40 + replies.length * 16 })
-      const picks = r.isAnswered ? pickReplyStreams(r.text, self, folded, replies.length) : []
-      replies.forEach((item, j) => replyTo.set(item, picks[j] ?? turnSid))
-      done += 1
-      await progress($, 'routing replies', done, mixed.length)
-    })
-
-    // 5. File every row.
-    await progress($, 'filing rows', 0, turns.length)
-    const rows: StreamRow[] = []
-    let at = startedAt
-    for (const turn of turns) {
-      const turnSid = sids.get(turn.prompt) ?? previous
-      for (const item of [turn.prompt, ...turn.items]) {
-        try {
-          const sid = item.kind === 'prompt' ? (sids.get(item) ?? turnSid) : item.kind === 'reply' ? (replyTo.get(item) ?? turnSid) : turnSid
-          const when = isCurrent ? at++ : (item.at ?? at++)
-          await fileAs($, item.kind === 'tool' ? item.id : item.uuid, sid)
-          if (item.kind === 'reply') await fileAs($, textKey(item.text), sid)
-          const input = (item.kind === 'tool' ? item.input ?? {} : {}) as { description?: string }
-          const text =
-            item.kind === 'prompt'
-              ? (texts.get(item) ?? item.text)
-              : item.kind === 'reply'
-                ? item.text
-                : item.name === 'Agent'
-                  ? (input.description ?? 'subagent')
-                  : toolLine(item.name, item.input)
-          const kind: StreamRowKind = item.kind === 'tool' ? (item.name === 'Agent' ? 'agent' : 'tool') : item.kind
-          const code = kind === 'tool' && item.kind === 'tool' ? withCode(item.name, item.input) : {}
-          const toolId = item.kind === 'tool' ? { toolId: item.id } : {}
-          rows.push({ id: `h:${item.uuid}:${item.kind === 'tool' ? item.id : rows.length}`, streamId: sid, kind, text, at: when, ...code, ...toolId })
-        } catch (err) {
-          mem.lastError = `skipped a row: ${String(err)}`.slice(0, 600)
-        }
-      }
-    }
-    const imported = new Set(rows.map(r => r.id))
+    const plan = step.value
+    await progress($, 'filing rows', 0, 1)
+    for (const s of plan.newStreams) await ensureStream($, s.name, s.summary)
+    for (const [id, sid] of plan.marks) await fileAs($, id, sid)
+    if (plan.skipped.length) mem.lastError = `skipped a row: ${plan.skipped[0]}`.slice(0, 600)
+    const rows = plan.rows
+    // Rows of the same messages already kept, under today's ids or the import's older `h:` ones, are replaced.
+    const imported = new Set(rows.map(uuidOf))
     await update($, rowsA, list =>
       [
-        ...list.filter(row => !imported.has(row.id) && (!isCurrent || row.at < startedAt || row.at >= began)),
+        ...list.filter(row => !imported.has(uuidOf(row)) && (!isCurrent || row.at < startedAt || row.at >= began)),
         ...rows,
       ]
         .sort((a, b) => a.at - b.at)
@@ -292,11 +174,11 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
     for (const row of await read($, rowsA)) counts[row.streamId] = (counts[row.streamId] ?? 0) + 1
     await update($, streamsA, list => list.map(s => ({ ...s, rows: counts[s.id] ?? 0 })))
     if (isCurrent) {
-      await update($, currentA, () => previous)
+      await update($, currentA, () => plan.current)
       await update($, historyFiledA, () => true)
     }
     await save($)
-    $.ui.toast(`streams: filed ${prompts.length} prompts into ${new Set(sids.values()).size} streams`)
+    $.ui.toast(`streams: filed ${plan.prompts} prompts into ${plan.streams} streams`)
   } finally {
     mem.importing = false
     await progress($, '', 0, 0).catch(() => {})

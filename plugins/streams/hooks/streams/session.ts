@@ -1,10 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { Health } from '../../types'
 import { PANE, PANE_KEY, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
-import { ago, healthOf } from '../classify'
-import { colorOf } from './model'
+import { ago } from '../classify'
+import { colorOf, streamsNow, type Facts } from './model'
 
 // A session's start (its streams restored, the commands declared, the pane opened) and its heartbeat.
 
@@ -16,7 +15,8 @@ const focusA = atom({ plugin: 'streams', key: 'focus' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
-const liveA = atom({ plugin: 'streams', key: 'live' } as const, {})
+const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
+const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const healthA = atom({ plugin: 'streams', key: 'health' } as const, {})
@@ -64,30 +64,31 @@ async function unstick($: $) {
   }
 }
 
-/** Every few seconds: recompute each stream's health, and say so when one stalls or background work finishes. */
+async function factsOf($: $): Promise<Facts> {
+  const [busy, current, agents, inflight, outcome, rows, loops, now] = await Promise.all([
+    read($, busyA),
+    read($, currentA),
+    read($, agentsA),
+    read($, inflightA),
+    read($, outcomeA),
+    read($, rowsA),
+    read($, loopsA),
+    $.clock.now(),
+  ])
+  return { busy, current, agents, inflight, outcome, rows, loops, now }
+}
+
+/**
+ * Every few seconds: each stream's health as the pane draws it (model.ts, `streamsNow`), and a notice when one
+ * stalls or background work finishes.
+ */
 async function beat($: $) {
   await unstick($).catch(() => {})
   if (mem.isDiagnosing) await writeDiagnostics($).catch(() => {})
-  const [streams, current, busy, live, inflight, outcome, before, now] = await Promise.all([
-    read($, streamsA),
-    read($, currentA),
-    read($, busyA),
-    read($, liveA),
-    read($, inflightA),
-    read($, outcomeA),
-    read($, healthA),
-    $.clock.now(),
-  ])
-  const after: Record<string, Health> = {}
+  const [streams, before, facts] = await Promise.all([read($, streamsA), read($, healthA), factsOf($)])
+  const { now, current } = facts
+  const after = streamsNow(facts, streams).health
   for (const s of streams) {
-    after[s.id] = healthOf({
-      now,
-      lastAt: s.lastAt,
-      isTurnOn: busy && s.id === current,
-      liveAgents: Object.values(live).filter(id => id === s.id).length,
-      inflight: inflight[s.id] ?? 0,
-      outcome: outcome[s.id],
-    })
     const was = before[s.id]
     // A stream that wakes up opens again, whatever it was folded to.
     if (was !== 'running' && after[s.id] === 'running') await update($, foldA, ({ [s.id]: _, ...rest }) => rest)

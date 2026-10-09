@@ -87,8 +87,11 @@ declare module 'claude-code' {
       paneCollapsed: boolean
       /** Whether the status card is up above the prompt. */
       statusOpen: boolean
-      /** The card's git rows, read as it opened: branch against upstream and what is uncommitted. */
-      statusGit: { id: string; area: string; state: string; detail: string }[]
+      /**
+       * The card's git rows (branch against upstream, what is uncommitted) and when they were read: shared by the
+       * card, which reads them as it opens, and the phone's snapshot, which reuses them while fresh.
+       */
+      statusGit: { lines: { id: string; area: string; state: string; detail: string }[]; at: number }
       /** Whether the pane lists archived streams too. */
       showArchived: boolean
       /** Whether this session's transcript has been filed into streams (once per session). */
@@ -103,8 +106,6 @@ declare module 'claude-code' {
       folded: Folded[]
       rows: StreamRow[]
       agentStream: Record<string, string>
-      /** Subagents still running, by id, to the stream they work for. */
-      live: Record<string, string>
       /** Tool calls running now, per stream. */
       inflight: Record<string, number>
       /** How each stream's last main-loop turn ended. */

@@ -2,7 +2,7 @@ import type { ElementTable, RenderElement } from 'claude-code'
 
 import type { Stream } from '../../types'
 import { oneLine } from '../classify'
-import { lineText, type LimitView, type StatusLine } from '../status'
+import { lineText, resetsIn, type LimitView, type StatusLine } from '../status'
 import { STATE_COLOR, STATUS_ROWS, limitColor } from './look'
 
 export type Card = {
@@ -94,7 +94,7 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
                   {`${l.bar} ${l.percent}%`}
                 </Text>
               </Box>
-              <Text>{l.resetsIn ? `resets in ${l.resetsIn}` : ''}</Text>
+              <Text>{l.until !== undefined ? `resets in ${resetsIn(l, now)}` : ''}</Text>
               <Text dimColor>{l.resetsAt ? ` · ${l.resetsAt}` : ''}</Text>
             </Box>
           ))}

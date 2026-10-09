@@ -4,7 +4,7 @@ import type { EngineInterface, On, RenderElement } from 'claude-code'
 import type { ChatStyle, Stream } from '../../types'
 import { PANE, PANE_KEY, SAVED_ROWS, mem, storeKey, type PaneSaved, type Saved } from '../state'
 import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, type Fold } from '../classify'
-import { colorOf, healthsOf, lapsed, type Facts } from '../streams/model'
+import { colorOf, lapsed, streamsNow, type Facts } from '../streams/model'
 import { updateControl } from '../updates/control'
 import { FULL_ROWS, GLYPH, STATUS_WORD } from './look'
 import { badge, fullRow, loopBadge, workOf, type PaneView } from './rows'
@@ -127,7 +127,7 @@ export function wirePane(on: On) {
         factsOf($),
       ])
       const { now, rows } = facts
-      const health = healthsOf(facts, streams)
+      const { health } = streamsNow(facts, streams)
       const loops = Object.fromEntries(Object.entries(facts.loops).filter(([, l]) => !lapsed(l, now)))
       const width = Math.max(20, e.props.bodyColumns)
       const room = Math.max(3, (e.viewport?.rows ?? 30) - 8)
