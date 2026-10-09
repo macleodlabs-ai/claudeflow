@@ -49,6 +49,12 @@ const isPaired = (req: Request) => isSame(cookieOf(req), TOKEN) || isSame((req.h
 
 const APP = readFileSync(join(import.meta.dir, 'app.html'), 'utf8')
 
+/** What a browser that is not paired sees: where pairing happens, never the token. */
+const UNPAIRED = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not paired</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d1117;color:#e6edf3;font:16px/1.5 -apple-system,Helvetica,sans-serif;text-align:center;padding:16px}code{color:#ffd33d}.dim{color:#8b949e;font-size:14px}</style></head>
+<body><main><h1>This browser isn't paired</h1><p>In Claude Code on your Mac, run <code>/streams phone</code>.<br>It opens a pairing page here with a QR code for your phone.</p>
+<p class="dim">Streams shows your sessions only to browsers paired with this Mac.</p></main></body></html>`
+
 /**
  * This Mac's tailnet name: the address the phone opens. `/streams phone` records it when it serves the bridge,
  * because the Tailscale app's command line does not answer a process launchd started.
@@ -116,7 +122,7 @@ const outbound = Bun.serve<undefined, never>({
     const url = new URL(req.url)
     const t = url.searchParams.get('t')
     if (t !== null) {
-      if (!isSame(t, TOKEN)) return new Response('That pairing link is not this bridge’s.', { status: 401 })
+      if (!isSame(t, TOKEN)) return new Response(UNPAIRED, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
       // Only a page of this bridge's own is a place to land after pairing.
       const next = url.searchParams.get('next') === '/pair' ? '/pair' : '/'
       return new Response(null, {
@@ -125,7 +131,7 @@ const outbound = Bun.serve<undefined, never>({
       })
     }
     if (url.pathname === '/icon.svg') return new Response(ICON, { headers: { 'content-type': 'image/svg+xml' } })
-    if (!isPaired(req)) return new Response('Not paired: open the link `bun bridge/server.ts pair` prints.', { status: 401 })
+    if (!isPaired(req)) return new Response(UNPAIRED, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
     switch (url.pathname) {
       case '/':
         return new Response(APP, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
