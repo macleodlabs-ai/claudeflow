@@ -96,12 +96,23 @@ Hide finished streams with `✕` and bring them back later. Fold any stream to i
 </tr>
 </table>
 
+### 📋 Status card
+
+Type `status`, or press `status` in the bar, and a card opens above the prompt with every piece of work in the session and where it stands. It is answered locally, so it costs no model call and works while a turn is running.
+
+![The status card above the prompt: git branch and uncommitted files, then each stream as running, waiting for you, done or idle, with what it is doing](assets/status-card.jpg)
+
+- **What needs you comes first**: running work, then loops, then streams **waiting for you** (their last reply ended on a question, shown as the detail), then failures, then finished work.
+- **Git rows on top**: the branch, whether anything is unpushed, and which files are uncommitted.
+- **Click a stream's name** to open it in the pane. `✕ close` or your next prompt hides the card.
+
 ### Status at a glance
 
 | Colour | Status | Meaning |
 | :---: | --- | --- |
 | 🟨 | **RUNNING** | A turn, subagent or loop is working now |
 | 🟩 | **DONE** | Finished cleanly |
+| 🟦 | **WAITING FOR YOU** | On the status card: the stream's last reply asked you something |
 | 🟥 | **ERROR** | A subagent or turn failed |
 | 🟧 | **STALLED** | No activity for longer than expected |
 | ↻ | **LOOP** | A `/loop` or cron is armed, with a countdown to the next tick. A loop that stops, or lapses 10 minutes without re-arming, drops back to its stream's status |
