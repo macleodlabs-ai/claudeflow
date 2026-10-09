@@ -1,5 +1,6 @@
-import type { Stream } from '../types'
-import { oneLine } from './classify'
+import type { Stream, StreamRow } from '../types'
+import { oneLine, parseTag } from './classify'
+import { toolLine, withCode } from './tools'
 
 // Reading a session's transcript, and the prompts that file a long history into streams in batches.
 
@@ -26,10 +27,51 @@ export type TranscriptLine = {
   attachment?: { type?: string; prompt?: unknown; commandMode?: string }
 }
 
+/**
+ * One row-to-be of a message: `index` is its block's place in the message, so `${uuid}:${index}` names the row the
+ * same whether it was filed live or imported.
+ */
 export type HistoryItem =
-  | { kind: 'prompt'; uuid: string; text: string; isFolded: boolean; at?: number }
-  | { kind: 'reply'; uuid: string; text: string; at?: number }
-  | { kind: 'tool'; uuid: string; id: string; name: string; input: unknown; at?: number }
+  | { kind: 'prompt'; uuid: string; index: number; text: string; isFolded: boolean; at?: number }
+  | { kind: 'reply'; uuid: string; index: number; text: string; at?: number }
+  | { kind: 'notice'; uuid: string; index: number; text: string; at?: number }
+  | { kind: 'tool'; uuid: string; index: number; id: string; name: string; input: unknown; at?: number }
+
+/** A message as both sources give it: a transcript line's `message`, or the engine's appended message. */
+export type Message = { type?: string; role?: string; content?: unknown }
+
+/**
+ * What one message files, live or imported alike: a typed prompt (trimmed; a shell command and its output, which
+ * start with `<`, are not prompts), each reply text and tool call, and an engine notice.
+ */
+export function itemsOf(uuid: string, m: Message): HistoryItem[] {
+  const blocks: unknown[] = Array.isArray(m.content) ? m.content : typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : []
+  const texts = blocks.flatMap((b, index) => {
+    const x = (b ?? {}) as { type?: string; text?: unknown }
+    return x.type === 'text' && typeof x.text === 'string' ? [{ index, text: x.text }] : []
+  })
+  if (m.type === 'system') return texts.filter(t => t.text.trim()).map(t => ({ kind: 'notice', uuid, index: t.index, text: t.text }))
+  if (m.type === 'user' || (m.type !== 'assistant' && m.role === 'user')) {
+    const text = texts.map(t => t.text).join('\n').trim()
+    return text && !text.startsWith('<') ? [{ kind: 'prompt', uuid, index: texts[0]?.index ?? 0, text, isFolded: false }] : []
+  }
+  if (m.type !== 'assistant' && m.role !== 'assistant') return []
+  return blocks.flatMap((b, index): HistoryItem[] => {
+    const x = (b ?? {}) as { type?: string; text?: unknown; id?: unknown; name?: unknown; input?: unknown }
+    if (x.type === 'text' && typeof x.text === 'string' && x.text.trim()) return [{ kind: 'reply', uuid, index, text: x.text }]
+    if (x.type === 'tool_use' && typeof x.id === 'string') return [{ kind: 'tool', uuid, index, id: x.id, name: String(x.name), input: x.input }]
+    return []
+  })
+}
+
+/** The row an item files under stream `sid` at time `at`: one rule for live filing and the history import. */
+export function rowOf(item: HistoryItem, sid: string, at: number): StreamRow {
+  const base = { id: `${item.uuid}:${item.index}`, streamId: sid, at }
+  if (item.kind === 'prompt') return { ...base, kind: 'prompt', text: parseTag(item.text)?.rest ?? item.text }
+  if (item.kind !== 'tool') return { ...base, kind: item.kind, text: item.text }
+  if (item.name === 'Agent') return { ...base, kind: 'agent', text: ((item.input ?? {}) as { description?: string }).description ?? 'subagent', toolId: item.id }
+  return { ...base, kind: 'tool', text: toolLine(item.name, item.input), toolId: item.id, ...withCode(item.name, item.input) }
+}
 
 /** A message's text: a string as it is, a list of blocks by its text blocks (a prompt with an image is one). */
 export const textOf = (content: unknown): string =>
@@ -58,19 +100,10 @@ export const readTranscript = (jsonl: string): HistoryItem[] => {
     const queued = d.type === 'attachment' && d.attachment?.type === 'queued_command' && d.attachment.commandMode === 'prompt'
     if (queued) {
       const text = textOf(d.attachment?.prompt).trim()
-      if (text) items.push({ kind: 'prompt', uuid: d.uuid, text, isFolded: true })
+      if (text) items.push({ kind: 'prompt', uuid: d.uuid, index: 0, text, isFolded: true })
       continue
     }
-    const content = d.message?.content
-    if (d.type === 'user') {
-      const text = textOf(content)
-      if (text.trim() && !text.trim().startsWith('<')) items.push({ kind: 'prompt', uuid: d.uuid, text: text.trim(), isFolded: false })
-    } else if (d.type === 'assistant' && Array.isArray(content)) {
-      for (const b of content) {
-        if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) items.push({ kind: 'reply', uuid: d.uuid, text: b.text })
-        if (b?.type === 'tool_use' && typeof b.id === 'string') items.push({ kind: 'tool', uuid: d.uuid, id: b.id, name: String(b.name), input: b.input })
-      }
-    }
+    if (d.type === 'user' || d.type === 'assistant') items.push(...itemsOf(d.uuid, { type: d.type, role: d.message?.role, content: d.message?.content }))
   }
   return items
 }

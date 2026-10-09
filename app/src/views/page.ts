@@ -34,7 +34,7 @@ function session(s: State, t: SessionTab, now: number): string {
     <button data-view="status" class="${s.view === 'status' ? 'on' : ''}">Status</button></div>`
   const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now)
   return `${stop}${permissions(x, now)}${stale}
-    <div class="chips">${chips(streams)}</div>${views}${body}${usageBar(x, s.isUsageOpen)}`
+    <div class="chips">${chips(streams)}</div>${views}${body}${usageBar(x, s.isUsageOpen, now)}`
 }
 
 /** The page below the gates; empty-state text when nothing has arrived yet. */

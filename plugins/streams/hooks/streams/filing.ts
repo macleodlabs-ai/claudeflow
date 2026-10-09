@@ -4,7 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { AgentRun, Folded, Stream, StreamRow } from '../../types'
 import { MAX_ROWS, SAVED_ROWS, jobs, mem, storeKey, type Saved } from '../state'
 import { oneLine, rowKey, textKey } from '../classify'
-import { toolLine, withCode } from '../tools'
+import { itemsOf, rowOf } from '../history'
 import { touched, type LoopArgs, type Loops } from './model'
 
 // Files what the session does, as it happens, in the stream it belongs to: each transcript row, each
@@ -19,7 +19,6 @@ const foldedA = atom({ plugin: 'streams', key: 'folded' } as const, [])
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
-const liveA = atom({ plugin: 'streams', key: 'live' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
@@ -84,31 +83,17 @@ async function record($: $, e: AppendedRow, uuid: string) {
   if (!sid) return
   const marks: Promise<unknown>[] = [fileAs($, uuid, sid)]
   const now = await $.clock.now()
-  const rows: StreamRow[] = []
-  const blocks = msg.content as readonly Block[]
-  blocks.forEach((b, i) => {
-    const id = `${uuid}:${i}`
-    const base = { id, streamId: sid, agentId: e.agentId, at: now }
-    if (b.type === 'text' && b.text) {
-      if (msg.type === 'system') rows.push({ ...base, kind: 'notice', text: b.text })
-      else if (msg.role === 'assistant') {
-        rows.push({ ...base, kind: 'reply', text: b.text })
-        marks.push(fileAs($, textKey(b.text), sid))
-        // Filed under the turn now; the worker moves it if it answers a prompt sent mid-turn.
-        if (folded.length > 0) jobs.push({ kind: 'route', uuid, rowId: id, text: b.text, turnSid: sid, folded })
-      } else if (msg.role === 'user' && !b.text.trim().startsWith('<')) {
-        // A typed shell command and its output (<bash-input>, <bash-stdout>) are not prompts, as the import has it.
-        rows.push({ ...base, kind: e.agentId ? 'prompt' : mem.pendingKind, text: b.text })
-      }
-    } else if (b.type === 'tool_use' && b.id) {
-      marks.push(fileAs($, b.id, sid))
-      const input = (b.input ?? {}) as { description?: string }
-      rows.push(
-        b.name === 'Agent'
-          ? { ...base, kind: 'agent', text: input.description ?? 'subagent' }
-          : { ...base, kind: 'tool', text: toolLine(b.name ?? '', b.input), toolId: b.id, ...withCode(b.name ?? '', b.input) },
-      )
+  // The same rows the history import makes of this message (history.ts, `itemsOf` and `rowOf`).
+  const rows: StreamRow[] = itemsOf(uuid, msg).map(item => {
+    const row: StreamRow = { ...rowOf(item, sid, now), agentId: e.agentId }
+    if (item.kind === 'tool') marks.push(fileAs($, item.id, sid))
+    if (item.kind === 'reply') {
+      marks.push(fileAs($, textKey(item.text), sid))
+      // Filed under the turn now; the worker moves it if it answers a prompt sent mid-turn.
+      if (folded.length > 0) jobs.push({ kind: 'route', uuid, rowId: row.id, text: item.text, turnSid: sid, folded })
     }
+    // A main-loop prompt is filed as what routing took it for: a prompt, a loop's tick or a notice.
+    return item.kind === 'prompt' && !e.agentId ? { ...row, kind: mem.pendingKind } : row
   })
   await Promise.all(marks)
   if (rows.length === 0) return
@@ -150,7 +135,6 @@ export function wireFiling(on: On) {
       const now = await $.clock.now()
       const run: AgentRun = { id: agentId, streamId: sid, description: e.description || e.subagentType, status: 'running', startedAt: now, lastAt: now, last: 'starting', tools: 0 }
       await update($, agentStreamA, m => ({ ...m, [agentId]: sid }))
-        .then(() => update($, liveA, m => ({ ...m, [agentId]: sid })))
         .then(() => update($, agentsA, m => ({ ...m, [agentId]: run })))
         .then(() => touch($, sid, s => ({ agents: s.agents + 1 })))
         .catch(err => $.ui.log(`streams: could not file an agent: ${String(err)}`))
@@ -193,7 +177,6 @@ export function wireFiling(on: On) {
     // A subagent's run is one turn of its loop: its end is the agent's end.
     const agentId = e.agentId
     if (agentId) {
-      await update($, liveA, ({ [agentId]: _, ...rest }) => rest)
       const endedAt = await $.clock.now()
       const status: AgentRun['status'] = e.reason === 'answer' ? 'done' : 'error'
       await update($, agentsA, m => (m[agentId] ? { ...m, [agentId]: { ...m[agentId], status, endedAt } } : m))

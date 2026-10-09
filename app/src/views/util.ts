@@ -1,6 +1,6 @@
 // Small helpers every view shares: escaping (snapshot text is shown, never run), clocks, and the state colours.
 import type { Snapshot } from '../state'
-export { lineText } from '../../../plugins/streams/hooks/status'
+export { lineText, resetsIn } from '../../../plugins/streams/hooks/status'
 
 export type Stream = Snapshot['streams'][number]
 

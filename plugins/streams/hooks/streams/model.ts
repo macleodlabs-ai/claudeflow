@@ -1,6 +1,6 @@
 import type { AgentRun, Health, Stream, StreamRow } from '../../types'
 import { healthOf, nextPastel, pastelOf, slug, type Pulse } from '../classify'
-import { sortStatus, statusOf, ticketLines, type StatusLine } from '../status'
+import { limitsOf, sortStatus, statusOf, ticketLines, type LimitView, type StatusLine } from '../status'
 
 // The streams as data: what the hooks change and what the views read, with no engine in sight.
 
@@ -43,10 +43,10 @@ export type Facts = {
 }
 
 /**
- * Each stream's health as of now, for drawing: from the same live facts the agent rows show, so a header
- * never says idle beside a running agent. The heartbeat's stored verdict only drives its notices.
+ * Each stream's health as of now: from the same live facts the agent rows show, so a header never says idle beside a
+ * running agent, and the heartbeat's notices never contradict what is drawn.
  */
-export function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, Health> {
+function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, Health> {
   const running = Object.values(f.agents).filter(a => a.status === 'running')
   return Object.fromEntries(
     streams.map(s => [
@@ -64,7 +64,7 @@ export function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, 
 }
 
 /** Every stream's status row, in the order that needs the person first. */
-export function statusLinesOf(f: Facts, streams: readonly Stream[], health: Record<string, Health>): StatusLine[] {
+function statusLinesOf(f: Facts, streams: readonly Stream[], health: Record<string, Health>): StatusLine[] {
   const lines = streams
     .filter(s => !s.archived)
     .map(s => {
@@ -82,11 +82,38 @@ export function statusLinesOf(f: Facts, streams: readonly Stream[], health: Reco
   return sortStatus(lines, Object.fromEntries(streams.map(s => [s.id, s.lastAt])))
 }
 
-/** Every ticket named in a prompt or an agent's task, with its state and latest news. */
-export const ticketsOf = (f: Facts, streamLines: readonly StatusLine[]): StatusLine[] =>
-  ticketLines({
-    rows: f.rows,
-    agents: Object.values(f.agents),
-    streamKind: Object.fromEntries(streamLines.map(l => [l.id, l.kind ?? 'idle'])),
-    now: f.now,
-  })
+/** How the streams are doing now: each one's health, its status row, and a row per ticket being worked on. */
+export type StreamsNow = { health: Record<string, Health>; lines: StatusLine[]; tickets: StatusLine[] }
+
+/**
+ * The one reading of the facts that every view, the heartbeat, routing and the phone share. Lines and tickets are
+ * worked out when first asked for: the pane and the heartbeat need only the health.
+ */
+export function streamsNow(f: Facts, streams: readonly Stream[]): StreamsNow {
+  const health = healthsOf(f, streams)
+  let lines: StatusLine[] | undefined
+  let tickets: StatusLine[] | undefined
+  return {
+    health,
+    get lines() {
+      return (lines ??= statusLinesOf(f, streams, health))
+    },
+    get tickets() {
+      return (tickets ??= ticketLines({
+        rows: f.rows,
+        agents: Object.values(f.agents),
+        streamKind: Object.fromEntries(this.lines.map(l => [l.id, l.kind ?? 'idle'])),
+      }))
+    },
+  }
+}
+
+/** The status card, as the terminal and the phone both show it: git, tickets, the streams, and the plan limits. */
+export type CardRows = { git: StatusLine[]; tickets: StatusLine[]; lines: StatusLine[]; limits: LimitView[] }
+
+export const cardOf = (n: StreamsNow, x: { git: readonly StatusLine[]; rateLimits?: Parameters<typeof limitsOf>[0] }): CardRows => ({
+  git: [...x.git],
+  tickets: n.tickets,
+  lines: n.lines,
+  limits: limitsOf(x.rateLimits),
+})

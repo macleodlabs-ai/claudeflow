@@ -4,7 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { Stream } from '../../types'
 import { MAX_ROWS, SAVED_ROWS, mem, storeKey, type Saved } from '../state'
 import { SYSTEM, buildPrompt, fallbackName, isFollowUp, loopKey, oneLine, parseTag, parseVerdict, rowKey, slug, textKey } from '../classify'
-import { colorOf, healthsOf, touched, uuidOf, withStream, type Facts } from './model'
+import { colorOf, streamsNow, touched, uuidOf, withStream, type Facts } from './model'
 
 // Which stream a prompt belongs to: by #tag, a loop's own stream, the task that sent a notice, or Haiku's
 // guess; and by hand, `/stream`.
@@ -80,7 +80,7 @@ async function classify($: $, text: string): Promise<string> {
   // finished side task is not taken for open work in the same area.
   const recent = streams.filter(s => !s.archived).sort((a, b) => b.lastAt - a.lastAt).slice(0, 15)
   const facts = await factsOf($)
-  const health = healthsOf(facts, recent)
+  const { health } = streamsNow(facts, recent)
   const r = await $.model.complete({ model: 'haiku', system: SYSTEM, prompt: buildPrompt(recent, current, text, facts.now, health), maxTokens: 150 })
   const v = r.isAnswered ? parseVerdict(r.text, recent) : undefined
   if (!v) return current || ensureStream($, fallbackName(text), oneLine(text, 120))

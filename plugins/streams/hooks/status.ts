@@ -3,11 +3,14 @@ import { ago, clockOf, oneLine, type BadgeKind } from './classify'
 
 /**
  * What the status card says of one stream: a state word, its colour kind, and one line of detail. Its clocks are
- * times, not text (`since`: last active, `nextAt`: a loop's next tick, epoch ms), so a line stays the same while
- * only time passes; each screen counts from them as it draws (`lineText`).
+ * times, not text (`since`: last active, `nextAt`: a loop's next tick, `quietSince`: a running agent's last output;
+ * epoch ms), so a line stays the same while only time passes; each screen counts from them as it draws (`lineText`).
  */
 export type StatusKind = BadgeKind | 'waiting'
-export type StatusLine = { id: string; area: string; kind?: StatusKind; state: string; detail: string; since?: number; nextAt?: number }
+export type StatusLine = { id: string; area: string; kind?: StatusKind; state: string; detail: string; since?: number; nextAt?: number; quietSince?: number }
+
+/** How long a running agent may be silent before its line says so. */
+export const QUIET_MS = 60_000
 export type StatusInput = {
   stream: Pick<Stream, 'id' | 'name' | 'summary' | 'lastAt'>
   health: Health
@@ -52,12 +55,19 @@ export function statusOf(x: StatusInput): StatusLine {
   return line(x.health, s.summary || '—', { since: s.lastAt })
 }
 
-/** A line's detail with its clock counted to `now`, as the terminal and the app draw it: `next tick in 7:59 · …`, `… · 12s ago`. */
-export const lineText = (l: { detail: string; since?: number; nextAt?: number }, now: number): string =>
-  l.nextAt !== undefined ? `next tick in ${clockOf(Math.max(0, l.nextAt - now))} · ${l.detail}` : l.since !== undefined ? `${l.detail} · ${ago(now - l.since)} ago` : l.detail
+/**
+ * A line's detail with its clock counted to `now`, as the terminal and the app draw it: `next tick in 7:59 · …`,
+ * `… · 12s ago`, `… · 3m with no output`.
+ */
+export function lineText(l: { detail: string; since?: number; nextAt?: number; quietSince?: number }, now: number): string {
+  if (l.nextAt !== undefined) return `next tick in ${clockOf(Math.max(0, l.nextAt - now))} · ${l.detail}`
+  if (l.since !== undefined) return `${l.detail} · ${ago(now - l.since)} ago`
+  if (l.quietSince !== undefined && now - l.quietSince > QUIET_MS) return `${l.detail} · ${ago(now - l.quietSince)} with no output`
+  return l.detail
+}
 
 /** Status rows in the order that needs the person: running, looping, waiting, failed, then the finished. */
-export const sortStatus = (lines: StatusLine[], lastAt: Record<string, number>): StatusLine[] =>
+export const sortStatus = <T extends StatusLine>(lines: T[], lastAt: Record<string, number>): T[] =>
   [...lines].sort((a, b) => STATE_RANK[a.kind ?? 'idle'] - STATE_RANK[b.kind ?? 'idle'] || (lastAt[b.id] ?? 0) - (lastAt[a.id] ?? 0))
 
 /** The card's git rows from `git status --porcelain=v1 --branch`: branch against upstream, and what is uncommitted. */
@@ -97,7 +107,6 @@ export type TicketInput = {
   agents: readonly { description: string; status: 'running' | 'done' | 'error'; last: string; tools: number; lastAt: number; endedAt?: number; streamId: string }[]
   /** Each stream's own state on the card, so a ticket worked in a waiting stream is waiting too. */
   streamKind: Record<string, StatusKind>
-  now: number
 }
 
 /** The sentence of a text that names the ticket, or its first sentence. */
@@ -111,19 +120,25 @@ const sentenceAbout = (text: string, id: string): string => {
  * Running agents on it say what they are doing and how long they have been quiet; otherwise its latest news.
  */
 export function ticketLines(x: TicketInput): StatusLine[] {
-  const { now } = x
   const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(r => r.text), ...x.agents.map(a => a.description)].flatMap(ticketsIn))]
   const lines = named.map(id => {
     const mine = x.agents.filter(a => ticketsIn(a.description).includes(id))
     const said = x.rows.filter(r => ticketsIn(r.text).includes(id)).sort((a, b) => a.at - b.at)
     const lastAt = Math.max(0, ...mine.map(a => a.endedAt ?? a.lastAt), ...said.map(r => r.at))
-    const line = (kind: StatusKind, detail: string): StatusLine & { lastAt: number } => ({ id: `ticket:${id}`, area: id, kind, state: STATE_WORD[kind], detail, lastAt })
+    const line = (kind: StatusKind, detail: string, quietSince?: number): StatusLine & { lastAt: number } => ({
+      id: `ticket:${id}`,
+      area: id,
+      kind,
+      state: STATE_WORD[kind],
+      detail,
+      ...(quietSince !== undefined ? { quietSince } : {}),
+      lastAt,
+    })
     const running = mine.filter(a => a.status === 'running').sort((a, b) => b.lastAt - a.lastAt)
     const top = running[0]
     if (top) {
-      const quiet = now - top.lastAt > 60_000 ? `, ${ago(now - top.lastAt)} with no output` : ''
       const more = running.length > 1 ? `${running.length} agents · ` : ''
-      return line('running', `${more}${top.description}: ${top.tools ? `${top.last} (${top.tools} tools${quiet})` : 'starting up'}`)
+      return line('running', `${more}${top.description}: ${top.tools ? `${top.last} (${top.tools} tools)` : 'starting up'}`, top.lastAt)
     }
     const ended = mine.filter(a => a.endedAt !== undefined).sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0]
     const reply = said.filter(r => r.kind === 'reply').at(-1)
@@ -135,11 +150,11 @@ export function ticketLines(x: TicketInput): StatusLine[] {
     const news = latest ? oneLine(sentenceAbout(latest.text, id), 300) : ended ? `${ended.description} finished` : ''
     return line(kind, news || '—')
   })
-  return sortStatus(lines, Object.fromEntries(lines.map(l => [l.id, l.lastAt]))).map(({ id, area, kind, state, detail }) => ({ id, area, ...(kind ? { kind } : {}), state, detail }))
+  return sortStatus(lines, Object.fromEntries(lines.map(l => [l.id, l.lastAt]))).map(({ lastAt: _, ...l }) => l)
 }
 
-/** One plan limit as the status card's footer shows it. */
-export type LimitView = { label: string; percent: number; bar: string; resetsIn: string; resetsAt: string }
+/** One plan limit as the status card's footer shows it; `until` is when it resets (epoch ms), counted down as it draws (`resetsIn`). */
+export type LimitView = { label: string; percent: number; bar: string; until?: number; resetsAt: string }
 
 const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: 'week', seven_day_opus: 'week opus', seven_day_sonnet: 'week sonnet', spend_limit: 'spend' }
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -153,7 +168,7 @@ export const untilOf = (ms: number): string => {
 }
 
 /** A plan limit for the card: its window, a ten-cell bar, the percent used, and when it resets with the weekday. */
-export function limitView(limit: { kind: string; percentUsed: number; resetsAt?: string }, now: number): LimitView {
+export function limitView(limit: { kind: string; percentUsed: number; resetsAt?: string }): LimitView {
   const percent = Math.round(limit.percentUsed)
   const filled = Math.max(0, Math.min(10, Math.round(percent / 10)))
   const at = limit.resetsAt ? new Date(limit.resetsAt) : undefined
@@ -162,7 +177,13 @@ export function limitView(limit: { kind: string; percentUsed: number; resetsAt?:
     label: LIMIT_LABEL[limit.kind] ?? limit.kind.replace(/_/g, ' '),
     percent,
     bar: '▰'.repeat(filled) + '▱'.repeat(10 - filled),
-    resetsIn: ok ? untilOf(at.getTime() - now) : '',
+    ...(ok ? { until: at.getTime() } : {}),
     resetsAt: ok ? `${WEEKDAY[at.getDay()]} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` : '',
   }
 }
+
+/** The session's plan limits, as the card and the phone show them. */
+export const limitsOf = (rateLimits: readonly { kind: string; percentUsed: number; resetsAt?: string }[] | undefined): LimitView[] => (rateLimits ?? []).map(limitView)
+
+/** How long until a limit resets, counted to `now`: `3d 4h`; '' when it does not say. */
+export const resetsIn = (l: { until?: number }, now: number): string => (l.until === undefined ? '' : untilOf(l.until - now))

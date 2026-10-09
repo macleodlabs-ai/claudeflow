@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { mem } from '../state'
-import { gitStatus, limitView, type StatusLine } from '../status'
-import { colorOf, healthsOf, statusLinesOf, ticketsOf, type Facts } from '../streams/model'
+import { gitStatus } from '../status'
+import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
 import { PAIRING_MS, createLink, devicesOf, identityOf, originOf, pairingOf, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import { HEARTBEAT_MS, PHONE_PERMISSION_MS, accountOf, permissionSummary, snapshotOf, type PendingPermission, type PhoneCommand, type Snapshot } from './snapshot'
@@ -26,6 +26,8 @@ const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
+/** The status card's git rows, shared with the card (ui/bar.tsx): one read serves both while it is fresh. */
+const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
 
 /** Where the account's remote state is kept in $.store (one per config dir, shared by its sessions). */
 export const STORE = {
@@ -56,7 +58,6 @@ let isTicking = false
 const held = new Map<string, { ask: PendingPermission; answer: (d: 'allow' | 'deny') => void }>()
 
 let options: RemoteOptions = { relayUrl: '' }
-let git: { lines: StatusLine[]; at: number } = { lines: [], at: 0 }
 
 /** At session start: note who this session is, and start the clock that keeps the devices current. */
 async function remoteStart($: $, e: { cwd: string }) {
@@ -123,21 +124,22 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     $.clock.now(),
   ])
   const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, now }
+  let git = await read($, statusGitA)
   if (now - git.at >= HEARTBEAT_MS) {
     const r = await $.process.run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 }).catch(() => undefined)
     git = { lines: r?.exitCode === 0 ? gitStatus(r.stdout) : [], at: now }
+    await update($, statusGitA, () => git)
   }
-  const lines = statusLinesOf(facts, streams, healthsOf(facts, streams))
-  const limits = ((await $.session.usage().catch(() => undefined))?.rateLimits ?? []).map(l => limitView(l, now))
+  const card = cardOf(streamsNow(facts, streams), { git: git.lines, rateLimits: (await $.session.usage().catch(() => undefined))?.rateLimits })
   return snapshotOf({
     session: { ...session, busy },
-    lines,
+    lines: card.lines,
     streams,
     colorOf,
     agents: Object.values(agents),
     rows,
-    status: [...git.lines, ...ticketsOf(facts, lines)],
-    limits,
+    status: [...card.git, ...card.tickets],
+    limits: card.limits,
     updates,
     permissions: [...held.values()].map(h => h.ask),
     now,

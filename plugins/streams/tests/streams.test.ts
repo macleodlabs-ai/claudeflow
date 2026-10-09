@@ -6,11 +6,12 @@ import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates/versions'
 import { PHONE_ROWS, accountOf, commandOf, permissionSummary, snapshotOf, type SnapshotInput } from '../hooks/remote/snapshot'
 import { snapshotKey } from '../hooks/remote/link'
-import { completeTag, partialTag, tagMatches, NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, isFollowUp, loopKey, parseTag, parseVerdict, slug, buildPrompt, FINISHED_MS } from '../hooks/classify'
-import { BATCH_SYSTEM, MERGE_SYSTEM, inParallel, parseBatch, parseMerge, readTranscript } from '../hooks/history'
+import { completeTag, partialTag, tagMatches, NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, isFollowUp, loopKey, parseTag, parseVerdict, slug, buildPrompt, FINISHED_MS, textKey } from '../hooks/classify'
+import { BATCH_SYSTEM, MERGE_SYSTEM, inParallel, itemsOf, parseBatch, parseMerge, readTranscript, rowOf } from '../hooks/history'
+import { importPlan } from '../hooks/streams/importPlan'
 import { CODE_LIMIT, codeOf, toolLine } from '../hooks/tools'
-import { gitStatus, limitView, lineText, questionOf, sortStatus, statusOf, ticketLines, ticketsIn, untilOf } from '../hooks/status'
-import { statusLinesOf, type Facts } from '../hooks/streams/model'
+import { gitStatus, limitView, lineText, questionOf, resetsIn, sortStatus, statusOf, ticketLines, ticketsIn, untilOf } from '../hooks/status'
+import { cardOf, streamsNow, type Facts } from '../hooks/streams/model'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -103,18 +104,43 @@ describe('a prompt sent while a turn runs', () => {
 
   test('is read from the transcript as a prompt of its own, marked as sent mid-turn', () => {
     expect(items.filter(i => i.kind === 'prompt')).toEqual([
-      { kind: 'prompt', uuid: 'u1', text: 'build the streams mod', isFolded: false },
-      { kind: 'prompt', uuid: 'q1', text: 'how do I convert UTC to local time?', isFolded: true },
+      { kind: 'prompt', uuid: 'u1', index: 0, text: 'build the streams mod', isFolded: false },
+      { kind: 'prompt', uuid: 'q1', index: 0, text: 'how do I convert UTC to local time?', isFolded: true },
     ])
   })
   // Seen live: a mid-turn prompt with a screenshot is stored as blocks, and reading it as a string crashed the import.
   test('a mid-turn prompt stored as text and image blocks is read by its text', () => {
     const line = { type: 'attachment', uuid: 'q9', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: [{ type: 'text', text: '[Image #4] nothing is happening' }, { type: 'image', source: {} }] } }
-    expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', text: '[Image #4] nothing is happening', isFolded: true }])
+    expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', index: 0, text: '[Image #4] nothing is happening', isFolded: true }])
   })
   test('tool results and engine notifications are not prompts, and a subagent line is not main conversation', () => {
     expect(items.map(i => i.uuid)).toEqual(['u1', 'a1', 'q1', 'a2'])
   })
+  // Filed live and imported later, a session's rows must come out the same: a re-import replaces rows by id, so
+  // two rules would double every row, and a stream would read differently after a reload.
+  test('importing a transcript files the same rows as filing it live', () => {
+    const transcript = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: '#billing  why is the invoice total off?  ' } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'grep -rn total' } }, { type: 'text', text: '  ' }] } },
+      { type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }] } },
+      { type: 'user', uuid: 'b1', message: { role: 'user', content: '<bash-input>ls</bash-input>' } },
+      { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't2', name: 'Agent', input: { description: 'trace rounding' } }, { type: 'text', text: 'Found it: toFixed.' }] } },
+      { type: 'user', uuid: 'u2', message: { role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'and this one?' }] } },
+    ]
+    const imported = readTranscript(transcript.map(l => JSON.stringify(l)).join('\n')).map(i => rowOf(i, 'billing', 7))
+    // What the engine appends as each message is made: its type, role and content blocks.
+    const live = transcript.flatMap(l => itemsOf(l.uuid, { type: l.type, ...l.message }).map(i => rowOf(i, 'billing', 7)))
+    expect(live).toEqual(imported)
+    expect(imported.map(r => [r.id, r.kind, r.text])).toEqual([
+      ['u1:0', 'prompt', 'why is the invoice total off?'],
+      ['a1:0', 'reply', 'Looking.'],
+      ['a1:1', 'tool', 'Bash(grep -rn total)'],
+      ['a2:0', 'agent', 'trace rounding'],
+      ['a2:1', 'reply', 'Found it: toFixed.'],
+      ['u2:1', 'prompt', 'and this one?'],
+    ])
+  })
+
   test('the reply that answers it goes to its stream, not the running turn', () => {
     const turn = { streamId: 'streams-mod', text: 'build the streams mod' }
     const folded = [{ streamId: 'timezones', text: 'how do I convert UTC to local time?' }]
@@ -357,6 +383,35 @@ describe('folding the pane', () => {
     expect((await badge(/^● RUNNING/))?.color).toBe('#ffd33d')
     await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't', agentId: 'ag1', reason: 'answer' } as never)
     expect((await badge(/^✓ DONE/))?.color).toBe('#7ee787')
+  })
+
+  test('the heartbeat says a stream stalled exactly when the pane draws it stalled', ENGINE, async ($, on) => {
+    // Both read model.ts's streamsNow: a "looks stalled" notice beside a running pill would be two answers to one
+    // question, and the notice is what sends the person to look.
+    on('agent.spawn', async () => ({ model: 'haiku', agentId: 'ag1' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('session.start', async (_$, e) => e as never)
+    on('command.register', async () => ({ value: undefined }) as never)
+    on('fs.read', async () => ({ value: '{}' }) as never)
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return { value: undefined }
+    })
+    const clock = await setup($, on)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: false } as never)
+    await $.agent.spawn({ prompt: 'look into it', description: 'check rounding', subagentType: 'Explore' } as never)
+    const drawn = async () => {
+      const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+      const glyph = (await pane.find({ type: 'Text', text: /^[●◌✓✗○]$/ }))?.text
+      await pane.unmount()
+      return glyph
+    }
+    await clock.advance(5000)
+    expect([await drawn(), toasts]).toEqual(['●', []])
+    // The subagent goes silent past the limit: the notice and the pane change together.
+    await clock.advance(STALL_MS + 5000)
+    expect([await drawn(), toasts.filter(t => t.includes('looks stalled'))]).toEqual(['◌', [expect.stringContaining('stream billing looks stalled')]])
   })
 })
 
@@ -749,36 +804,51 @@ describe('filing a long history in parallel', () => {
     .map(l => JSON.stringify(l))
     .join('\n')
 
-  test('untagged prompts are sorted by batch and merge, and a follow-up stays with the prompt before it', ENGINE, async ($, on) => {
-    const clock = mock.clock(on)
-    mock.store(on)
-    const systems: string[] = []
-    on('session.cwd', async () => ({ value: '/project' }))
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
-    on('fs.stat', async () => ({ value: { kind: 'file', size: UNTAGGED.length, mtimeMs: 0, isLink: false } }) as never)
-    on('fs.read', async () => ({ value: UNTAGGED }) as never)
-    on('model.complete', async (_$, e) => {
-      const ask = e as { system?: string }
-      systems.push(ask.system === BATCH_SYSTEM ? 'batch' : ask.system === MERGE_SYSTEM ? 'merge' : 'other')
-      const text = ask.system === BATCH_SYSTEM ? '["Billing bug", "Invoice rounding", "Auth JWT"]' : '{"Billing bug": "Billing", "Invoice rounding": "Billing", "Auth JWT": "Auth JWT"}'
-      return { value: { isAnswered: true, text, usage: USAGE } } as never
-    })
-    on('classic.UserPromptSubmit', async () => ({}) as never)
-    on('ui.toast', async () => ({ value: undefined }))
-    on('ui.status', async () => ({ value: undefined }))
-    on('ui.render', async () => ({ type: 'Text', props: {}, children: ['engine row'] }) as never)
-    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
-    await clock.advance(1500)
-    // One batch for the three open prompts ("yes" needs no model), then one merge.
-    expect(systems).toEqual(['batch', 'merge'])
-    const colourOf = async (requestId: string) => {
-      const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'UserMessage', requestId, props: { text: 'x', origin: { kind: 'composer' }, isExpanded: false } as never })
-      return ((await row.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color
+  /** Runs the import's plan, answering each model call it asks for by its system prompt. */
+  const plan = (items: ReturnType<typeof readTranscript>, answer: (system: string) => string | undefined) => {
+    const asked: string[] = []
+    const steps = importPlan({ items, streams: [], current: '', startedAt: 100, isCurrent: true, now: 0 })
+    let step = steps.next()
+    while (!step.done) {
+      asked.push(step.value.label)
+      step = steps.next(step.value.asks.map(a => answer(a.system)))
     }
-    const billing = await colourOf('p1')
-    expect(await colourOf('p2')).toBe(billing)
-    expect(await colourOf('p3')).toBe(billing)
-    expect(await colourOf('p4')).not.toBe(billing)
+    return { ...step.value, asked, sidOf: (uuid: string) => step.value.rows.find(r => r.id.startsWith(`${uuid}:`))?.streamId }
+  }
+
+  test('untagged prompts are sorted by batch and merge, and a follow-up stays with the prompt before it', () => {
+    const p = plan(readTranscript(UNTAGGED), system =>
+      system === BATCH_SYSTEM ? '["Billing bug", "Invoice rounding", "Auth JWT"]' : '{"Billing bug": "Billing", "Invoice rounding": "Billing", "Auth JWT": "Auth JWT"}',
+    )
+    // One batch for the three open prompts ("yes" needs no model), then one merge.
+    expect(p.asked).toEqual(['sorting prompts', 'merging streams'])
+    expect(['p1', 'p2', 'p3', 'p4'].map(p.sidOf)).toEqual(['billing', 'billing', 'billing', 'auth-jwt'])
+    expect(p.newStreams.map(s => s.name)).toEqual(['Billing', 'Auth JWT'])
+    expect(p.current).toBe('auth-jwt')
+    // Rows are timed one ms apart from the session's start, in transcript order.
+    expect(p.rows.map(r => r.at)).toEqual([100, 101, 102, 103])
+  })
+
+  test('a model that does not answer still files every prompt: each gets a name of its own words', () => {
+    const p = plan(readTranscript(UNTAGGED), () => undefined)
+    expect(['p1', 'p2', 'p3', 'p4'].map(p.sidOf)).toEqual(['why-is-the-invoice', 'why-is-the-invoice', 'check-the-rounding-in', 'move-sessions-to-signed'])
+  })
+
+  test('a #tag needs no model, and a reply in a turn with a prompt sent mid-turn goes to the thread it answers', () => {
+    const lines = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: '#billing fix the total' } },
+      { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '#timezones how do I convert UTC?' } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Use Intl.' }, { type: 'text', text: 'Total fixed.' }] } },
+    ]
+    const p = plan(readTranscript(lines.map(l => JSON.stringify(l)).join('\n')), () => '["timezones", "billing"]')
+    expect(p.asked).toEqual(['routing replies'])
+    expect(p.rows.map(r => [r.id, r.streamId, r.text])).toEqual([
+      ['u1:0', 'billing', 'fix the total'],
+      ['q1:0', 'timezones', 'how do I convert UTC?'],
+      ['a1:0', 'timezones', 'Use Intl.'],
+      ['a1:1', 'billing', 'Total fixed.'],
+    ])
+    expect(p.marks).toContainEqual([textKey('Use Intl.'), 'timezones'])
   })
 })
 
@@ -922,10 +992,9 @@ describe('tickets on the status card', () => {
       ],
       agents: [{ description: 'TL-260 lottie fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
       streamKind: { tickets: 'done' },
-      now: 10_000 + 7 * 60_000,
     })
-    expect(lines.map(l => [l.area, l.state, l.detail])).toEqual([
-      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools, 7m with no output)'],
+    expect(lines.map(l => [l.area, l.state, lineText(l, 10_000 + 7 * 60_000)])).toEqual([
+      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools) · 7m with no output'],
       ['TL-262', 'DONE', 'The TL-262 build is committed (6cbe94f6).'],
     ])
   })
@@ -935,7 +1004,6 @@ describe('tickets on the status card', () => {
       rows: [{ kind: 'prompt', text: 'ship ENG-7', at: 0, streamId: 's' }],
       agents: [{ description: 'ENG-7 deploy', status: 'error', last: '', tools: 3, lastAt: 9, endedAt: 10, streamId: 's' }],
       streamKind: { s: 'done' },
-      now: 20,
     })
     expect([line?.state, line?.detail]).toEqual(['ERROR', 'ENG-7 deploy failed'])
   })
@@ -977,8 +1045,8 @@ describe('plan limits on the status card', () => {
   // Read at a glance: how much is used, how long until it resets, and on which day, since a date alone needs a calendar.
   test('a limit shows its percent as a bar, the time to reset in two units, and the weekday it resets', () => {
     const now = Date.parse('2026-10-08T12:00:00Z')
-    const v = limitView({ kind: 'seven_day', percentUsed: 71.4, resetsAt: '2026-10-11T12:00:00Z' }, now)
-    expect([v.label, v.percent, v.bar, v.resetsIn]).toEqual(['week', 71, '▰▰▰▰▰▰▰▱▱▱', '3d 0h'])
+    const v = limitView({ kind: 'seven_day', percentUsed: 71.4, resetsAt: '2026-10-11T12:00:00Z' })
+    expect([v.label, v.percent, v.bar, resetsIn(v, now)]).toEqual(['week', 71, '▰▰▰▰▰▰▰▱▱▱', '3d 0h'])
     expect(v.resetsAt.startsWith('Sun')).toBe(true)
     expect(untilOf(2 * 3600_000 + 14 * 60_000)).toBe('2h 14m')
     expect(untilOf(9 * 60_000)).toBe('9m')
@@ -1098,31 +1166,40 @@ describe('what the phone is sent', () => {
     const facts = (now: number): Facts => ({
       busy: true,
       current: 'billing',
-      agents: { a1: { id: 'a1', streamId: 'billing', description: 'trace rounding', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Grep toFixed', tools: 6 } },
+      agents: { a1: { id: 'a1', streamId: 'billing', description: 'trace rounding TL-9', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Grep toFixed', tools: 6 } },
       inflight: {},
       outcome: {},
       rows: [],
       loops: { ci: { kind: 'wakeup', nextAt: at(540), label: '' } },
       now,
     })
-    const health = { 'auth-refactor': 'idle', ci: 'idle', billing: 'running' } as const
+    const rateLimits = [{ kind: 'five_hour', percentUsed: 38, resetsAt: new Date(at(3600)).toISOString() }]
     const snapAt = (now: number) => {
-      const lines = statusLinesOf(facts(now), streams, health)
-      return { lines, snap: snapshotOf({ session: { id: 's1', account: 'macleod', project: 'p', busy: true }, lines, streams, colorOf: () => '#a5d8ff', agents: Object.values(facts(now).agents), rows: [], status: [], limits: [], updates: [], now }) }
+      const card = cardOf(streamsNow(facts(now), streams), { git: [], rateLimits })
+      const snap = snapshotOf({ session: { id: 's1', account: 'macleod', project: 'p', busy: true }, lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: Object.values(facts(now).agents), rows: [], status: [...card.git, ...card.tickets], limits: card.limits, updates: [], now })
+      return { card, snap }
     }
-    const first = snapAt(at(60))
-    const later = snapAt(at(67))
+    const first = snapAt(at(120))
+    const later = snapAt(at(127))
     expect(snapshotKey(later.snap)).toBe(snapshotKey(first.snap))
-    // The terminal draws the same words it always did, counted to its own now.
-    const text = (lines: typeof first.lines, now: number) => Object.fromEntries(lines.map(l => [l.id, lineText(l, now)]))
-    expect(text(first.lines, at(60))).toEqual({ billing: 'trace rounding: Grep toFixed (6 tools)', ci: 'next tick in 8:00 · check CI', 'auth-refactor': 'Move sessions to JWT · 12s ago' })
-    expect(text(later.lines, at(67))).toEqual({ billing: 'trace rounding: Grep toFixed (6 tools)', ci: 'next tick in 7:53 · check CI', 'auth-refactor': 'Move sessions to JWT · 19s ago' })
+    // The terminal counts each clock to its own now: last active, the next tick, an agent gone quiet, a limit's reset.
+    const text = (c: typeof first.card, now: number) => [...c.lines, ...c.tickets].map(l => lineText(l, now))
+    expect(text(first.card, at(120))).toEqual([
+      'trace rounding TL-9: Grep toFixed (6 tools)',
+      'next tick in 7:00 · check CI',
+      'Move sessions to JWT · 1m ago',
+      'trace rounding TL-9: Grep toFixed (6 tools) · 1m with no output',
+    ])
+    expect(text(later.card, at(127))[1]).toBe('next tick in 6:53 · check CI')
+    expect(resetsIn(first.card.limits[0]!, at(120))).toBe('58m')
     // The phone gets the same times to count from.
     expect(first.snap.streams.map(s => [s.id, s.detail, s.since, s.nextAt])).toEqual([
-      ['billing', 'trace rounding: Grep toFixed (6 tools)', undefined, undefined],
+      ['billing', 'trace rounding TL-9: Grep toFixed (6 tools)', undefined, undefined],
       ['ci', 'check CI', undefined, at(540)],
       ['auth-refactor', 'Move sessions to JWT', at(48), undefined],
     ])
+    expect(first.snap.status[0]?.quietSince).toBe(at(50))
+    expect(first.snap.limits[0]?.until).toBe(at(3600))
   })
 
   // A running agent's elapsed time would do the same for as long as any agent runs: 1,800 posts an hour.

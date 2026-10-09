@@ -4,8 +4,8 @@ import type { EngineInterface, On } from 'claude-code'
 import type { Health, Stream } from '../../types'
 import { PANE, PANE_KEY, type PaneSaved } from '../state'
 import { BADGE_BG, BADGE_FG, HEALTH_GLYPH, completeTag, partialTag, tagMatches, type BadgeKind } from '../classify'
-import { gitStatus, limitView } from '../status'
-import { colorOf, healthsOf, lapsed, statusLinesOf, ticketsOf, type Facts } from '../streams/model'
+import { gitStatus } from '../status'
+import { cardOf, colorOf, lapsed, streamsNow, type Facts } from '../streams/model'
 import { updateControl } from '../updates/control'
 import { TICKET_ROWS } from './look'
 import { statusCard } from './statusCard'
@@ -22,14 +22,13 @@ const viewA = atom({ plugin: 'streams', key: 'view' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
-const liveA = atom({ plugin: 'streams', key: 'live' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
 const statusOpenA = atom({ plugin: 'streams', key: 'statusOpen' } as const, false)
-const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, [])
+const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
 const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const, false)
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 const updatingA = atom({ plugin: 'streams', key: 'updating' } as const, false)
@@ -71,11 +70,12 @@ async function openStatus($: $, band = '') {
   await update($, statusOpenA, () => true)
   // Opened from the bar, the band holds the keys: its ring goes to the card, so ↑↓ scroll it and Esc closes it.
   if (band) void $.ui.focus({ requestId: band, key: 'status-close' }).catch(() => {})
-  const git = await $.process
+  const lines = await $.process
     .run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 })
     .then(r => (r.exitCode === 0 ? gitStatus(r.stdout) : []))
     .catch(() => [])
-  await update($, statusGitA, () => git)
+  const at = await $.clock.now()
+  await update($, statusGitA, () => ({ lines, at }))
 }
 
 /** Brings the pane back from the side tab at the width it had (a width the person dragged to wins anyway). */
@@ -133,8 +133,9 @@ export function wireBar(on: On) {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [streams, focus, live, facts] = await Promise.all([read($, streamsA), read($, focusA), read($, liveA), factsOf($)])
-    const health = healthsOf(facts, streams)
+    const [streams, focus, facts] = await Promise.all([read($, streamsA), read($, focusA), factsOf($)])
+    const now = streamsNow(facts, streams)
+    const { health } = now
     const hint = await read($, tagHintA)
     const ui = $.ui.resolve(e)
     const { Box, Button, Text } = ui
@@ -156,17 +157,8 @@ export function wireBar(on: On) {
       )
     }
     if (!e.props.hasSurvey && (await read($, statusOpenA))) {
-      const streamLines = statusLinesOf(facts, streams, health)
-      const limits = ((await $.session.usage().catch(() => undefined))?.rateLimits ?? []).map(l => limitView(l, facts.now))
-      const card = {
-        streams,
-        git: await read($, statusGitA),
-        tickets: ticketsOf(facts, streamLines).slice(0, TICKET_ROWS),
-        streamLines,
-        limits,
-        width: e.props.bodyColumns,
-        now: facts.now,
-      }
+      const rows = cardOf(now, { git: (await read($, statusGitA)).lines, rateLimits: (await $.session.usage().catch(() => undefined))?.rateLimits })
+      const card = { streams, git: rows.git, tickets: rows.tickets.slice(0, TICKET_ROWS), streamLines: rows.lines, limits: rows.limits, width: e.props.bodyColumns, now: facts.now }
       return statusCard(ui, card, { close: () => update($, statusOpenA, () => false), open: id => openStream($, id) })
     }
     if (e.props.hasSurvey) return next(e)
@@ -176,7 +168,7 @@ export function wireBar(on: On) {
     const pills: { s: Stream; label: string; health: Health }[] = []
     let used = 16
     for (const s of streams.filter(s => !s.archived).sort((a, b) => b.lastAt - a.lastAt).slice(0, 9)) {
-      const n = Object.values(live).filter(id => id === s.id).length
+      const n = Object.values(facts.agents).filter(a => a.streamId === s.id && a.status === 'running').length
       const label = `${s.id}${n ? ` ⟳${n}` : ''}${focus === s.id ? ' ◉' : ''}`
       if (used + label.length + 8 > width) break
       used += label.length + 8
