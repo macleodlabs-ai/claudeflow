@@ -1,11 +1,13 @@
 {
-  // The Claudeflow relay on Cloudflare's free plan. `./build.sh` copies the phone page into ./public first.
+  // The Claudeflow relay on Cloudflare's free plan. `app/build.sh` writes the app into ./public (gitignored).
+  //   npx wrangler dev        (local, no account needed)
+  //   npx wrangler deploy     (needs `npx wrangler login` once)
   "name": "claudeflow-relay",
   "main": "src/index.ts",
-  "compatibility_date": "2026-05-01",
+  "compatibility_date": "2026-10-09",
   "assets": { "directory": "./public" },
-  "durable_objects": { "bindings": [{ "name": "MACS", "class_name": "MacRoom" }] },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
   // The free plan runs Durable Objects on SQLite storage only.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MacRoom"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
   "observability": { "enabled": false }
 }

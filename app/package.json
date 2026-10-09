@@ -1,0 +1,17 @@
+{
+  "name": "claudeflow-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "./build.sh",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  }
+}

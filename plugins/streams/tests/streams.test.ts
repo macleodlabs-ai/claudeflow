@@ -3,9 +3,13 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
-import { BRIDGE_SOCKET, PHONE_PERMISSION_MS, PHONE_ROWS, RETRY_MS, accountOf, commandsOf, permissionSummary, snapshotOf, tailnetHostOf, timeless } from '../hooks/phone'
-import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates/versions'
+import { PHONE_ROWS, accountOf, commandsOf, permissionSummary, snapshotOf, timeless, type SnapshotInput } from '../hooks/remote/snapshot'
+import { snapshotKey } from '../hooks/remote/link'
+import { completeTag, partialTag, tagMatches, NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, isFollowUp, loopKey, parseTag, parseVerdict, slug, buildPrompt, FINISHED_MS } from '../hooks/classify'
+import { BATCH_SYSTEM, MERGE_SYSTEM, inParallel, parseBatch, parseMerge, readTranscript } from '../hooks/history'
+import { CODE_LIMIT, codeOf, toolLine } from '../hooks/tools'
+import { gitStatus, limitView, questionOf, sortStatus, statusOf, ticketLines, ticketsIn, untilOf } from '../hooks/status'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -902,49 +906,6 @@ describe('plugin updates', () => {
   })
 })
 
-describe('the phone', () => {
-  const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 44, placement: 'inline' } as never
-  const WORK = [
-    { type: 'user', uuid: 'u1', message: { role: 'user', content: '#docs rewrite the install guide' } },
-    { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Done. Shall I open a PR for it?' }] } },
-    { type: 'user', uuid: 'u2', message: { role: 'user', content: '#billing why is the total off?' } },
-    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Rounding is **per line**.' }] } },
-  ].map(l => JSON.stringify(l)).join('\n')
-
-  // On a phone the person reads and answers; the accordion puts what is waiting on them first and lets them answer it in one tap.
-  test('the phone draws an accordion: a waiting stream shows its question with a yes, and a tapped card opens its chat', ENGINE, async ($, on) => {
-    const clock = mock.clock(on)
-    mock.store(on)
-    watchStatus(on)
-    on('session.cwd', async () => ({ value: '/project' }))
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
-    on('fs.stat', async () => ({ value: { kind: 'file', size: WORK.length, mtimeMs: 0, isLink: false } }) as never)
-    on('fs.read', async () => ({ value: WORK }) as never)
-    on('classic.UserPromptSubmit', async () => ({}) as never)
-    on('ui.toast', async () => ({ value: undefined }))
-    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
-    const sent: string[] = []
-    on('prompt.submit', async (_$, e) => {
-      sent.push(e.text)
-      return { text: e.text }
-    })
-    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
-    await clock.advance(1500)
-    const pane = await $.ui.mount({ plugin: 'streams', surface: 'mobile', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
-    expect(await pane.find({ key: 'm:docs' })).toBeDefined()
-    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
-
-    await pane.press({ key: 'm-yes:docs' })
-    expect(sent.at(-1)).toBe('yes')
-
-    await pane.press({ key: 'm-open:billing' })
-    const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
-    expect(texts).toEqual(['why is the total off?', 'Rounding is **per line**.'])
-    await pane.press({ key: 'm-open:billing' })
-    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
-  })
-})
-
 describe('tickets on the status card', () => {
   // Working tickets, the person asks "where is TL-260?": the card answers per ticket, not per topic.
   test('ticket ids are found as trackers write them, and look-alike standards are not tickets', () => {
@@ -1083,13 +1044,13 @@ describe('status asked from the phone', () => {
       return { text: e.text }
     })
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
-    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'bridge' } as never })
+    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'remote' } as never })
     expect(r.drop).toBe(undefined)
     expect(sent).toEqual(['status?'])
   })
 })
 
-describe('the phone bridge', () => {
+describe('what the phone is sent', () => {
   const at = (n: number) => n * 1000
   // The phone reads and answers: a waiting stream must carry its whole question, and every live agent its progress.
   test('a snapshot carries what the phone draws: the question, live agents, and the latest rows cut short', () => {
@@ -1120,8 +1081,8 @@ describe('the phone bridge', () => {
     expect(snap.streams.map(s => s.id)).toEqual(['docs', 'auth-refactor'])
     expect(snap.streams[0]?.question).toBe('Shall I open a PR for it?')
     expect(snap.streams[1]?.question).toBe(undefined)
-    // The running agent is shown with its clock; one that ended long ago is not news.
-    expect(snap.streams[1]?.agents.map(a => [a.id, a.ms, a.tools])).toEqual([['a1', at(3600), 4]])
+    // The running agent is shown with its start, for the phone to count from; one that ended long ago is not news.
+    expect(snap.streams[1]?.agents.map(a => [a.id, a.startedAt, a.endedAt, a.tools])).toEqual([['a1', at(0), undefined, 4]])
     expect(snap.streams[0]?.rows).toHaveLength(PHONE_ROWS)
     expect(snap.streams[0]?.rows.at(-1)?.text.length).toBeLessThan(700)
   })
@@ -1133,107 +1094,34 @@ describe('the phone bridge', () => {
     expect(timeless('Is 5s ago a time? · yes')).toBe('Is 5s ago a time? · yes')
   })
 
+  // A running agent's elapsed time would do the same for as long as any agent runs: 1,800 posts an hour.
+  test('a running agent does not make a snapshot news as its time passes', () => {
+    const input = (now: number): SnapshotInput => ({
+      session: { id: 's1', account: 'macleod', project: 'p', busy: true },
+      lines: [{ id: 'auth-refactor', area: 'Auth refactor', kind: 'running', state: 'RUNNING', detail: '1 agent' }],
+      streams: STREAMS,
+      colorOf: () => '#a5d8ff',
+      loops: {},
+      agents: [{ id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 }],
+      rows: [],
+      status: [],
+      limits: [],
+      updates: [],
+      now,
+    })
+    expect(snapshotKey(snapshotOf(input(at(60))))).toBe(snapshotKey(snapshotOf(input(at(62)))))
+  })
+
   test("a session's account is its config dir's own name", () => {
     expect(accountOf('/Users/me/.claude-clients/macleod')).toBe('macleod')
     expect(accountOf('/Users/me/.claude-clients/iris/')).toBe('iris')
     expect(accountOf('')).toBe('default')
   })
-
-  // Every session reports to the bridge on its own; one with no bridge running must not call it every two seconds.
-  test('a session sends the bridge its streams when they change, not on every tick, and backs off while no bridge answers', ENGINE, async ($, on) => {
-    const clock = mock.clock(on)
-    mock.store(on)
-    watchStatus(on)
-    on('session.cwd', async () => ({ value: '/work/claudeflow' }))
-    on('session.id', async () => ({ value: 'sess-1' }))
-    on('session.start', async (_$, e) => e as never)
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
-    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
-    on('ui.toast', async () => ({ value: undefined }))
-    on('command.register', async () => ({ value: undefined }) as never)
-    on('process.run', async (_$, e) =>
-      ({ value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/printenv' ? '/Users/me/.claude-clients/macleod\n' : '[]', stderr: '' } }) as never,
-    )
-    on('fs.read', async () => ({ value: '{}' }) as never)
-    on('prompt.submit', async (_$, e) => ({ text: e.text }))
-    let isUp = true
-    const sent: { url: string; socketPath?: string; body: { session: { account: string; project: string }; streams: { name: string }[] } }[] = []
-    on('http.fetch', async (_$, e) => {
-      if (!isUp) throw new Error('ECONNREFUSED')
-      sent.push({ url: e.url, socketPath: e.init?.socketPath, body: JSON.parse(String(e.init?.body)) })
-      return { value: { status: 200, ok: true, headers: {}, text: 'ok' } } as never
-    })
-    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
-    await $.prompt.submit({ text: '#docs rewrite the install guide', wait: false, origin: { kind: 'composer' } })
-    await clock.advance(2000)
-    expect(sent).toHaveLength(1)
-    expect(sent[0]?.socketPath).toBe(BRIDGE_SOCKET)
-    expect(sent[0]?.url).toBe('http://bridge/sessions/sess-1')
-    expect(sent[0]?.body.session).toMatchObject({ account: 'macleod', project: 'claudeflow' })
-    expect(sent[0]?.body.streams.map(s => s.name)).toContain('docs')
-    // Nothing changed: nothing sent.
-    await clock.advance(4000)
-    expect(sent).toHaveLength(1)
-    // The bridge goes away: one failed try, then quiet until the retry time.
-    isUp = false
-    await $.prompt.submit({ text: '#billing why is the total off?', wait: false, origin: { kind: 'composer' } })
-    await clock.advance(2000)
-    isUp = true
-    await clock.advance(RETRY_MS - 4000)
-    expect(sent).toHaveLength(1)
-    // The first tick past the retry time (ticks come every two seconds) sends the news it held.
-    await clock.advance(6000)
-    expect(sent).toHaveLength(2)
-    expect(sent[1]?.body.streams.map(s => s.name)).toContain('billing')
-  })
-})
-
-describe('setting up the phone', () => {
-  // The phone's address is the Mac's tailnet name; a signed-out Tailscale has none to give.
-  test("the phone's address is this Mac's tailnet name, and only while Tailscale runs", () => {
-    expect(tailnetHostOf(JSON.stringify({ BackendState: 'Running', Self: { DNSName: 'mbp.tail1234.ts.net.' } }))).toBe('mbp.tail1234.ts.net')
-    expect(tailnetHostOf(JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: '' } }))).toBe(undefined)
-    expect(tailnetHostOf('not json')).toBe(undefined)
-  })
-
-  // The plugin keeps the bridge itself: an update to the plugin reaches the bridge launchd runs, with nothing to run by hand.
-  test('/streams phone replaces an older bridge and restarts it, and says how to finish Tailscale', ENGINE, async ($, on) => {
-    mock.clock(on)
-    mock.store(on)
-    watchStatus(on)
-    on('session.cwd', async () => ({ value: '/project' }))
-    on('ui.toast', async () => ({ value: undefined }))
-    const ran: string[] = []
-    on('process.run', async (_$, e) => {
-      ran.push(e.argv.join(' '))
-      const [bin] = e.argv
-      const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '' } }) as never
-      if (bin === '/usr/bin/printenv') return out('/Users/me\n')
-      if (bin === '/usr/bin/id') return out('501\n')
-      if (bin === '/bin/sh' && e.argv[1] === '-c') return out('/usr/local/bin/bun\n')
-      if (bin === '/bin/launchctl') return out('', 0)
-      if (bin?.endsWith('Tailscale')) return out(JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: '' } }))
-      return out('')
-    })
-    on('fs.read', async (_$, e) => ({ value: e.path.startsWith('/Users/me/.claudeflow/bridge/') ? 'old bridge' : 'new bridge' }) as never)
-    const wrote: string[] = []
-    on('fs.write', async (_$, e) => {
-      wrote.push(e.path)
-      return { value: undefined } as never
-    })
-    const r = await $.command.run({ command: 'streams', args: 'phone', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
-    expect(wrote).toEqual(['server.ts', 'remote.ts', 'seal.js', 'app.html', 'install.sh'].map(f => `/Users/me/.claudeflow/bridge/${f}`))
-    expect(ran).toContain('/bin/sh /Users/me/.claudeflow/bridge/install.sh')
-    expect(r.text).toContain('Phone bridge: updated and restarted.')
-    expect(r.text).toContain('signed out')
-    // Nothing is served over Tailscale until it is signed in.
-    expect(ran.some(c => c.includes(' serve '))).toBe(false)
-  })
 })
 
 describe('acting from the phone', () => {
   // The phone is a remote for this Mac: only the commands it is meant to send may reach a session.
-  test('only well-formed answers, stops and permission decisions are taken from the bridge', () => {
+  test('only well-formed answers, stops and permission decisions are taken from a device', () => {
     const { commands, isPhoneActive } = commandsOf(
       JSON.stringify({
         phoneActive: true,
@@ -1257,47 +1145,63 @@ describe('acting from the phone', () => {
     expect(permissionSummary('Bash', { command: 'git push origin main' })).toBe('Bash: git push origin main')
     expect(permissionSummary('Edit', { file_path: '/repo/a.ts', old_string: 'x' })).toBe('Edit: /repo/a.ts')
   })
+})
 
-  // While the phone has the page open, its Allow answers the prompt; with no phone looking, the Mac asks as it always did.
-  test('a permission prompt waits on an active phone and takes its answer; with no phone active it is not held', ENGINE, async ($, on) => {
+describe('/streams and its verbs', () => {
+  // Each verb is answered by the module that owns it, wired ahead of the pane: were the order wrong, the pane
+  // would answer every verb by opening itself, and `/streams phone` would never reach the remote.
+  test('a bare /streams opens the pane, and phone asks for the relay address until one is set', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.surfaces', async () => ({ value: ['terminal'] }) as never)
+    const opened: string[] = []
+    on('ui.open', async (_$, e) => {
+      opened.push(e.id)
+      return { value: { isPlaced: true } } as never
+    })
+    const run = (args: string) => $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
+    expect((await run('phone')).text).toContain('relayUrl')
+    expect(opened).toEqual([])
+    expect((await run('')).text).toContain('Streams navigator opened.')
+    expect(opened).toEqual(['streams'])
+  })
+})
+
+describe('the update button', () => {
+  // The button is drawn by the bar and the pane, and installed by the updates module: a press must reach it.
+  test('pressing ⬆ update in the bar installs the newer release and reloads plugins', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     watchStatus(on)
-    on('session.cwd', async () => ({ value: '/work/claudeflow' }))
-    on('session.id', async () => ({ value: 'sess-1' }))
+    on('session.cwd', async () => ({ value: '/project' }))
     on('session.start', async (_$, e) => e as never)
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
     on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
     on('ui.toast', async () => ({ value: undefined }))
     on('command.register', async () => ({ value: undefined }) as never)
-    on('process.run', async () => ({ value: { exitCode: 0, stdout: '/Users/me\n', stderr: '' } }) as never)
-    on('fs.read', async () => ({ value: 'same' }) as never)
-    on('tool.check', async () => ({ decision: 'ask' }) as never)
-    let isActive = true
-    let held: string[] = []
-    on('http.fetch', async (_$, e) => {
-      const ok = (text: string) => ({ value: { status: 200, ok: true, headers: {}, text } }) as never
-      if (e.init?.method === 'POST') {
-        held = (JSON.parse(String(e.init.body)) as { permissions: { id: string }[] }).permissions.map(p => p.id)
-        return ok('ok')
-      }
-      const commands = held.length ? [{ id: 'c1', kind: 'permission', requestId: held[0], decision: 'allow' }] : []
-      return ok(JSON.stringify({ phoneActive: isActive, commands }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const ran: string[] = []
+    on('process.run', async (_$, e) => {
+      ran.push(e.argv.join(' '))
+      const stdout = e.argv[2] === 'list' ? JSON.stringify([{ id: 'streams@m', version: '1.0.0', installPath: '/cfg/plugins/cache/m/streams/1.0.0' }]) : ''
+      return { value: { exitCode: 0, stdout, stderr: '' } } as never
     })
-    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
-    await clock.advance(2000)
-    const asked = $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_1' } as never)
-    await clock.advance(2000)
-    await clock.advance(2000)
-    expect((await asked).decision).toBe('allow')
-
-    // No phone looking: the Mac's own prompt, at once, and nothing is sent to the phone.
-    isActive = false
-    held = []
-    await clock.advance(2000)
-    const local = await $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_2' } as never)
-    expect(local.decision).toBe('ask')
-    expect(held).toEqual([])
-    expect(PHONE_PERMISSION_MS).toBeGreaterThan(0)
+    on('fs.read', async (_$, e) =>
+      ({ value: e.path.endsWith('marketplace.json') ? JSON.stringify({ plugins: [{ name: 'streams', version: '1.1.0' }] }) : '{}' }) as never,
+    )
+    let reloads = 0
+    on('command.run', { command: 'reload-plugins' }, async () => {
+      reloads++
+      return { text: '' }
+    })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    await clock.advance(100)
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    expect((await bar.find({ key: 'update' }))?.text).toContain('1.1.0')
+    await bar.press({ key: 'update' })
+    expect(ran.some(c => c.endsWith('plugin update streams@m'))).toBe(true)
+    await clock.advance(500)
+    expect(reloads).toBe(1)
   })
 })

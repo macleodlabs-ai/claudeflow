@@ -8,3 +8,4 @@ node_modules/
 assets/full/
 relay/cloudflare/public/
 relay/cloudflare/.wrangler/
+e2e/shots/
