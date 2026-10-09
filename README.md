@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.4.1" src="https://img.shields.io/badge/version-0.4.1-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 81 passing" src="https://img.shields.io/badge/tests-81%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 84 passing" src="https://img.shields.io/badge/tests-84%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -119,8 +119,11 @@ Claude Code's Remote Control does not draw plugin UI in the phone app yet, so st
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`), the busiest first. A session that stops reporting greys out, then leaves.
 - **What needs you first:** a waiting stream's question shows on its card without opening it.
 - **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
-- **Status underneath:** git, tickets and plan limits with when each resets.
-- It is read-only for now: answering, stopping a turn and approving permissions from the phone come next.
+- **Streams | Status:** switch to the status card, as on the terminal: git, tickets, then every stream and what it is doing.
+- **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
+- **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. Every opened card has a reply box; what you send is filed in that stream.
+- **Stop** a running turn (tap twice, so a stray touch doesn't).
+- **Allow or deny permission prompts.** While the Streams page is open on your phone, a prompt goes there first, with what the call would do (`Bash: git push …`). Unanswered after 60 seconds, or with no phone looking, it appears on the Mac as usual.
 
 #### Set up your phone (about 10 minutes, once)
 

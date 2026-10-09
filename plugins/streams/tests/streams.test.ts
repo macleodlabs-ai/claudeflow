@@ -4,7 +4,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
-import { BRIDGE_SOCKET, PHONE_ROWS, RETRY_MS, accountOf, snapshotOf, tailnetHostOf, timeless } from '../hooks/phone'
+import { BRIDGE_SOCKET, PHONE_PERMISSION_MS, PHONE_ROWS, RETRY_MS, accountOf, commandsOf, permissionSummary, snapshotOf, tailnetHostOf, timeless } from '../hooks/phone'
 import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
@@ -1228,5 +1228,76 @@ describe('setting up the phone', () => {
     expect(r.text).toContain('signed out')
     // Nothing is served over Tailscale until it is signed in.
     expect(ran.some(c => c.includes(' serve '))).toBe(false)
+  })
+})
+
+describe('acting from the phone', () => {
+  // The phone is a remote for this Mac: only the commands it is meant to send may reach a session.
+  test('only well-formed answers, stops and permission decisions are taken from the bridge', () => {
+    const { commands, isPhoneActive } = commandsOf(
+      JSON.stringify({
+        phoneActive: true,
+        commands: [
+          { id: '1', kind: 'answer', streamId: 'docs', text: 'yes' },
+          { id: '2', kind: 'answer', streamId: 'docs', text: '   ' },
+          { id: '3', kind: 'stop' },
+          { id: '4', kind: 'permission', requestId: 't1', decision: 'allow' },
+          { id: '5', kind: 'permission', requestId: 't1', decision: 'always' },
+          { id: '6', kind: 'shell', command: 'rm -rf /' },
+          { kind: 'stop' },
+        ],
+      }),
+    )
+    expect(commands.map(c => c.id)).toEqual(['1', '3', '4'])
+    expect(isPhoneActive).toBe(true)
+    expect(commandsOf('not json')).toEqual({ commands: [], isPhoneActive: false })
+  })
+
+  test('a permission card says what the call would do', () => {
+    expect(permissionSummary('Bash', { command: 'git push origin main' })).toBe('Bash: git push origin main')
+    expect(permissionSummary('Edit', { file_path: '/repo/a.ts', old_string: 'x' })).toBe('Edit: /repo/a.ts')
+  })
+
+  // While the phone has the page open, its Allow answers the prompt; with no phone looking, the Mac asks as it always did.
+  test('a permission prompt waits on an active phone and takes its answer; with no phone active it is not held', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/work/claudeflow' }))
+    on('session.id', async () => ({ value: 'sess-1' }))
+    on('session.start', async (_$, e) => e as never)
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('command.register', async () => ({ value: undefined }) as never)
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '/Users/me\n', stderr: '' } }) as never)
+    on('fs.read', async () => ({ value: 'same' }) as never)
+    on('tool.check', async () => ({ decision: 'ask' }) as never)
+    let isActive = true
+    let held: string[] = []
+    on('http.fetch', async (_$, e) => {
+      const ok = (text: string) => ({ value: { status: 200, ok: true, headers: {}, text } }) as never
+      if (e.init?.method === 'POST') {
+        held = (JSON.parse(String(e.init.body)) as { permissions: { id: string }[] }).permissions.map(p => p.id)
+        return ok('ok')
+      }
+      const commands = held.length ? [{ id: 'c1', kind: 'permission', requestId: held[0], decision: 'allow' }] : []
+      return ok(JSON.stringify({ phoneActive: isActive, commands }))
+    })
+    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
+    await clock.advance(2000)
+    const asked = $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_1' } as never)
+    await clock.advance(2000)
+    await clock.advance(2000)
+    expect((await asked).decision).toBe('allow')
+
+    // No phone looking: the Mac's own prompt, at once, and nothing is sent to the phone.
+    isActive = false
+    held = []
+    await clock.advance(2000)
+    const local = await $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_2' } as never)
+    expect(local.decision).toBe('ask')
+    expect(held).toEqual([])
+    expect(PHONE_PERMISSION_MS).toBeGreaterThan(0)
   })
 })

@@ -36,6 +36,23 @@ if (process.argv[2] === 'pair') {
 type Snapshot = { v: 1; session: { id: string; account: string; project: string; busy: boolean }; at: number }
 const sessions = new Map<string, { snap: Snapshot; seen: number }>()
 
+/** What phones asked each session to do, held until the session's next tick takes it. */
+const queued = new Map<string, Record<string, unknown>[]>()
+/** When a phone last said it has the page open and in view: permission prompts go to phones only then. */
+let phoneSeenAt = 0
+const PHONE_ACTIVE_MS = 30_000
+
+/** A phone's command, if it is one the bridge passes on: anything else is dropped here. */
+function commandOf(x: Record<string, unknown>): Record<string, unknown> | undefined {
+  const id = crypto.randomUUID()
+  if (x.kind === 'answer' && typeof x.streamId === 'string' && typeof x.text === 'string' && x.text.trim() && x.text.length <= 4000)
+    return { id, kind: 'answer', streamId: x.streamId, text: x.text }
+  if (x.kind === 'stop') return { id, kind: 'stop' }
+  if (x.kind === 'permission' && typeof x.requestId === 'string' && (x.decision === 'allow' || x.decision === 'deny'))
+    return { id, kind: 'permission', requestId: x.requestId, decision: x.decision }
+  return undefined
+}
+
 const listOf = () => {
   const now = Date.now()
   return [...sessions.values()]
@@ -96,7 +113,15 @@ if (existsSync(SOCKET)) unlinkSync(SOCKET)
 const inbound = Bun.serve({
   unix: SOCKET,
   async fetch(req) {
-    const m = /^\/sessions\/([^/]+)$/.exec(new URL(req.url).pathname)
+    const path = new URL(req.url).pathname
+    const take = /^\/sessions\/([^/]+)\/commands$/.exec(path)
+    if (take && req.method === 'GET') {
+      const id = decodeURIComponent(take[1]!)
+      const commands = queued.get(id) ?? []
+      queued.delete(id)
+      return Response.json({ commands, phoneActive: Date.now() - phoneSeenAt < PHONE_ACTIVE_MS })
+    }
+    const m = /^\/sessions\/([^/]+)$/.exec(path)
     if (!m || req.method !== 'POST') return new Response('not found', { status: 404 })
     const text = await req.text()
     if (text.length > MAX_BODY) return new Response('too large', { status: 413 })
@@ -150,6 +175,8 @@ const outbound = Bun.serve<undefined, never>({
         return new Response(pairPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
       case '/api/sessions':
         return Response.json(listOf())
+      case '/api/command':
+        return takeCommand(req)
       case '/ws':
         return server.upgrade(req) ? undefined : new Response('upgrade failed', { status: 400 })
     }
@@ -160,9 +187,28 @@ const outbound = Bun.serve<undefined, never>({
       ws.subscribe('all')
       ws.send(JSON.stringify({ type: 'sessions', sessions: listOf() }))
     },
-    message() {},
+    // The page says so while it is open and in view, every few seconds.
+    message(_ws, data) {
+      if (String(data).includes('"visible"')) phoneSeenAt = Date.now()
+    },
   },
 })
+
+/** A command from a paired phone, for a session the bridge knows; only from this bridge's own pages. */
+async function takeCommand(req: Request): Promise<Response> {
+  if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
+  const origin = req.headers.get('origin')
+  // Behind `tailscale serve` the page's own host may arrive as the forwarded host.
+  const hosts = [req.headers.get('host'), req.headers.get('x-forwarded-host')]
+  if (origin && !hosts.includes(new URL(origin).host)) return new Response('wrong origin', { status: 403 })
+  const body = (await req.json().catch(() => undefined)) as Record<string, unknown> | undefined
+  const session = typeof body?.session === 'string' ? body.session : ''
+  const command = body && commandOf(body)
+  if (!sessions.has(session) || !command) return new Response('bad command', { status: 400 })
+  queued.set(session, [...(queued.get(session) ?? []), command].slice(-20))
+  phoneSeenAt = Date.now()
+  return Response.json({ ok: true })
+}
 
 function publish() {
   outbound.publish('all', JSON.stringify({ type: 'sessions', sessions: listOf() }))

@@ -43,6 +43,45 @@ export type Snapshot = {
   status: StatusLine[]
   limits: LimitView[]
   updates: { id: string; from: string; to: string }[]
+  /** Permission prompts waiting on the phone's answer. */
+  permissions: PendingPermission[]
+}
+
+/** A permission prompt held for the phone: the call's id, the tool and what it would do. */
+export type PendingPermission = { id: string; tool: string; summary: string; at: number }
+
+/** What the phone can ask a session to do. */
+export type PhoneCommand =
+  | { id: string; kind: 'answer'; streamId: string; text: string }
+  | { id: string; kind: 'stop' }
+  | { id: string; kind: 'permission'; requestId: string; decision: 'allow' | 'deny' }
+
+/** How long a permission prompt waits on the phone before it goes to the Mac as usual. */
+export const PHONE_PERMISSION_MS = 60_000
+
+/** One line saying what a tool call would do, for the phone's Allow / Deny card. */
+export const permissionSummary = (tool: string, input: unknown): string => {
+  const i = (input ?? {}) as Record<string, unknown>
+  const text = typeof i.command === 'string' ? i.command : typeof i.file_path === 'string' ? i.file_path : typeof i.url === 'string' ? i.url : JSON.stringify(input ?? {})
+  return oneLine(`${tool}: ${text}`, 300)
+}
+
+/** The commands a bridge reply carries, keeping only well-formed ones: the phone is a remote, so nothing else runs. */
+export const commandsOf = (body: string): { commands: PhoneCommand[]; isPhoneActive: boolean } => {
+  try {
+    const x = JSON.parse(body) as { commands?: unknown[]; phoneActive?: unknown }
+    const commands = (x.commands ?? []).filter((c): c is PhoneCommand => {
+      const k = c as Record<string, unknown>
+      if (typeof k.id !== 'string') return false
+      if (k.kind === 'answer') return typeof k.streamId === 'string' && typeof k.text === 'string' && k.text.trim().length > 0 && k.text.length <= 4000
+      if (k.kind === 'stop') return true
+      if (k.kind === 'permission') return typeof k.requestId === 'string' && (k.decision === 'allow' || k.decision === 'deny')
+      return false
+    })
+    return { commands, isPhoneActive: x.phoneActive === true }
+  } catch {
+    return { commands: [], isPhoneActive: false }
+  }
 }
 
 export type SnapshotInput = {
@@ -56,6 +95,7 @@ export type SnapshotInput = {
   status: readonly StatusLine[]
   limits: readonly LimitView[]
   updates: Snapshot['updates']
+  permissions?: readonly PendingPermission[]
   now: number
 }
 
@@ -100,7 +140,7 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
     }
     return [card]
   })
-  return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates }
+  return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates, permissions: [...(x.permissions ?? [])] }
 }
 
 /** Whether a snapshot is worth sending: it changed, or the bridge has not heard from the session for a while. */
