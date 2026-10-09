@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { randomId } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, MAX_ROUNDS, createLink, type OutFrame, type Pairing, type UpBody } from '../hooks/remote/link'
+import { ACTIVE_POLL_MS, MAX_ROUNDS, WARM_MS, createLink, type OutFrame, type Pairing, type UpBody } from '../hooks/remote/link'
 import { HEARTBEAT_MS, type Snapshot } from '../hooks/remote/snapshot'
 import { TICK_MS } from '../hooks/remote/index'
 import { ORIGIN, SESSION, T0, account, cycle, phone, room, snapshot, tOf, type Phone } from './room'
@@ -72,6 +72,28 @@ describe('the polling budget', () => {
     expect(posts(ACTIVE_POLL_MS - TICK_MS, looking)).toBe(1)
     expect(posts(TICK_MS, { ...looking, isHolding: true })).toBe(1)
     expect(posts(TICK_MS, { ...looking, isHolding: true })).toBe(1)
+  })
+
+  test('for a minute after welcoming a device the session polls every 6 s, then falls back to 30 s', () => {
+    // A device counts as looking only once its ping reaches a later answer. Without this window the first Yes after
+    // an unlock waited for the 30 s heartbeat, which felt broken on the phone.
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    relay.from(a, a.hello({ now: T0 }))
+    let now = T0
+    const posts = (step: number) => {
+      now += step
+      return cycle(link, relay, { devices: [a.stored()], now, snapshot: snapshot(T0), isHolding: false, active: [] }).posts.length
+    }
+    expect(posts(0)).toBeGreaterThan(0)
+    // Inside the window: a post every 6 s.
+    while (now + ACTIVE_POLL_MS < T0 + WARM_MS) expect(posts(ACTIVE_POLL_MS)).toBe(1)
+    // After it: quiet until the 30 s heartbeat.
+    expect(posts(ACTIVE_POLL_MS)).toBe(0)
+    expect(posts(HEARTBEAT_MS - 2 * ACTIVE_POLL_MS)).toBe(0)
+    expect(posts(ACTIVE_POLL_MS)).toBe(1)
   })
 
   test('an account with nothing paired and no pairing open never posts', () => {

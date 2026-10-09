@@ -114,6 +114,12 @@ export const ACTIVE_POLL_MS = 6000
 export const MAX_ROUNDS = 2
 
 /**
+ * How long a session keeps the 6 s cadence after it welcomes a device: the device counts as looking only once its
+ * ping reaches a later answer, and its first tap (Yes, Reply) should not wait for the 30 s heartbeat meanwhile.
+ */
+export const WARM_MS = 60_000
+
+/**
  * The session's link to its devices: one sealed channel per device, made by answering its hello, and the post cycle
  * that carries them (ARCHITECTURE.md, "Polling budget"). `identity` is the account's; `origin` is the relay's, where
  * the devices' passkeys live. Each tick the adapter asks `next` for a post, sends it, and hands the answer (or the
@@ -126,7 +132,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   let connected = new Map<string, boolean>()
   let since = 0
   /** What was last posted and when, and when the relay may be tried again after it failed. */
-  const poll = { lastBody: '', lastAt: 0, fails: 0, retryAt: 0 }
+  const poll = { lastBody: '', lastAt: 0, fails: 0, retryAt: 0, warmUntil: 0 }
   /** Welcomes and denials not yet posted. */
   let outbox: OutFrame[] = []
   /** The post on the wire, read back by `answered`. */
@@ -214,6 +220,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
           out.paired.push(admitted)
         }
         out.send.push(welcome(h, admitted))
+        poll.warmUntil = w.now + WARM_MS
       } else if (data.t === 'box') {
         const conn = conns.get(f.from)
         const c = conn && command(conn, data.b)
@@ -250,7 +257,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     /**
      * The post to send now, or none. A tick's first post waits until one is due: every tick while a permission is
      * held for a looking device (`isHolding`), when there are welcomes to send, or when the snapshot changed; every
-     * 6 s while a paired device (any device while a pairing is open) looks; otherwise every 30 s. An account with
+     * 6 s while a paired device (any device while a pairing is open) looks or for a minute after a welcome; otherwise
+     * every 30 s. An account with
      * nothing paired and no pairing open never posts, and a failed post waits out its backoff.
      */
     next(k: Known & { snapshot: Snapshot; isHolding: boolean }): UpBody | undefined {
@@ -258,7 +266,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       for (const id of conns.keys()) if (!k.devices.some(d => d.id === id)) conns.delete(id)
       if (isQuiet(k)) return undefined
       const body = snapshotKey(k.snapshot)
-      const isActive = [...connected.values()].some(Boolean)
+      const isActive = k.now < poll.warmUntil || [...connected.values()].some(Boolean)
       const isDue = round > 0 || k.isHolding || outbox.length > 0 || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
       if (!isDue) return undefined
       const frames = [...outbox, ...snapshots(k.snapshot, k.now)]
