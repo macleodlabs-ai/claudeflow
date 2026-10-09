@@ -3,9 +3,15 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
-import { BRIDGE_SOCKET, PHONE_PERMISSION_MS, PHONE_ROWS, RETRY_MS, accountOf, commandsOf, permissionSummary, snapshotOf, tailnetHostOf, timeless } from '../hooks/phone'
-import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates/versions'
+import { PHONE_ROWS, accountOf, commandOf, permissionSummary, snapshotOf, type SnapshotInput } from '../hooks/remote/snapshot'
+import { snapshotKey } from '../hooks/remote/link'
+import { completeTag, partialTag, tagMatches, NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, isFollowUp, loopKey, parseTag, parseVerdict, slug, buildPrompt, FINISHED_MS, textKey } from '../hooks/classify'
+import { BATCH_SYSTEM, MERGE_SYSTEM, inParallel, itemsOf, parseBatch, parseMerge, readTranscript, rowOf } from '../hooks/history'
+import { importPlan } from '../hooks/streams/importPlan'
+import { CODE_LIMIT, codeOf, toolLine } from '../hooks/tools'
+import { gitStatus, limitView, lineText, questionOf, resetsIn, sortStatus, statusOf, ticketLines, ticketsIn, untilOf } from '../hooks/status'
+import { cardOf, streamsNow, type Facts } from '../hooks/streams/model'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -98,18 +104,43 @@ describe('a prompt sent while a turn runs', () => {
 
   test('is read from the transcript as a prompt of its own, marked as sent mid-turn', () => {
     expect(items.filter(i => i.kind === 'prompt')).toEqual([
-      { kind: 'prompt', uuid: 'u1', text: 'build the streams mod', isFolded: false },
-      { kind: 'prompt', uuid: 'q1', text: 'how do I convert UTC to local time?', isFolded: true },
+      { kind: 'prompt', uuid: 'u1', index: 0, text: 'build the streams mod', isFolded: false },
+      { kind: 'prompt', uuid: 'q1', index: 0, text: 'how do I convert UTC to local time?', isFolded: true },
     ])
   })
   // Seen live: a mid-turn prompt with a screenshot is stored as blocks, and reading it as a string crashed the import.
   test('a mid-turn prompt stored as text and image blocks is read by its text', () => {
     const line = { type: 'attachment', uuid: 'q9', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: [{ type: 'text', text: '[Image #4] nothing is happening' }, { type: 'image', source: {} }] } }
-    expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', text: '[Image #4] nothing is happening', isFolded: true }])
+    expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', index: 0, text: '[Image #4] nothing is happening', isFolded: true }])
   })
   test('tool results and engine notifications are not prompts, and a subagent line is not main conversation', () => {
     expect(items.map(i => i.uuid)).toEqual(['u1', 'a1', 'q1', 'a2'])
   })
+  // Filed live and imported later, a session's rows must come out the same: a re-import replaces rows by id, so
+  // two rules would double every row, and a stream would read differently after a reload.
+  test('importing a transcript files the same rows as filing it live', () => {
+    const transcript = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: '#billing  why is the invoice total off?  ' } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'grep -rn total' } }, { type: 'text', text: '  ' }] } },
+      { type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }] } },
+      { type: 'user', uuid: 'b1', message: { role: 'user', content: '<bash-input>ls</bash-input>' } },
+      { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't2', name: 'Agent', input: { description: 'trace rounding' } }, { type: 'text', text: 'Found it: toFixed.' }] } },
+      { type: 'user', uuid: 'u2', message: { role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'and this one?' }] } },
+    ]
+    const imported = readTranscript(transcript.map(l => JSON.stringify(l)).join('\n')).map(i => rowOf(i, 'billing', 7))
+    // What the engine appends as each message is made: its type, role and content blocks.
+    const live = transcript.flatMap(l => itemsOf(l.uuid, { type: l.type, ...l.message }).map(i => rowOf(i, 'billing', 7)))
+    expect(live).toEqual(imported)
+    expect(imported.map(r => [r.id, r.kind, r.text])).toEqual([
+      ['u1:0', 'prompt', 'why is the invoice total off?'],
+      ['a1:0', 'reply', 'Looking.'],
+      ['a1:1', 'tool', 'Bash(grep -rn total)'],
+      ['a2:0', 'agent', 'trace rounding'],
+      ['a2:1', 'reply', 'Found it: toFixed.'],
+      ['u2:1', 'prompt', 'and this one?'],
+    ])
+  })
+
   test('the reply that answers it goes to its stream, not the running turn', () => {
     const turn = { streamId: 'streams-mod', text: 'build the streams mod' }
     const folded = [{ streamId: 'timezones', text: 'how do I convert UTC to local time?' }]
@@ -352,6 +383,35 @@ describe('folding the pane', () => {
     expect((await badge(/^● RUNNING/))?.color).toBe('#ffd33d')
     await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't', agentId: 'ag1', reason: 'answer' } as never)
     expect((await badge(/^✓ DONE/))?.color).toBe('#7ee787')
+  })
+
+  test('the heartbeat says a stream stalled exactly when the pane draws it stalled', ENGINE, async ($, on) => {
+    // Both read model.ts's streamsNow: a "looks stalled" notice beside a running pill would be two answers to one
+    // question, and the notice is what sends the person to look.
+    on('agent.spawn', async () => ({ model: 'haiku', agentId: 'ag1' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('session.start', async (_$, e) => e as never)
+    on('command.register', async () => ({ value: undefined }) as never)
+    on('fs.read', async () => ({ value: '{}' }) as never)
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return { value: undefined }
+    })
+    const clock = await setup($, on)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: false } as never)
+    await $.agent.spawn({ prompt: 'look into it', description: 'check rounding', subagentType: 'Explore' } as never)
+    const drawn = async () => {
+      const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+      const glyph = (await pane.find({ type: 'Text', text: /^[●◌✓✗○]$/ }))?.text
+      await pane.unmount()
+      return glyph
+    }
+    await clock.advance(5000)
+    expect([await drawn(), toasts]).toEqual(['●', []])
+    // The subagent goes silent past the limit: the notice and the pane change together.
+    await clock.advance(STALL_MS + 5000)
+    expect([await drawn(), toasts.filter(t => t.includes('looks stalled'))]).toEqual(['◌', [expect.stringContaining('stream billing looks stalled')]])
   })
 })
 
@@ -744,36 +804,51 @@ describe('filing a long history in parallel', () => {
     .map(l => JSON.stringify(l))
     .join('\n')
 
-  test('untagged prompts are sorted by batch and merge, and a follow-up stays with the prompt before it', ENGINE, async ($, on) => {
-    const clock = mock.clock(on)
-    mock.store(on)
-    const systems: string[] = []
-    on('session.cwd', async () => ({ value: '/project' }))
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
-    on('fs.stat', async () => ({ value: { kind: 'file', size: UNTAGGED.length, mtimeMs: 0, isLink: false } }) as never)
-    on('fs.read', async () => ({ value: UNTAGGED }) as never)
-    on('model.complete', async (_$, e) => {
-      const ask = e as { system?: string }
-      systems.push(ask.system === BATCH_SYSTEM ? 'batch' : ask.system === MERGE_SYSTEM ? 'merge' : 'other')
-      const text = ask.system === BATCH_SYSTEM ? '["Billing bug", "Invoice rounding", "Auth JWT"]' : '{"Billing bug": "Billing", "Invoice rounding": "Billing", "Auth JWT": "Auth JWT"}'
-      return { value: { isAnswered: true, text, usage: USAGE } } as never
-    })
-    on('classic.UserPromptSubmit', async () => ({}) as never)
-    on('ui.toast', async () => ({ value: undefined }))
-    on('ui.status', async () => ({ value: undefined }))
-    on('ui.render', async () => ({ type: 'Text', props: {}, children: ['engine row'] }) as never)
-    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
-    await clock.advance(1500)
-    // One batch for the three open prompts ("yes" needs no model), then one merge.
-    expect(systems).toEqual(['batch', 'merge'])
-    const colourOf = async (requestId: string) => {
-      const row = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'UserMessage', requestId, props: { text: 'x', origin: { kind: 'composer' }, isExpanded: false } as never })
-      return ((await row.find({ type: 'Text', text: /^▏/ }))?.props as { color?: string } | undefined)?.color
+  /** Runs the import's plan, answering each model call it asks for by its system prompt. */
+  const plan = (items: ReturnType<typeof readTranscript>, answer: (system: string) => string | undefined) => {
+    const asked: string[] = []
+    const steps = importPlan({ items, streams: [], current: '', startedAt: 100, isCurrent: true, now: 0 })
+    let step = steps.next()
+    while (!step.done) {
+      asked.push(step.value.label)
+      step = steps.next(step.value.asks.map(a => answer(a.system)))
     }
-    const billing = await colourOf('p1')
-    expect(await colourOf('p2')).toBe(billing)
-    expect(await colourOf('p3')).toBe(billing)
-    expect(await colourOf('p4')).not.toBe(billing)
+    return { ...step.value, asked, sidOf: (uuid: string) => step.value.rows.find(r => r.id.startsWith(`${uuid}:`))?.streamId }
+  }
+
+  test('untagged prompts are sorted by batch and merge, and a follow-up stays with the prompt before it', () => {
+    const p = plan(readTranscript(UNTAGGED), system =>
+      system === BATCH_SYSTEM ? '["Billing bug", "Invoice rounding", "Auth JWT"]' : '{"Billing bug": "Billing", "Invoice rounding": "Billing", "Auth JWT": "Auth JWT"}',
+    )
+    // One batch for the three open prompts ("yes" needs no model), then one merge.
+    expect(p.asked).toEqual(['sorting prompts', 'merging streams'])
+    expect(['p1', 'p2', 'p3', 'p4'].map(p.sidOf)).toEqual(['billing', 'billing', 'billing', 'auth-jwt'])
+    expect(p.newStreams.map(s => s.name)).toEqual(['Billing', 'Auth JWT'])
+    expect(p.current).toBe('auth-jwt')
+    // Rows are timed one ms apart from the session's start, in transcript order.
+    expect(p.rows.map(r => r.at)).toEqual([100, 101, 102, 103])
+  })
+
+  test('a model that does not answer still files every prompt: each gets a name of its own words', () => {
+    const p = plan(readTranscript(UNTAGGED), () => undefined)
+    expect(['p1', 'p2', 'p3', 'p4'].map(p.sidOf)).toEqual(['why-is-the-invoice', 'why-is-the-invoice', 'check-the-rounding-in', 'move-sessions-to-signed'])
+  })
+
+  test('a #tag needs no model, and a reply in a turn with a prompt sent mid-turn goes to the thread it answers', () => {
+    const lines = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: '#billing fix the total' } },
+      { type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: '#timezones how do I convert UTC?' } },
+      { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Use Intl.' }, { type: 'text', text: 'Total fixed.' }] } },
+    ]
+    const p = plan(readTranscript(lines.map(l => JSON.stringify(l)).join('\n')), () => '["timezones", "billing"]')
+    expect(p.asked).toEqual(['routing replies'])
+    expect(p.rows.map(r => [r.id, r.streamId, r.text])).toEqual([
+      ['u1:0', 'billing', 'fix the total'],
+      ['q1:0', 'timezones', 'how do I convert UTC?'],
+      ['a1:0', 'timezones', 'Use Intl.'],
+      ['a1:1', 'billing', 'Total fixed.'],
+    ])
+    expect(p.marks).toContainEqual([textKey('Use Intl.'), 'timezones'])
   })
 })
 
@@ -784,17 +859,17 @@ describe('the status card', () => {
   // The card exists to answer "what needs me?": a reply that ends on a question is the person's move,
   // so it must read as waiting, never as done.
   test('a stream whose last reply asks a question is waiting for the person, with the question as its detail', () => {
-    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' }, now: 0 })
+    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' } })
     expect(line.kind).toBe('waiting')
     expect(line.detail).toBe('Shall I commit it?')
     expect(questionOf('All done.')).toBe(undefined)
   })
 
   test('running work says what it is doing now, and running and waiting rows sort above finished ones', () => {
-    const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }], now: 0 })
+    const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }] })
     expect(run.detail).toBe('trace rounding: Grep toFixed (6 tools)')
-    const done = statusOf({ stream: s('docs', 9), health: 'done', running: [], now: 10_000 })
-    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' }, now: 0 })
+    const done = statusOf({ stream: s('docs', 9), health: 'done', running: [] })
+    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' } })
     expect(sortStatus([done, wait, run], { docs: 9 }).map(l => l.id)).toEqual(['billing', 'auth', 'docs'])
   })
 
@@ -902,49 +977,6 @@ describe('plugin updates', () => {
   })
 })
 
-describe('the phone', () => {
-  const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 44, placement: 'inline' } as never
-  const WORK = [
-    { type: 'user', uuid: 'u1', message: { role: 'user', content: '#docs rewrite the install guide' } },
-    { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Done. Shall I open a PR for it?' }] } },
-    { type: 'user', uuid: 'u2', message: { role: 'user', content: '#billing why is the total off?' } },
-    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Rounding is **per line**.' }] } },
-  ].map(l => JSON.stringify(l)).join('\n')
-
-  // On a phone the person reads and answers; the accordion puts what is waiting on them first and lets them answer it in one tap.
-  test('the phone draws an accordion: a waiting stream shows its question with a yes, and a tapped card opens its chat', ENGINE, async ($, on) => {
-    const clock = mock.clock(on)
-    mock.store(on)
-    watchStatus(on)
-    on('session.cwd', async () => ({ value: '/project' }))
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
-    on('fs.stat', async () => ({ value: { kind: 'file', size: WORK.length, mtimeMs: 0, isLink: false } }) as never)
-    on('fs.read', async () => ({ value: WORK }) as never)
-    on('classic.UserPromptSubmit', async () => ({}) as never)
-    on('ui.toast', async () => ({ value: undefined }))
-    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
-    const sent: string[] = []
-    on('prompt.submit', async (_$, e) => {
-      sent.push(e.text)
-      return { text: e.text }
-    })
-    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
-    await clock.advance(1500)
-    const pane = await $.ui.mount({ plugin: 'streams', surface: 'mobile', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
-    expect(await pane.find({ key: 'm:docs' })).toBeDefined()
-    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
-
-    await pane.press({ key: 'm-yes:docs' })
-    expect(sent.at(-1)).toBe('yes')
-
-    await pane.press({ key: 'm-open:billing' })
-    const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
-    expect(texts).toEqual(['why is the total off?', 'Rounding is **per line**.'])
-    await pane.press({ key: 'm-open:billing' })
-    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
-  })
-})
-
 describe('tickets on the status card', () => {
   // Working tickets, the person asks "where is TL-260?": the card answers per ticket, not per topic.
   test('ticket ids are found as trackers write them, and look-alike standards are not tickets', () => {
@@ -960,10 +992,9 @@ describe('tickets on the status card', () => {
       ],
       agents: [{ description: 'TL-260 lottie fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
       streamKind: { tickets: 'done' },
-      now: 10_000 + 7 * 60_000,
     })
-    expect(lines.map(l => [l.area, l.state, l.detail])).toEqual([
-      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools, 7m with no output)'],
+    expect(lines.map(l => [l.area, l.state, lineText(l, 10_000 + 7 * 60_000)])).toEqual([
+      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools) · 7m with no output'],
       ['TL-262', 'DONE', 'The TL-262 build is committed (6cbe94f6).'],
     ])
   })
@@ -973,7 +1004,6 @@ describe('tickets on the status card', () => {
       rows: [{ kind: 'prompt', text: 'ship ENG-7', at: 0, streamId: 's' }],
       agents: [{ description: 'ENG-7 deploy', status: 'error', last: '', tools: 3, lastAt: 9, endedAt: 10, streamId: 's' }],
       streamKind: { s: 'done' },
-      now: 20,
     })
     expect([line?.state, line?.detail]).toEqual(['ERROR', 'ENG-7 deploy failed'])
   })
@@ -1015,8 +1045,8 @@ describe('plan limits on the status card', () => {
   // Read at a glance: how much is used, how long until it resets, and on which day, since a date alone needs a calendar.
   test('a limit shows its percent as a bar, the time to reset in two units, and the weekday it resets', () => {
     const now = Date.parse('2026-10-08T12:00:00Z')
-    const v = limitView({ kind: 'seven_day', percentUsed: 71.4, resetsAt: '2026-10-11T12:00:00Z' }, now)
-    expect([v.label, v.percent, v.bar, v.resetsIn]).toEqual(['week', 71, '▰▰▰▰▰▰▰▱▱▱', '3d 0h'])
+    const v = limitView({ kind: 'seven_day', percentUsed: 71.4, resetsAt: '2026-10-11T12:00:00Z' })
+    expect([v.label, v.percent, v.bar, resetsIn(v, now)]).toEqual(['week', 71, '▰▰▰▰▰▰▰▱▱▱', '3d 0h'])
     expect(v.resetsAt.startsWith('Sun')).toBe(true)
     expect(untilOf(2 * 3600_000 + 14 * 60_000)).toBe('2h 14m')
     expect(untilOf(9 * 60_000)).toBe('9m')
@@ -1083,13 +1113,13 @@ describe('status asked from the phone', () => {
       return { text: e.text }
     })
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
-    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'bridge' } as never })
+    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'remote' } as never })
     expect(r.drop).toBe(undefined)
     expect(sent).toEqual(['status?'])
   })
 })
 
-describe('the phone bridge', () => {
+describe('what the phone is sent', () => {
   const at = (n: number) => n * 1000
   // The phone reads and answers: a waiting stream must carry its whole question, and every live agent its progress.
   test('a snapshot carries what the phone draws: the question, live agents, and the latest rows cut short', () => {
@@ -1102,7 +1132,6 @@ describe('the phone bridge', () => {
       ],
       streams: [...STREAMS, { ...STREAMS[0]!, id: 'docs', name: 'Docs' }],
       colorOf: () => '#a5d8ff',
-      loops: {},
       agents: [
         { id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 },
         { id: 'a2', streamId: 'auth-refactor', description: 'Old run', status: 'done', startedAt: at(0), endedAt: at(1), lastAt: at(1), last: '', tools: 1 },
@@ -1120,17 +1149,74 @@ describe('the phone bridge', () => {
     expect(snap.streams.map(s => s.id)).toEqual(['docs', 'auth-refactor'])
     expect(snap.streams[0]?.question).toBe('Shall I open a PR for it?')
     expect(snap.streams[1]?.question).toBe(undefined)
-    // The running agent is shown with its clock; one that ended long ago is not news.
-    expect(snap.streams[1]?.agents.map(a => [a.id, a.ms, a.tools])).toEqual([['a1', at(3600), 4]])
+    // The running agent is shown with its start, for the phone to count from; one that ended long ago is not news.
+    expect(snap.streams[1]?.agents.map(a => [a.id, a.startedAt, a.endedAt, a.tools])).toEqual([['a1', at(0), undefined, 4]])
     expect(snap.streams[0]?.rows).toHaveLength(PHONE_ROWS)
     expect(snap.streams[0]?.rows.at(-1)?.text.length).toBeLessThan(700)
   })
 
-  // A clock in the detail would make every snapshot differ from the last, so a quiet session would send every tick.
-  test('a detail is sent without its clock; the phone counts from lastAt and nextAt', () => {
-    expect(timeless('Move sessions to JWT · 12s ago')).toBe('Move sessions to JWT')
-    expect(timeless('next tick in 7m 59s · check CI')).toBe('check CI')
-    expect(timeless('Is 5s ago a time? · yes')).toBe('Is 5s ago a time? · yes')
+  // A clock in the text would make every snapshot differ from the last, so a quiet session would post every tick and
+  // spend the free plan's requests. Clocks travel as times; the terminal and the phone count them as they draw.
+  test('the same facts a few seconds later make the same snapshot, and each screen counts the clocks itself', () => {
+    const streams: Stream[] = [
+      { ...STREAMS[0]!, lastAt: at(48) },
+      { ...STREAMS[0]!, id: 'ci', name: 'CI', summary: 'check CI' },
+      { ...STREAMS[0]!, id: 'billing', name: 'Billing', summary: 'fix rounding' },
+    ]
+    const facts = (now: number): Facts => ({
+      busy: true,
+      current: 'billing',
+      agents: { a1: { id: 'a1', streamId: 'billing', description: 'trace rounding TL-9', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Grep toFixed', tools: 6 } },
+      inflight: {},
+      outcome: {},
+      rows: [],
+      loops: { ci: { kind: 'wakeup', nextAt: at(540), label: '' } },
+      now,
+    })
+    const rateLimits = [{ kind: 'five_hour', percentUsed: 38, resetsAt: new Date(at(3600)).toISOString() }]
+    const snapAt = (now: number) => {
+      const card = cardOf(streamsNow(facts(now), streams), { git: [], rateLimits })
+      const snap = snapshotOf({ session: { id: 's1', account: 'macleod', project: 'p', busy: true }, lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: Object.values(facts(now).agents), rows: [], status: [...card.git, ...card.tickets], limits: card.limits, updates: [], now })
+      return { card, snap }
+    }
+    const first = snapAt(at(120))
+    const later = snapAt(at(127))
+    expect(snapshotKey(later.snap)).toBe(snapshotKey(first.snap))
+    // The terminal counts each clock to its own now: last active, the next tick, an agent gone quiet, a limit's reset.
+    const text = (c: typeof first.card, now: number) => [...c.lines, ...c.tickets].map(l => lineText(l, now))
+    expect(text(first.card, at(120))).toEqual([
+      'trace rounding TL-9: Grep toFixed (6 tools)',
+      'next tick in 7:00 · check CI',
+      'Move sessions to JWT · 1m ago',
+      'trace rounding TL-9: Grep toFixed (6 tools) · 1m with no output',
+    ])
+    expect(text(later.card, at(127))[1]).toBe('next tick in 6:53 · check CI')
+    expect(resetsIn(first.card.limits[0]!, at(120))).toBe('58m')
+    // The phone gets the same times to count from.
+    expect(first.snap.streams.map(s => [s.id, s.detail, s.since, s.nextAt])).toEqual([
+      ['billing', 'trace rounding TL-9: Grep toFixed (6 tools)', undefined, undefined],
+      ['ci', 'check CI', undefined, at(540)],
+      ['auth-refactor', 'Move sessions to JWT', at(48), undefined],
+    ])
+    expect(first.snap.status[0]?.quietSince).toBe(at(50))
+    expect(first.snap.limits[0]?.until).toBe(at(3600))
+  })
+
+  // A running agent's elapsed time would do the same for as long as any agent runs: 1,800 posts an hour.
+  test('a running agent does not make a snapshot news as its time passes', () => {
+    const input = (now: number): SnapshotInput => ({
+      session: { id: 's1', account: 'macleod', project: 'p', busy: true },
+      lines: [{ id: 'auth-refactor', area: 'Auth refactor', kind: 'running', state: 'RUNNING', detail: '1 agent' }],
+      streams: STREAMS,
+      colorOf: () => '#a5d8ff',
+      agents: [{ id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 }],
+      rows: [],
+      status: [],
+      limits: [],
+      updates: [],
+      now,
+    })
+    expect(snapshotKey(snapshotOf(input(at(60))))).toBe(snapshotKey(snapshotOf(input(at(62)))))
   })
 
   test("a session's account is its config dir's own name", () => {
@@ -1138,166 +1224,85 @@ describe('the phone bridge', () => {
     expect(accountOf('/Users/me/.claude-clients/iris/')).toBe('iris')
     expect(accountOf('')).toBe('default')
   })
-
-  // Every session reports to the bridge on its own; one with no bridge running must not call it every two seconds.
-  test('a session sends the bridge its streams when they change, not on every tick, and backs off while no bridge answers', ENGINE, async ($, on) => {
-    const clock = mock.clock(on)
-    mock.store(on)
-    watchStatus(on)
-    on('session.cwd', async () => ({ value: '/work/claudeflow' }))
-    on('session.id', async () => ({ value: 'sess-1' }))
-    on('session.start', async (_$, e) => e as never)
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
-    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
-    on('ui.toast', async () => ({ value: undefined }))
-    on('command.register', async () => ({ value: undefined }) as never)
-    on('process.run', async (_$, e) =>
-      ({ value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/printenv' ? '/Users/me/.claude-clients/macleod\n' : '[]', stderr: '' } }) as never,
-    )
-    on('fs.read', async () => ({ value: '{}' }) as never)
-    on('prompt.submit', async (_$, e) => ({ text: e.text }))
-    let isUp = true
-    const sent: { url: string; socketPath?: string; body: { session: { account: string; project: string }; streams: { name: string }[] } }[] = []
-    on('http.fetch', async (_$, e) => {
-      if (!isUp) throw new Error('ECONNREFUSED')
-      sent.push({ url: e.url, socketPath: e.init?.socketPath, body: JSON.parse(String(e.init?.body)) })
-      return { value: { status: 200, ok: true, headers: {}, text: 'ok' } } as never
-    })
-    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
-    await $.prompt.submit({ text: '#docs rewrite the install guide', wait: false, origin: { kind: 'composer' } })
-    await clock.advance(2000)
-    expect(sent).toHaveLength(1)
-    expect(sent[0]?.socketPath).toBe(BRIDGE_SOCKET)
-    expect(sent[0]?.url).toBe('http://bridge/sessions/sess-1')
-    expect(sent[0]?.body.session).toMatchObject({ account: 'macleod', project: 'claudeflow' })
-    expect(sent[0]?.body.streams.map(s => s.name)).toContain('docs')
-    // Nothing changed: nothing sent.
-    await clock.advance(4000)
-    expect(sent).toHaveLength(1)
-    // The bridge goes away: one failed try, then quiet until the retry time.
-    isUp = false
-    await $.prompt.submit({ text: '#billing why is the total off?', wait: false, origin: { kind: 'composer' } })
-    await clock.advance(2000)
-    isUp = true
-    await clock.advance(RETRY_MS - 4000)
-    expect(sent).toHaveLength(1)
-    // The first tick past the retry time (ticks come every two seconds) sends the news it held.
-    await clock.advance(6000)
-    expect(sent).toHaveLength(2)
-    expect(sent[1]?.body.streams.map(s => s.name)).toContain('billing')
-  })
-})
-
-describe('setting up the phone', () => {
-  // The phone's address is the Mac's tailnet name; a signed-out Tailscale has none to give.
-  test("the phone's address is this Mac's tailnet name, and only while Tailscale runs", () => {
-    expect(tailnetHostOf(JSON.stringify({ BackendState: 'Running', Self: { DNSName: 'mbp.tail1234.ts.net.' } }))).toBe('mbp.tail1234.ts.net')
-    expect(tailnetHostOf(JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: '' } }))).toBe(undefined)
-    expect(tailnetHostOf('not json')).toBe(undefined)
-  })
-
-  // The plugin keeps the bridge itself: an update to the plugin reaches the bridge launchd runs, with nothing to run by hand.
-  test('/streams phone replaces an older bridge and restarts it, and says how to finish Tailscale', ENGINE, async ($, on) => {
-    mock.clock(on)
-    mock.store(on)
-    watchStatus(on)
-    on('session.cwd', async () => ({ value: '/project' }))
-    on('ui.toast', async () => ({ value: undefined }))
-    const ran: string[] = []
-    on('process.run', async (_$, e) => {
-      ran.push(e.argv.join(' '))
-      const [bin] = e.argv
-      const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '' } }) as never
-      if (bin === '/usr/bin/printenv') return out('/Users/me\n')
-      if (bin === '/usr/bin/id') return out('501\n')
-      if (bin === '/bin/sh' && e.argv[1] === '-c') return out('/usr/local/bin/bun\n')
-      if (bin === '/bin/launchctl') return out('', 0)
-      if (bin?.endsWith('Tailscale')) return out(JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: '' } }))
-      return out('')
-    })
-    on('fs.read', async (_$, e) => ({ value: e.path.startsWith('/Users/me/.claudeflow/bridge/') ? 'old bridge' : 'new bridge' }) as never)
-    const wrote: string[] = []
-    on('fs.write', async (_$, e) => {
-      wrote.push(e.path)
-      return { value: undefined } as never
-    })
-    const r = await $.command.run({ command: 'streams', args: 'phone', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
-    expect(wrote).toEqual(['server.ts', 'app.html', 'install.sh'].map(f => `/Users/me/.claudeflow/bridge/${f}`))
-    expect(ran).toContain('/bin/sh /Users/me/.claudeflow/bridge/install.sh')
-    expect(r.text).toContain('Phone bridge: updated and restarted.')
-    expect(r.text).toContain('signed out')
-    // Nothing is served over Tailscale until it is signed in.
-    expect(ran.some(c => c.includes(' serve '))).toBe(false)
-  })
 })
 
 describe('acting from the phone', () => {
   // The phone is a remote for this Mac: only the commands it is meant to send may reach a session.
-  test('only well-formed answers, stops and permission decisions are taken from the bridge', () => {
-    const { commands, isPhoneActive } = commandsOf(
-      JSON.stringify({
-        phoneActive: true,
-        commands: [
-          { id: '1', kind: 'answer', streamId: 'docs', text: 'yes' },
-          { id: '2', kind: 'answer', streamId: 'docs', text: '   ' },
-          { id: '3', kind: 'stop' },
-          { id: '4', kind: 'permission', requestId: 't1', decision: 'allow' },
-          { id: '5', kind: 'permission', requestId: 't1', decision: 'always' },
-          { id: '6', kind: 'shell', command: 'rm -rf /' },
-          { kind: 'stop' },
-        ],
-      }),
-    )
-    expect(commands.map(c => c.id)).toEqual(['1', '3', '4'])
-    expect(isPhoneActive).toBe(true)
-    expect(commandsOf('not json')).toEqual({ commands: [], isPhoneActive: false })
+  test('only well-formed answers, stops and permission decisions are taken from a device', () => {
+    const sent = [
+      { id: '1', kind: 'answer', streamId: 'docs', text: 'yes' },
+      { id: '2', kind: 'answer', streamId: 'docs', text: '   ' },
+      { id: '3', kind: 'stop' },
+      { id: '4', kind: 'permission', requestId: 't1', decision: 'allow' },
+      { id: '5', kind: 'permission', requestId: 't1', decision: 'always' },
+      { id: '6', kind: 'shell', command: 'rm -rf /' },
+      { kind: 'stop' },
+      'not an object',
+    ]
+    expect(sent.flatMap(c => commandOf(c) ?? []).map(c => c.id)).toEqual(['1', '3', '4'])
   })
 
   test('a permission card says what the call would do', () => {
     expect(permissionSummary('Bash', { command: 'git push origin main' })).toBe('Bash: git push origin main')
     expect(permissionSummary('Edit', { file_path: '/repo/a.ts', old_string: 'x' })).toBe('Edit: /repo/a.ts')
   })
+})
 
-  // While the phone has the page open, its Allow answers the prompt; with no phone looking, the Mac asks as it always did.
-  test('a permission prompt waits on an active phone and takes its answer; with no phone active it is not held', ENGINE, async ($, on) => {
+describe('/streams and its verbs', () => {
+  // Each verb is answered by the module that owns it, wired ahead of the pane: were the order wrong, the pane
+  // would answer every verb by opening itself, and `/streams phone` would never reach the remote.
+  test('a bare /streams opens the pane, and phone asks for the relay address until one is set', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.surfaces', async () => ({ value: ['terminal'] }) as never)
+    const opened: string[] = []
+    on('ui.open', async (_$, e) => {
+      opened.push(e.id)
+      return { value: { isPlaced: true } } as never
+    })
+    const run = (args: string) => $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
+    expect((await run('phone')).text).toContain('relayUrl')
+    expect(opened).toEqual([])
+    expect((await run('')).text).toContain('Streams navigator opened.')
+    expect(opened).toEqual(['streams'])
+  })
+})
+
+describe('the update button', () => {
+  // The button is drawn by the bar and the pane, and installed by the updates module: a press must reach it.
+  test('pressing ⬆ update in the bar installs the newer release and reloads plugins', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
     mock.store(on)
     watchStatus(on)
-    on('session.cwd', async () => ({ value: '/work/claudeflow' }))
-    on('session.id', async () => ({ value: 'sess-1' }))
+    on('session.cwd', async () => ({ value: '/project' }))
     on('session.start', async (_$, e) => e as never)
-    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
     on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
     on('ui.toast', async () => ({ value: undefined }))
     on('command.register', async () => ({ value: undefined }) as never)
-    on('process.run', async () => ({ value: { exitCode: 0, stdout: '/Users/me\n', stderr: '' } }) as never)
-    on('fs.read', async () => ({ value: 'same' }) as never)
-    on('tool.check', async () => ({ decision: 'ask' }) as never)
-    let isActive = true
-    let held: string[] = []
-    on('http.fetch', async (_$, e) => {
-      const ok = (text: string) => ({ value: { status: 200, ok: true, headers: {}, text } }) as never
-      if (e.init?.method === 'POST') {
-        held = (JSON.parse(String(e.init.body)) as { permissions: { id: string }[] }).permissions.map(p => p.id)
-        return ok('ok')
-      }
-      const commands = held.length ? [{ id: 'c1', kind: 'permission', requestId: held[0], decision: 'allow' }] : []
-      return ok(JSON.stringify({ phoneActive: isActive, commands }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const ran: string[] = []
+    on('process.run', async (_$, e) => {
+      ran.push(e.argv.join(' '))
+      const stdout = e.argv[2] === 'list' ? JSON.stringify([{ id: 'streams@m', version: '1.0.0', installPath: '/cfg/plugins/cache/m/streams/1.0.0' }]) : ''
+      return { value: { exitCode: 0, stdout, stderr: '' } } as never
     })
-    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
-    await clock.advance(2000)
-    const asked = $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_1' } as never)
-    await clock.advance(2000)
-    await clock.advance(2000)
-    expect((await asked).decision).toBe('allow')
-
-    // No phone looking: the Mac's own prompt, at once, and nothing is sent to the phone.
-    isActive = false
-    held = []
-    await clock.advance(2000)
-    const local = await $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_2' } as never)
-    expect(local.decision).toBe('ask')
-    expect(held).toEqual([])
-    expect(PHONE_PERMISSION_MS).toBeGreaterThan(0)
+    on('fs.read', async (_$, e) =>
+      ({ value: e.path.endsWith('marketplace.json') ? JSON.stringify({ plugins: [{ name: 'streams', version: '1.1.0' }] }) : '{}' }) as never,
+    )
+    let reloads = 0
+    on('command.run', { command: 'reload-plugins' }, async () => {
+      reloads++
+      return { text: '' }
+    })
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true })
+    await clock.advance(100)
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    expect((await bar.find({ key: 'update' }))?.text).toContain('1.1.0')
+    await bar.press({ key: 'update' })
+    expect(ran.some(c => c.endsWith('plugin update streams@m'))).toBe(true)
+    await clock.advance(500)
+    expect(reloads).toBe(1)
   })
 })

@@ -5,31 +5,31 @@
 <h1>claudeflow</h1>
 
 <p>
-  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-22d3ee?style=for-the-badge"></a>
-  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 84 passing" src="https://img.shields.io/badge/tests-84%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-5fe4f2?style=for-the-badge"></a>
+  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
+  <img alt="Tests 159 passing" src="https://img.shields.io/badge/tests-159%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
-  <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
+  <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
 </p>
 <p>
   <a href="#-install"><img alt="Installs" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmacleodlabs-ai%2Fclaudeflow%2Fstats%2Finstalls.json&style=for-the-badge&logo=download&logoColor=white"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=fcc2d7&label=stars"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ffd8a8"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/watchers"><img alt="Watchers" src="https://img.shields.io/github/watchers/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=b2f2bb"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ff94d1&label=stars"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ffb88a"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/watchers"><img alt="Watchers" src="https://img.shields.io/github/watchers/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=6ff0c0"></a>
 </p>
 <p>
-  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-a78bfa?style=flat-square">
-  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-34d399?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-b9a2ff?style=flat-square">
+  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-6ff0c0?style=flat-square&logo=apple&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-febc2e?style=flat-square">
-  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffd8a8"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8b90c4"></a>
-  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-12164a?style=flat-square"></a>
+  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-f2d6a2?style=flat-square">
+  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffb88a"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8a90c8"></a>
+  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-1a2050?style=flat-square"></a>
 </p>
 <p>
-  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff7b72?style=for-the-badge&labelColor=12164a"></a>
+  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff94d1?style=for-the-badge&labelColor=070a1f"></a>
 </p>
 
 <p>
@@ -108,93 +108,87 @@ Type `status`, or press `status` in the bar, and a card opens above the prompt w
 - **Plan limits at the bottom**: each window (5-hour, week) as a bar and percent, green, then yellow from 50%, red from 80%, with how long until it resets and the weekday and time it does.
 - **Click a stream's name** to open it in the pane. `✕ close` (top right) or your next prompt hides the card.
 - **Scroll a long card** with the wheel, or press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to move focus to it: then <kbd>↑</kbd> <kbd>↓</kbd> scroll and <kbd>q</kbd> closes it, without touching Claude's turn.
-- **On your phone** the card opens at the top of the streams accordion (its `status` button, or type `status`) and scrolls by touch.
+- **On your phone or tablet** the app's **Status** switch shows the same card.
 
-### 📱 On your phone
+### 📱 On your phone and tablet
 
-Claude Code's Remote Control does not draw plugin UI in the phone app yet, so streams brings its own: the **phone bridge**, a small server on your Mac that every session reports to and that serves your phone a live page of all of them.
+Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Claudeflow app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
 
-<p align="center"><img src="assets/phone-bridge.jpg" width="320" alt="The phone bridge page: a tab per session, colour chips, a waiting question shown on its card, an opened card with its agents' tool counts and times, then git, tickets and plan limits"></p>
+<p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Claudeflow app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
 
-- **Every session, one page:** a tab per running session (`macleod · claudeflow`), the busiest first. A session that stops reporting greys out, then leaves.
+- **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
 - **What needs you first:** a waiting stream's question shows on its card without opening it.
 - **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
 - **Streams | Status:** switch to the status card, as on the terminal: git, tickets, then every stream and what it is doing.
 - **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
-- **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. Every opened card has a reply box; what you send is filed in that stream.
+- **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. What you send is filed in that stream.
 - **Stop** a running turn (tap twice, so a stray touch doesn't).
-- **Allow or deny permission prompts.** While the Streams page is open on your phone, a prompt goes there first, with what the call would do (`Bash: git push …`). Unanswered after 60 seconds, or with no phone looking, it appears on the Mac as usual.
+- **Allow or deny permission prompts.** While the app is open and unlocked on a device, a prompt goes there first, with what the call would do (`Bash: git push …`). **Allow** asks for Face ID (or your passcode) first. Unanswered after 60 seconds, or with no device looking, the prompt appears on the Mac as usual.
 
-#### Set up your phone (about 10 minutes, once)
+#### How it connects
 
-Your phone reaches your Mac over **[Tailscale](https://tailscale.com)**, a free private network between your own devices. Nothing is opened to the internet: only devices signed in to your Tailscale account can load the page, and each one also needs a pairing code from your Mac.
+Nothing runs on your Mac beyond the plugin, and nothing on your Mac listens for connections. Each Claude Code session posts to a small **relay** on Cloudflare's free plan; each phone or tablet keeps one WebSocket open to the same relay. The relay passes sealed messages between them and serves the app itself.
 
-**What you need:** a Mac running Claude Code with streams installed, an iPhone or Android phone, and [Bun](https://bun.sh) on the Mac (`curl -fsSL https://bun.sh/install | bash`). The streams plugin installs and runs the bridge itself; you only set up Tailscale and pair once.
-
-**1. Install Tailscale on your Mac**
-
-```sh
-brew install --cask tailscale-app
+```
+Claude Code sessions ──HTTPS──► relay (Cloudflare Worker + Durable Object) ◄──WebSocket── phones, tablets
 ```
 
-Or download it from [tailscale.com/download/mac](https://tailscale.com/download/mac). It asks for your Mac password while it installs.
+#### Set up (about 5 minutes, once)
 
-**2. Allow Tailscale's network extension**
+**1. Install the plugin** (see [Install](#-install)).
 
-Open the Tailscale app (it lives in the menu bar). macOS asks you to allow it:
+**2. Get a relay.** Use a hosted relay if someone runs one for you, or deploy your own to your Cloudflare account. The free plan is enough. You need [Node](https://nodejs.org) 22 or later and [Bun](https://bun.sh) on the Mac you deploy from:
 
-- **macOS 15 Sequoia and later:** System Settings → General → **Login Items & Extensions** → scroll to *Extensions* → **Network Extensions** (ⓘ) → turn **Tailscale** on.
-- **macOS 13–14:** System Settings → **Privacy & Security** → *"System software from 'Tailscale' was blocked"* → **Allow**.
-
-When Tailscale asks to **add VPN configurations**, click **Allow**.
-
-**3. Sign in (this creates your Tailscale account)**
-
-Click the Tailscale menu-bar icon → **Log in…** and sign in with Google, Microsoft, GitHub or Apple. There is no separate sign-up: your first sign-in creates a free personal account.
-
-**4. Install Tailscale on your phone**
-
-Get **Tailscale** from the [App Store](https://apps.apple.com/app/tailscale/id1470499037) or [Google Play](https://play.google.com/store/apps/details?id=com.tailscale.ipn), and sign in with **the same account** you used on the Mac. Allow the VPN configuration when it asks, and leave Tailscale connected.
-
-**5. Run `/streams phone` in Claude Code**
-
-```text
-/streams phone
+```bash
+git clone https://github.com/macleodlabs-ai/claudeflow
+cd claudeflow/relay/cloudflare
+npx wrangler login            # once: signs this Mac in to your Cloudflare account
+npm ci && ../../app/build.sh && npx wrangler deploy
 ```
 
-It checks the bridge, serves it to your Tailscale devices over HTTPS, and opens a **Pair your phone** page on your Mac with a QR code. If anything is missing, it says which step to go back to.
+`wrangler deploy` prints your relay's address, for example `https://claudeflow-relay.<you>.workers.dev`. Run the last line again after you update the checkout.
 
-> **The first time only:** a new Tailscale account has *Serve* switched off, and `/streams phone` says so. Run the command it gives you, open the link that command prints, click **Enable**, then run `/streams phone` again.
+**3. Tell streams where the relay is.** In `/config` → **streams** → **Relay address**, or in `settings.json`:
 
-**6. Scan the QR code with your phone**
+```json
+{ "pluginConfigs": { "streams@claudeflow": { "options": { "relayUrl": "https://claudeflow-relay.<you>.workers.dev" } } } }
+```
 
-Open the link in Safari (or Chrome on Android), then **Share → Add to Home Screen**. Streams now opens like an app, live, with a tab for each running Claude Code session.
+Then `/reload-plugins` in running sessions.
 
-That's it. The bridge starts at login and every plugin update refreshes it, so there is nothing to keep running. Run `/streams phone` again any time to see the QR code.
+**4. Run `/streams phone`.** It opens a **Pair** page in your Mac's browser with a QR code. The code works for 10 minutes, for as many devices as you scan it with.
 
-**Optional: a nicer address.** Your Mac's Tailscale name comes from its computer name (`your-mac.tail1234.ts.net`). To rename it, run `/Applications/Tailscale.app/Contents/MacOS/Tailscale set --hostname=claudeflow`, then `/streams phone`. This renames the Mac for everything on your Tailscale network, not just streams.
+**5. Scan it with each phone or tablet.** The app opens in Safari (or Chrome on Android). Tap **Create passkey**: the device makes a passkey for the relay's address, saved with Face ID or your passcode. Then **Share → Add to Home Screen** so it opens like an app.
+
+From then on, each time the app connects it shows **Locked**: tap **Unlock** and Face ID opens it. One unlock covers every session of that account.
+
+**Several accounts?** Set the same `relayUrl` in each one and run `/streams phone` from each. A device can pair with all of them; each account is its own room on the relay, and the app shows the sessions of all of them side by side.
+
+**Manage devices:** `/streams phone devices` lists the paired ones, `/streams phone forget <id>` removes one (`forget all` removes every one). A forgotten device has to scan a new code.
 
 <details>
-<summary><b>How it works and what it can see</b></summary>
+<summary><b>What the relay can and cannot see</b></summary>
 
-- Every Claude Code session with streams sends the bridge a summary of its streams over a Unix socket only your user can open (`/tmp/claudeflow-bridge.sock`). Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters.
-- The bridge (`~/.claudeflow/bridge`, run by launchd) listens on `127.0.0.1:7878` only. `tailscale serve` passes your Tailscale devices through to it over HTTPS.
-- Every page needs the pairing token in `~/.claudeflow/bridge-token`. The QR code carries it once; after that your phone keeps it as a cookie. To unpair every device, delete that file and run `/streams phone`.
-- To remove the bridge: `launchctl bootout gui/$(id -u)/ai.macleodlabs.claudeflow-bridge`, then delete `~/Library/LaunchAgents/ai.macleodlabs.claudeflow-bridge.plist` and `~/.claudeflow`.
+The relay is a Cloudflare Worker with one Durable Object per account (a "room"). It routes frames; it holds no keys.
+
+**It can see:** the room id, device ids and session ids; when each device connects and whether it is on screen; the size and timing of every message; the SHA-256 of the account's relay token; and the public values in a device's hello (its public keys, its passkey's public key, and passkey signatures).
+
+**It cannot:**
+- **read** snapshots, answers, permission decisions or anything else after the hello. Each session and device seal every message with XChaCha20-Poly1305 under keys from X25519 (fresh ephemeral keys mixed with the long-term ones) and HKDF-SHA256.
+- **change or replay** a message. Each sealed message carries a counter; anything altered, repeated or reordered is dropped.
+- **pair a device of its own.** Pairing needs the QR code's secret, which travels after the `#` in the link, and browsers never send that part to any server, the relay included.
+- **pose as your Mac.** The device checks the session's long-term key from the QR code; a relay that swaps in its own key derives different keys and can open nothing.
+- **approve anything.** Your Mac keeps each device's passkey public key and checks every unlock and every **Allow** itself, against a fresh challenge and Face ID.
+
+**It can still** drop or delay messages, as any network can. Then the prompt falls back to the Mac after 60 seconds.
+
+Session to relay traffic is budgeted for the free plan (100,000 requests a day): a session posts when its snapshot changes and every 30 seconds otherwise, every 2 seconds only while a device is looking, and not at all while the account has no paired device and no open pairing. Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters before sealing.
 
 </details>
 
-When a phone client that draws plugin UI attaches, streams also opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
-
-<p align="center"><img src="assets/phone.jpg" width="640" alt="The streams accordion on a phone: running, waiting, done and idle cards; a tapped card shows live agents, markdown replies and a coloured diff"></p>
-
-- **A stream waiting on you** shows Claude's question with a **yes** button: one tap answers it, filed in that stream.
-- **Tap a card** to open it: its live agents, then its chat with markdown, highlighted commands and coloured diffs. Tap again to close it.
-- **⬆ update** appears here too, so you can update without going back to the Mac.
-
 ### 🔄 Updates without a restart
 
-Once a session starts, and every six hours after, streams checks every plugin you have installed against its marketplace. When one has a newer release, an **⬆ update** button appears in the bar, the pane and on your phone, and a toast says so. Pressing it (or <kbd>u</kbd>, or `/streams update`) installs the updates on your Mac and reloads plugins into the running session: no restart.
+Once a session starts, and every six hours after, streams checks every plugin you have installed against its marketplace. When one has a newer release, an **⬆ update** button appears in the bar and the pane, and a toast says so. Pressing it (or <kbd>u</kbd>, or `/streams update`) installs the updates on your Mac and reloads plugins into the running session: no restart.
 
 ### Status at a glance
 
@@ -250,7 +244,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 </details>
 
-**Want streams on your phone?** Follow [Set up your phone](#set-up-your-phone-about-10-minutes-once) after installing: Tailscale on your Mac and phone, then `/streams phone`.
+**Want streams on your phone or tablet?** Follow [Set up](#set-up-about-5-minutes-once) after installing: a relay, `relayUrl`, then `/streams phone`.
 
 ### Update or remove
 
@@ -270,7 +264,9 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
-| `/streams phone` | Set up the phone bridge: install or refresh it, serve it over Tailscale, and open the pairing QR code |
+| `/streams phone` | Open the pairing page with a QR code for your phones and tablets (needs `relayUrl`; see [On your phone and tablet](#-on-your-phone-and-tablet)) |
+| `/streams phone devices` | List the paired phones and tablets |
+| `/streams phone forget <id>` | Unpair one device (`all` unpairs every one) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
@@ -314,7 +310,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "chatStyle": "full", "diagnostics": false }
+      "options": { "chatStyle": "full", "diagnostics": false, "relayUrl": "" }
     }
   }
 }
@@ -324,6 +320,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | --- | :---: | --- |
 | `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `view` switch in a stream's header changes it for the session. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
+| `relayUrl` | empty | The relay your phones and tablets connect through, e.g. `https://claudeflow-relay.<you>.workers.dev`. Empty: no remote, and sessions never call any relay. |
 
 ### Model use
 
@@ -335,6 +332,19 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 ---
 
+## 🧪 Develop
+
+| Part | Where | Check |
+| --- | --- | --- |
+| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (124 tests) and `claude plugin validate --strict .` |
+| The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (9 tests against a real `wrangler dev`) |
+| The phone and tablet app | `app` | `bun test` (26 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
+| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (12 checks) |
+
+`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing, unlocking, answering and allowing. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
+
+---
+
 ## 🩺 Troubleshooting
 
 | Symptom | Fix |
@@ -343,11 +353,11 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| Phone page is blank or won't load | Check Tailscale is **connected** on both the Mac and the phone. **Another VPN** on the Mac (NordVPN, ExpressVPN…) blocks Tailscale traffic: disconnect it while you use the phone view. |
-| "This browser isn't paired" | Run `/streams phone` and scan the new QR code. |
-| `/streams phone` says Serve is not enabled | Run the command it shows, open the link that command prints, click **Enable**, then `/streams phone` again. |
-| `/streams phone` says Bun is needed | Install it from [bun.sh](https://bun.sh), then `/streams phone`. |
-| A session is missing on the phone | That session runs an older streams: update the plugin, then `/reload-plugins` in it. |
+| The app says **Connecting…** | Check the relay address loads in the phone's browser. If you deployed your own, run `npx wrangler deploy` again from `relay/cloudflare`. |
+| `/streams phone` says to set the relay address | Set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)), then `/reload-plugins`. |
+| **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
+| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |
+| A session is missing on the phone | That session runs an older streams, or another account with no device paired: update the plugin and `/reload-plugins`, or run `/streams phone` in that account. |
 
 ---
 
