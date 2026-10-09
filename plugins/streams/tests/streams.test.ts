@@ -4,6 +4,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
+import { BRIDGE_SOCKET, PHONE_ROWS, RETRY_MS, accountOf, snapshotOf, timeless } from '../hooks/phone'
 import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
@@ -871,12 +872,11 @@ describe('plugin updates', () => {
       ran.push(e.argv.join(' '))
       const stdout =
         e.argv[2] === 'list'
-          ? JSON.stringify({
-              installed: [
-                { id: 'streams@claudeflow', version: '0.3.3', installPath: '/cfg/plugins/cache/claudeflow/streams/0.3.3' },
-                { id: 'linear@official', version: 'e18ff5086423', installPath: '/cfg/plugins/cache/official/linear/e18ff5086423' },
-              ],
-            })
+          ? // The CLI's real shape: a bare list of installed plugins.
+            JSON.stringify([
+              { id: 'streams@claudeflow', version: '0.3.3', installPath: '/cfg/plugins/cache/claudeflow/streams/0.3.3' },
+              { id: 'linear@official', version: 'e18ff5086423', installPath: '/cfg/plugins/cache/official/linear/e18ff5086423' },
+            ])
           : ''
       return { value: { exitCode: 0, stdout, stderr: '' } } as never
     })
@@ -1086,5 +1086,104 @@ describe('status asked from the phone', () => {
     const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'bridge' } as never })
     expect(r.drop).toBe(undefined)
     expect(sent).toEqual(['status?'])
+  })
+})
+
+describe('the phone bridge', () => {
+  const at = (n: number) => n * 1000
+  // The phone reads and answers: a waiting stream must carry its whole question, and every live agent its progress.
+  test('a snapshot carries what the phone draws: the question, live agents, and the latest rows cut short', () => {
+    const snap = snapshotOf({
+      session: { id: 's1', account: 'macleod', project: 'claudeflow', busy: true },
+      lines: [
+        { id: 'docs', area: 'Docs', kind: 'waiting', state: 'WAITING', detail: 'Shall I open a PR for it?' },
+        { id: 'auth-refactor', area: 'Auth refactor', kind: 'running', state: 'RUNNING', detail: '1 agent' },
+        { id: 'gone', area: 'Gone', kind: 'done', state: 'DONE', detail: '' },
+      ],
+      streams: [...STREAMS, { ...STREAMS[0]!, id: 'docs', name: 'Docs' }],
+      colorOf: () => '#a5d8ff',
+      loops: {},
+      agents: [
+        { id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 },
+        { id: 'a2', streamId: 'auth-refactor', description: 'Old run', status: 'done', startedAt: at(0), endedAt: at(1), lastAt: at(1), last: '', tools: 1 },
+      ],
+      rows: [
+        ...Array.from({ length: PHONE_ROWS + 3 }, (_, i) => ({ id: `r${i}`, streamId: 'docs', kind: 'reply' as const, text: `row ${i}`, at: at(i) })),
+        { id: 'long', streamId: 'docs', kind: 'reply', text: 'x'.repeat(5000), at: at(99) },
+      ],
+      status: [],
+      limits: [],
+      updates: [],
+      now: at(60 * 60),
+    })
+    // A stream the mod no longer has is not sent as a card with no name.
+    expect(snap.streams.map(s => s.id)).toEqual(['docs', 'auth-refactor'])
+    expect(snap.streams[0]?.question).toBe('Shall I open a PR for it?')
+    expect(snap.streams[1]?.question).toBe(undefined)
+    // The running agent is shown with its clock; one that ended long ago is not news.
+    expect(snap.streams[1]?.agents.map(a => [a.id, a.ms, a.tools])).toEqual([['a1', at(3600), 4]])
+    expect(snap.streams[0]?.rows).toHaveLength(PHONE_ROWS)
+    expect(snap.streams[0]?.rows.at(-1)?.text.length).toBeLessThan(700)
+  })
+
+  // A clock in the detail would make every snapshot differ from the last, so a quiet session would send every tick.
+  test('a detail is sent without its clock; the phone counts from lastAt and nextAt', () => {
+    expect(timeless('Move sessions to JWT · 12s ago')).toBe('Move sessions to JWT')
+    expect(timeless('next tick in 7m 59s · check CI')).toBe('check CI')
+    expect(timeless('Is 5s ago a time? · yes')).toBe('Is 5s ago a time? · yes')
+  })
+
+  test("a session's account is its config dir's own name", () => {
+    expect(accountOf('/Users/me/.claude-clients/macleod')).toBe('macleod')
+    expect(accountOf('/Users/me/.claude-clients/iris/')).toBe('iris')
+    expect(accountOf('')).toBe('default')
+  })
+
+  // Every session reports to the bridge on its own; one with no bridge running must not call it every two seconds.
+  test('a session sends the bridge its streams when they change, not on every tick, and backs off while no bridge answers', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/work/claudeflow' }))
+    on('session.id', async () => ({ value: 'sess-1' }))
+    on('session.start', async (_$, e) => e as never)
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('command.register', async () => ({ value: undefined }) as never)
+    on('process.run', async (_$, e) =>
+      ({ value: { exitCode: 0, stdout: e.argv[0] === '/usr/bin/printenv' ? '/Users/me/.claude-clients/macleod\n' : '[]', stderr: '' } }) as never,
+    )
+    on('fs.read', async () => ({ value: '{}' }) as never)
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    let isUp = true
+    const sent: { url: string; socketPath?: string; body: { session: { account: string; project: string }; streams: { name: string }[] } }[] = []
+    on('http.fetch', async (_$, e) => {
+      if (!isUp) throw new Error('ECONNREFUSED')
+      sent.push({ url: e.url, socketPath: e.init?.socketPath, body: JSON.parse(String(e.init?.body)) })
+      return { value: { status: 200, ok: true, headers: {}, text: 'ok' } } as never
+    })
+    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
+    await $.prompt.submit({ text: '#docs rewrite the install guide', wait: false, origin: { kind: 'composer' } })
+    await clock.advance(2000)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.socketPath).toBe(BRIDGE_SOCKET)
+    expect(sent[0]?.url).toBe('http://bridge/sessions/sess-1')
+    expect(sent[0]?.body.session).toMatchObject({ account: 'macleod', project: 'claudeflow' })
+    expect(sent[0]?.body.streams.map(s => s.name)).toContain('docs')
+    // Nothing changed: nothing sent.
+    await clock.advance(4000)
+    expect(sent).toHaveLength(1)
+    // The bridge goes away: one failed try, then quiet until the retry time.
+    isUp = false
+    await $.prompt.submit({ text: '#billing why is the total off?', wait: false, origin: { kind: 'composer' } })
+    await clock.advance(2000)
+    isUp = true
+    await clock.advance(RETRY_MS - 4000)
+    expect(sent).toHaveLength(1)
+    // The first tick past the retry time (ticks come every two seconds) sends the news it held.
+    await clock.advance(6000)
+    expect(sent).toHaveLength(2)
+    expect(sent[1]?.body.streams.map(s => s.name)).toContain('billing')
   })
 })
