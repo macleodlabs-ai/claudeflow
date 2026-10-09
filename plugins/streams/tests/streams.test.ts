@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
+import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
 import { gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
@@ -832,5 +833,114 @@ describe('the status card', () => {
     expect(await bar.find({ key: 'st-open:billing' })).toBeDefined()
     await $.prompt.submit({ text: '#billing one more thing', wait: false, origin: { kind: 'composer' } })
     expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+  })
+})
+
+describe('plugin updates', () => {
+  // A release is only worth a button when it is really later: a git-sha install has no order to compare.
+  test('only a later version counts as an update, and a sha install never does', () => {
+    expect(isNewer('0.3.4', '0.3.3')).toBe(true)
+    expect(isNewer('0.10.0', '0.9.9')).toBe(true)
+    expect(isNewer('0.3.3', '0.3.3')).toBe(false)
+    expect(isNewer('1.0.0', '1.0.0-beta')).toBe(true)
+    expect(isNewer('e18ff5086423', 'e18ff5086422')).toBe(false)
+    expect(updatesOf([{ id: 'a@m', version: '1.0.0', installPath: '' }, { id: 'b@m', version: '2.0.0', installPath: '' }], { 'a@m': '1.1.0', 'b@m': '2.0.0' })).toEqual([
+      { id: 'a@m', from: '1.0.0', to: '1.1.0' },
+    ])
+  })
+
+  test('the latest version is read from the marketplace copy the plugin was installed from', () => {
+    expect(pluginsDirOf('/cfg/plugins/cache/claudeflow/streams/0.3.3')).toBe('/cfg/plugins')
+    expect(manifestPathOf('/cfg/plugins/marketplaces/claudeflow', { name: 'streams', source: './plugins/streams' })).toBe(
+      '/cfg/plugins/marketplaces/claudeflow/plugins/streams/.claude-plugin/plugin.json',
+    )
+    expect(manifestPathOf('/m', { name: 'x', source: './' })).toBe('/m/.claude-plugin/plugin.json')
+    expect(manifestPathOf('/m', { name: 'x', source: { source: 'url', url: 'https://x' } })).toBe(undefined)
+  })
+
+  // The point is updating without a restart, from the phone as well as the terminal: one press installs and reloads.
+  test('/streams update installs every newer plugin and reloads plugins into the session', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const ran: string[] = []
+    on('process.run', async (_$, e) => {
+      ran.push(e.argv.join(' '))
+      const stdout =
+        e.argv[2] === 'list'
+          ? JSON.stringify({
+              installed: [
+                { id: 'streams@claudeflow', version: '0.3.3', installPath: '/cfg/plugins/cache/claudeflow/streams/0.3.3' },
+                { id: 'linear@official', version: 'e18ff5086423', installPath: '/cfg/plugins/cache/official/linear/e18ff5086423' },
+              ],
+            })
+          : ''
+      return { value: { exitCode: 0, stdout, stderr: '' } } as never
+    })
+    on('fs.read', async (_$, e) => {
+      if (e.path === '/cfg/plugins/marketplaces/claudeflow/.claude-plugin/marketplace.json')
+        return { value: JSON.stringify({ plugins: [{ name: 'streams', source: './plugins/streams' }] }) }
+      if (e.path === '/cfg/plugins/marketplaces/claudeflow/plugins/streams/.claude-plugin/plugin.json') return { value: JSON.stringify({ version: '0.3.5' }) }
+      if (e.path === '/cfg/plugins/marketplaces/official/.claude-plugin/marketplace.json')
+        return { value: JSON.stringify({ plugins: [{ name: 'linear', source: './plugins/linear' }] }) }
+      return { value: JSON.stringify({ version: 'f00' }) }
+    })
+    let reloads = 0
+    on('command.run', { command: 'reload-plugins' }, async () => {
+      reloads++
+      return { text: '' }
+    })
+    const r = await $.command.run({ command: 'streams', args: 'update', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
+    expect(r.text).toBe('Updated streams@claudeflow 0.3.3 → 0.3.5.')
+    expect(ran).toContain('claude plugin update streams@claudeflow')
+    expect(ran.some(c => c.includes('linear'))).toBe(false)
+    await clock.advance(500)
+    expect(reloads).toBe(1)
+  })
+})
+
+describe('the phone', () => {
+  const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 44, placement: 'inline' } as never
+  const WORK = [
+    { type: 'user', uuid: 'u1', message: { role: 'user', content: '#docs rewrite the install guide' } },
+    { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Done. Shall I open a PR for it?' }] } },
+    { type: 'user', uuid: 'u2', message: { role: 'user', content: '#billing why is the total off?' } },
+    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Rounding is **per line**.' }] } },
+  ].map(l => JSON.stringify(l)).join('\n')
+
+  // On a phone the person reads and answers; the accordion puts what is waiting on them first and lets them answer it in one tap.
+  test('the phone draws an accordion: a waiting stream shows its question with a yes, and a tapped card opens its chat', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: WORK.length, mtimeMs: 0, isLink: false } }) as never)
+    on('fs.read', async () => ({ value: WORK }) as never)
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(1500)
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'mobile', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+    expect(await pane.find({ key: 'm:docs' })).toBeDefined()
+    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
+
+    await pane.press({ key: 'm-yes:docs' })
+    expect(sent.at(-1)).toBe('yes')
+
+    await pane.press({ key: 'm-open:billing' })
+    const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
+    expect(texts).toEqual(['why is the total off?', 'Rounding is **per line**.'])
+    await pane.press({ key: 'm-open:billing' })
+    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
   })
 })

@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { AgentRun, ChatStyle, Folded, Health, Stream, StreamRow, StreamRowKind } from '../types'
+import type { Installed, MarketEntry, Update } from './updates'
+import { CHECK_EVERY_MS, manifestPathOf, pluginsDirOf, updatesOf } from './updates'
 import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal, StatusKind, StatusLine } from './classify'
 import {
   BATCH_SYSTEM,
@@ -68,6 +70,9 @@ const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const chatStyleA = atom({ plugin: 'streams', key: 'chatStyle' } as const, '')
 const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
+const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
+const updatingA = atom({ plugin: 'streams', key: 'updating' } as const, false)
+const mobileOpenA = atom({ plugin: 'streams', key: 'mobileOpen' } as const, '')
 const statusOpenA = atom({ plugin: 'streams', key: 'statusOpen' } as const, false)
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, [])
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
@@ -784,19 +789,73 @@ async function streamStatus($: $, streams: readonly Stream[], health: Record<str
   return sortStatus(lines, Object.fromEntries(streams.map(s => [s.id, s.lastAt])))
 }
 
-/** `/streams update`: fetch the newest release and load it into this session, no restart. */
-async function selfUpdate($: $): Promise<string> {
-  const run = (argv: string[]) => $.process.run(argv, { timeoutMs: 120_000 })
-  await run(['claude', 'plugin', 'marketplace', 'update', 'claudeflow']).catch(() => undefined)
-  const r = await run(['claude', 'plugin', 'update', 'streams@claudeflow']).catch(err => ({ exitCode: 1, stdout: '', stderr: String(err) }))
-  const said = oneLine(r.stdout || r.stderr, 300)
-  if (r.exitCode !== 0) return `Update failed: ${said}`
-  // The reload replaces this module, so it runs after the command has answered.
-  void $.clock
-    .sleep(300)
-    .then(() => $.command.run({ command: 'reload-plugins' }))
-    .catch(() => $.ui.toast('streams updated: run /reload-plugins to load it'))
-  return `${said} Reloading plugins…`
+const UPDATE_CHECK_KEY = 'streams:updates:checkedAt'
+
+/**
+ * Which installed plugins have a newer release: each marketplace refreshed at most every six hours,
+ * then every installed plugin's version held against the one its marketplace now lists.
+ */
+async function checkUpdates($: $, force = false): Promise<Update[]> {
+  const run = (argv: string[], timeoutMs = 30_000) => $.process.run(argv, { timeoutMs })
+  const now = await $.clock.now()
+  const last = Number((await $.store.get(UPDATE_CHECK_KEY)) ?? 0)
+  if (force || now - last > CHECK_EVERY_MS) {
+    await run(['claude', 'plugin', 'marketplace', 'update'], 180_000).catch(() => undefined)
+    await $.store.set(UPDATE_CHECK_KEY, now)
+  }
+  const listed = await run(['claude', 'plugin', 'list', '--json'])
+  const installed = ((JSON.parse(listed.stdout || '{}') as { installed?: Installed[] }).installed ?? []).filter(p => p.id.includes('@'))
+  const readJson = async (path: string): Promise<unknown> => JSON.parse(String(await $.fs.read(path)))
+  const markets = new Map<string, MarketEntry[]>()
+  const latest: Record<string, string | undefined> = {}
+  for (const p of installed) {
+    const [name = '', market = ''] = p.id.split('@')
+    const dir = pluginsDirOf(p.installPath)
+    if (!dir) continue
+    const marketDir = `${dir}/marketplaces/${market}`
+    if (!markets.has(market)) {
+      const manifest = (await readJson(`${marketDir}/.claude-plugin/marketplace.json`).catch(() => ({}))) as { plugins?: MarketEntry[] }
+      markets.set(market, manifest.plugins ?? [])
+    }
+    const entry = markets.get(market)?.find(e => e.name === name)
+    if (!entry) continue
+    const path = manifestPathOf(marketDir, entry)
+    latest[p.id] = entry.version ?? (path ? ((await readJson(path).catch(() => ({}))) as { version?: string }).version : undefined)
+  }
+  const found = updatesOf(installed, latest)
+  const before = (await read($, updatesA)).map(u => u.id).join()
+  await update($, updatesA, () => found)
+  if (found.length && found.map(u => u.id).join() !== before)
+    $.ui.toast(`${found.length} plugin update${found.length === 1 ? '' : 's'} ready: press ⬆ update`)
+  return found
+}
+
+/** Installs every update found, then reloads the plugins into this session: no restart, from any surface. */
+async function applyUpdates($: $): Promise<string> {
+  const updates = await read($, updatesA)
+  if (!updates.length || (await read($, updatingA))) return updates.length ? 'An update is already running.' : 'Every plugin is up to date.'
+  await update($, updatingA, () => true)
+  const done: string[] = []
+  const failed: string[] = []
+  for (const u of updates) {
+    const r = await $.process
+      .run(['claude', 'plugin', 'update', u.id], { timeoutMs: 180_000 })
+      .catch(err => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+    if (r.exitCode === 0) done.push(`${u.id} ${u.from} → ${u.to}`)
+    else failed.push(`${u.id}: ${oneLine(r.stderr || r.stdout, 160)}`)
+  }
+  await update($, updatesA, list => list.filter(u => !done.some(d => d.startsWith(`${u.id} `))))
+  await update($, updatingA, () => false)
+  const said = [done.length ? `Updated ${done.join(', ')}.` : '', failed.length ? `Failed: ${failed.join('; ')}.` : ''].filter(Boolean).join(' ')
+  if (done.length) {
+    $.ui.toast(`${said} Reloading plugins…`)
+    // The reload replaces this module, so it runs once this press or command has answered.
+    void $.clock
+      .sleep(300)
+      .then(() => $.command.run({ command: 'reload-plugins' }))
+      .catch(() => $.ui.toast('Updated: run /reload-plugins to load it'))
+  } else $.ui.toast(said)
+  return said
 }
 
 export const register: Register = (on, options) => {
@@ -826,8 +885,19 @@ export const register: Register = (on, options) => {
     if (transcript && !(await read($, historyFiledA))) work($, { kind: 'import', path: transcript, isCurrent: true })
     if (e.isInteractive) void $.ui.open({ id: PANE, title: 'Streams' })
     $.clock.every(5000, () => void beat($).catch(() => {}))
+    if (e.isInteractive) {
+      void checkUpdates($).catch(() => {})
+      $.clock.every(CHECK_EVERY_MS, () => void checkUpdates($).catch(() => {}))
+    }
     work($)
     return next(e)
+  })
+
+  // A phone joining the session gets the streams accordion without asking for it.
+  on('session.attach', { surface: 'mobile' }, async ($, e, next) => {
+    const r = await next(e)
+    void $.ui.open({ id: PANE, title: 'Streams' }).catch(() => {})
+    return r
   })
 
   on('command.run', { command: 'streams' }, async ($, e) => {
@@ -837,7 +907,10 @@ export const register: Register = (on, options) => {
       await openStatus($)
       return { text: 'Status card shown above the prompt.' }
     }
-    if (verb === 'update') return { text: await selfUpdate($) }
+    if (verb === 'update') {
+      await checkUpdates($, true)
+      return { text: await applyUpdates($) }
+    }
     await $.ui.open({ id: PANE, title: 'Streams', focus: true })
     await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})
     return { text: 'Streams navigator opened. `/streams import` files a past session of this project into streams.' }
@@ -1097,7 +1170,8 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-    if (e.props.hasSurvey || !streams.some(s => !s.archived)) return next(e)
+    if (e.props.hasSurvey) return next(e)
+    if (!streams.some(s => !s.archived)) return (await updateControl($, e)) ?? next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const width = e.props.bodyColumns
     const pills: { s: Stream; label: string; health: Health }[] = []
@@ -1110,6 +1184,7 @@ export const register: Register = (on, options) => {
       used += label.length + 8
       pills.push({ s, label, health: verdict })
     }
+    const updateButton = await updateControl($, e)
     const pick = async (id: string) => {
       await openStream($, focus === id ? '' : id)
       await $.ui.open({ id: PANE, title: 'Streams' })
@@ -1133,6 +1208,7 @@ export const register: Register = (on, options) => {
           )
         })}
         <Button key="status" plain label="status" hotkey="t" onPress={() => openStatus($)} />
+        {updateButton}
         <Button key="pane" plain label="≡" hotkey="s"onPress={() => $.ui.open({ id: PANE, title: 'Streams', focus: true })} />
         {pills.length === 0 ? <Text dimColor>widen the terminal to see streams</Text> : null}
       </Box>
@@ -1253,6 +1329,126 @@ export const register: Register = (on, options) => {
       ])
     }
 
+    const fullRow = (r: StreamRow, s: Stream) => {
+      const who = r.agentId ? `[${r.agentId.slice(0, 6)}] ` : ''
+      // Prompts and replies through the session's own markdown renderer; a tool call as its name
+      // and one line, with the command, file or edit beneath in the engine's highlighter.
+      if (r.kind === 'prompt' || r.kind === 'reply')
+        return (
+          <Box key={r.id} flexDirection="row" marginTop={1}>
+            <Text bold color={r.kind === 'prompt' ? colorOf(s) : undefined}>
+              {r.kind === 'prompt' ? '❯ ' : '⏺ '}
+            </Text>
+            <Box flexDirection="column" flexGrow={1}>
+              {who ? <Text dimColor>{who}</Text> : null}
+              <Markdown key={`md:${r.id}`} text={markdownOf(r.text)} />
+            </Box>
+          </Box>
+        )
+      if (r.kind === 'tool') {
+        const cut = r.text.search(/[( ]/)
+        const name = cut < 0 ? r.text : r.text.slice(0, cut)
+        const rest = [cut < 0 ? '' : r.text.slice(cut).trim()]
+        return (
+          <Box key={r.id} flexDirection="column" marginTop={1}>
+            <Text wrap="truncate">
+              <Text color={STATUS_WORD.done}>⏺ </Text>
+              <Text bold>{name}</Text>
+              <Text dimColor>
+                {rest[0]?.startsWith('(') && !who ? '' : ' '}
+                {who}
+                {oneLine(rest.join(' '), width - name.length - 4)}
+              </Text>
+            </Text>
+            {r.code ? (
+              <Box marginLeft={2}>
+                <Code
+                  source={r.code.source}
+                  {...(r.code.language ? { language: r.code.language } : {})}
+                  {...(r.code.path ? { path: r.code.path } : {})}
+                  {...(r.code.format ? { format: r.code.format } : {})}
+                />
+              </Box>
+            ) : null}
+          </Box>
+        )
+      }
+      return (
+        <Text key={r.id} dimColor wrap="truncate">
+          {GLYPH[r.kind]} {who}
+          {oneLine(r.text, width)}
+        </Text>
+      )
+    }
+
+    // The phone: an accordion of colour-bordered cards, what needs the person first; one card open at a time.
+    if (e.surface === 'mobile') {
+      const { Svg } = $.ui.resolve(e as PaneRender & { surface: 'mobile' })
+      const openId = await read($, mobileOpenA)
+      const lines = await streamStatus($, streams, health, now)
+      const counts = (['running', 'waiting', 'loop', 'error', 'done'] as const)
+        .map(k => ({ k, n: lines.filter(l => l.kind === k).length }))
+        .filter(c => c.n)
+      const toggle = (id: string) => update($, mobileOpenA, v => (v === id ? '' : id))
+      return (
+        <Box flexDirection="column">
+          {await updateControl($, e)}
+          <Box gap={1}>
+            <Text bold>Streams</Text>
+            <Text dimColor>{lines.length} live</Text>
+            {openId ? <Button key="m-collapse" plain dimColor label="collapse all" onPress={() => update($, mobileOpenA, () => '')} /> : null}
+          </Box>
+          <Box gap={1} flexWrap="wrap" marginTop={1}>
+            {counts.map(c => (
+              <Text key={`chip:${c.k}`} backgroundColor={MOBILE_BG[c.k]} color={MOBILE_FG[c.k]} bold>
+                {` ${MOBILE_GLYPH[c.k]} ${c.n} ${c.k} `}
+              </Text>
+            ))}
+          </Box>
+          {lines.length === 0 ? <Text dimColor>Streams appear as you prompt.</Text> : null}
+          {lines.map(l => {
+            const s = streams.find(x => x.id === l.id)
+            if (!s) return null
+            const kind: StatusKind = l.kind ?? 'idle'
+            const isOpen = openId === s.id
+            const question = kind === 'waiting' ? l.detail : ''
+            return (
+              <Box key={`m:${s.id}`} flexDirection="column" borderStyle="round" borderColor={colorOf(s)} paddingX={1} marginTop={1}>
+                <Box gap={1}>
+                  <Svg source={iconSvg(kind, colorOf(s))} alt={kind} width={28} height={28} {...(kind === 'running' ? { isInteractive: true as const } : {})} />
+                  <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+                    <Button key={`m-open:${s.id}`} plain label={`${isOpen ? '▾' : '▸'} ${s.name}`} onPress={() => toggle(s.id)} />
+                    {question ? null : <Text dimColor wrap="truncate">{oneLine(l.detail, 80)}</Text>}
+                  </Box>
+                  <Text backgroundColor={MOBILE_BG[kind]} color={MOBILE_FG[kind]} bold>
+                    {` ${kind === 'waiting' ? 'WAITING' : l.state} `}
+                  </Text>
+                </Box>
+                {question ? (
+                  <Box flexDirection="column" borderStyle="round" borderColor={MOBILE_BG.waiting} paddingX={1} marginTop={1}>
+                    <Text>{question}</Text>
+                    <Box gap={2}>
+                      <Button key={`m-yes:${s.id}`} label="yes" onPress={() => answerYes($, s.id)} />
+                      {isOpen ? null : <Button key={`m-see:${s.id}`} plain label="open stream" onPress={() => toggle(s.id)} />}
+                    </Box>
+                  </Box>
+                ) : null}
+                {isOpen ? (
+                  <Box flexDirection="column">
+                    {workOf(s, 6)}
+                    {rows
+                      .filter(r => r.streamId === s.id)
+                      .slice(-MOBILE_ROWS)
+                      .map(r => fullRow(r, s))}
+                  </Box>
+                ) : null}
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    }
+
     if (shown) {
       const verdict = health[shown.id] ?? 'idle'
       const activity = workOf(shown, 8)
@@ -1297,58 +1493,7 @@ export const register: Register = (on, options) => {
                 {oneLine(r.text, width)}
               </Text>
             ))}
-          {style === 'full' &&
-            own.map(r => {
-              const who = r.agentId ? `[${r.agentId.slice(0, 6)}] ` : ''
-              // Prompts and replies through the session's own markdown renderer; a tool call as its name
-              // and one line, with the command, file or edit beneath in the engine's highlighter.
-              if (r.kind === 'prompt' || r.kind === 'reply')
-                return (
-                  <Box key={r.id} flexDirection="row" marginTop={1}>
-                    <Text bold color={r.kind === 'prompt' ? colorOf(shown) : undefined}>
-                      {r.kind === 'prompt' ? '❯ ' : '⏺ '}
-                    </Text>
-                    <Box flexDirection="column" flexGrow={1}>
-                      {who ? <Text dimColor>{who}</Text> : null}
-                      <Markdown key={`md:${r.id}`} text={markdownOf(r.text)} />
-                    </Box>
-                  </Box>
-                )
-              if (r.kind === 'tool') {
-                const cut = r.text.search(/[( ]/)
-                const name = cut < 0 ? r.text : r.text.slice(0, cut)
-                const rest = [cut < 0 ? '' : r.text.slice(cut).trim()]
-                return (
-                  <Box key={r.id} flexDirection="column" marginTop={1}>
-                    <Text wrap="truncate">
-                      <Text color={STATUS_WORD.done}>⏺ </Text>
-                      <Text bold>{name}</Text>
-                      <Text dimColor>
-                        {rest[0]?.startsWith('(') && !who ? '' : ' '}
-                        {who}
-                        {oneLine(rest.join(' '), width - name.length - 4)}
-                      </Text>
-                    </Text>
-                    {r.code ? (
-                      <Box marginLeft={2}>
-                        <Code
-                          source={r.code.source}
-                          {...(r.code.language ? { language: r.code.language } : {})}
-                          {...(r.code.path ? { path: r.code.path } : {})}
-                          {...(r.code.format ? { format: r.code.format } : {})}
-                        />
-                      </Box>
-                    ) : null}
-                  </Box>
-                )
-              }
-              return (
-                <Text key={r.id} dimColor wrap="truncate">
-                  {GLYPH[r.kind]} {who}
-                  {oneLine(r.text, width)}
-                </Text>
-              )
-            })}
+          {style === 'full' && own.map(r => fullRow(r, shown))}
         </Box>
       )
     }
@@ -1417,6 +1562,7 @@ export const register: Register = (on, options) => {
             {filing.total > 1 ? ` ${filing.done}/${filing.total}` : '…'}
           </Text>
         ) : null}
+        {await updateControl($, e)}
         <Box gap={1}>
           <Text dimColor>
             {active.length} streams · {focus ? `focused on ${focus}` : 'showing all'}
@@ -1455,6 +1601,38 @@ const STATUS_WORD: Record<BadgeKind, string> = {
   error: '#ff7b72',
   idle: '#8b949e',
 }
+/** The phone's badge colours: the pane's, and a blue for a stream waiting on the person. */
+const MOBILE_BG: Record<StatusKind, string> = { ...BADGE_BG, waiting: '#79c0ff' }
+const MOBILE_FG: Record<StatusKind, string> = { ...BADGE_FG, waiting: '#08203a' }
+const MOBILE_GLYPH: Record<StatusKind, string> = { running: '●', loop: '↻', waiting: '?', error: '✗', stalled: '◌', done: '✓', idle: '○' }
+/** Rows an open card shows on the phone. */
+const MOBILE_ROWS = 12
+
+/** A card's icon: a spinning ring while the stream runs, else a tile in its colour with the status glyph. */
+const iconSvg = (kind: StatusKind, color: string): string =>
+  kind === 'running'
+    ? '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" stroke="#3a3a46" stroke-width="4" fill="none"/>' +
+      '<circle cx="14" cy="14" r="11" stroke="#ffd33d" stroke-width="4" fill="none" stroke-dasharray="48 69" stroke-linecap="round">' +
+      '<animateTransform attributeName="transform" type="rotate" from="0 14 14" to="360 14 14" dur="1.2s" repeatCount="indefinite"/></circle></svg>'
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><rect width="28" height="28" rx="8" fill="${color}"/>` +
+      `<text x="14" y="19" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="14" font-weight="800" fill="#111">${MOBILE_GLYPH[kind]}</text></svg>`
+
+/** The phone's one-tap answer: the stream is made current first, so the bare `yes` is filed where it was asked. */
+async function answerYes($: $, id: string) {
+  await update($, currentA, () => id)
+  await $.prompt.submit({ text: 'yes', asUser: true })
+}
+
+/** The ⬆ update button while any installed plugin has a newer release; a progress word while one installs. */
+async function updateControl($: $, e: Parameters<$['ui']['resolve']>[0]): Promise<RenderElement | null> {
+  const [updates, updating] = await Promise.all([read($, updatesA), read($, updatingA)])
+  const { Button, Text } = $.ui.resolve(e)
+  if (updating) return <Text color={STATUS_WORD.running} bold>⟳ updating…</Text>
+  if (!updates.length) return null
+  const label = updates.length === 1 ? `⬆ update ${updates[0]?.id.split('@')[0]} ${updates[0]?.to}` : `⬆ update ${updates.length} plugins`
+  return <Button key="update" label={label} hotkey="u" onPress={() => applyUpdates($)} />
+}
+
 /** The status card's state words: the pane's status colours, and a blue that asks for the person. */
 const STATE_COLOR: Record<StatusKind, string> = { ...STATUS_WORD, waiting: '#79c0ff' }
 /** Rows the status card shows before pointing to the pane. */

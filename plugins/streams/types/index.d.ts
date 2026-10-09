@@ -79,6 +79,12 @@ declare module 'claude-code' {
       chatStyle: ChatStyle | ''
       /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */
       tagHint: { partial: string; matches: string[] } | null
+      /** Installed plugins with a newer release in their marketplace. */
+      updates: { id: string; from: string; to: string }[]
+      /** Whether an update is being installed now. */
+      updating: boolean
+      /** The stream open in the phone's accordion; '' with every card closed. */
+      mobileOpen: string
       /** Whether the status card is up above the prompt. */
       statusOpen: boolean
       /** The card's git rows, read as it opened: branch against upstream and what is uncommitted. */

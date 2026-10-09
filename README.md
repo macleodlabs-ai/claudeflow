@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.4" src="https://img.shields.io/badge/version-0.3.4-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 63 passing" src="https://img.shields.io/badge/tests-63%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 67 passing" src="https://img.shields.io/badge/tests-67%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -106,6 +106,20 @@ Type `status`, or press `status` in the bar, and a card opens above the prompt w
 - **Git rows on top**: the branch, whether anything is unpushed, and which files are uncommitted.
 - **Click a stream's name** to open it in the pane. `✕ close` or your next prompt hides the card.
 
+### 📱 On your phone
+
+Driving Claude Code from the Claude app over Remote Control? When your phone connects, streams opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
+
+<p align="center"><img src="assets/phone.jpg" width="640" alt="The streams accordion on a phone: running, waiting, done and idle cards; a tapped card shows live agents, markdown replies and a coloured diff"></p>
+
+- **A stream waiting on you** shows Claude's question with a **yes** button: one tap answers it, filed in that stream.
+- **Tap a card** to open it: its live agents, then its chat with markdown, highlighted commands and coloured diffs. Tap again to close it.
+- **⬆ update** appears here too, so you can update without going back to the Mac.
+
+### 🔄 Updates without a restart
+
+Once a session starts, and every six hours after, streams checks every plugin you have installed against its marketplace. When one has a newer release, an **⬆ update** button appears in the bar, the pane and on your phone, and a toast says so. Pressing it (or <kbd>u</kbd>, or `/streams update`) installs the updates on your Mac and reloads plugins into the running session: no restart.
+
 ### Status at a glance
 
 | Colour | Status | Meaning |
@@ -178,7 +192,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
-| `/streams update` | Update to the latest release and reload it into this session, no restart |
+| `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
 | `/stream move <name>` | Refile the last prompt, and everything after it, under another stream (created if new) when it was sorted wrongly |
