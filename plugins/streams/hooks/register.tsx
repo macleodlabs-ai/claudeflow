@@ -1077,12 +1077,14 @@ export const register: Register = (on, options) => {
     if (verb === 'phone') {
       const bridge = await ensureBridge($)
       phoneRetryAt = 0
-      const tailnet = bridge.ok ? await ensureTailnet($, bridge.home) : { said: 'waits for the bridge' }
+      const tailnet: { url?: string; said: string } = bridge.ok ? await ensureTailnet($, bridge.home) : { said: 'waits for the bridge' }
       const lines = [`Phone bridge: ${bridge.said}.`, `Tailscale: ${tailnet.said}.`]
       if (bridge.ok) {
-        // The pairing page opens on this Mac, already paired, and shows the phone's link as a QR code.
+        // The pairing page opens on this Mac, already paired, and shows the phone's link as a QR code. It opens at
+        // the tailnet name (this Mac is on the tailnet too), or at a `.localhost` name, which browsers send to this Mac.
         const token = await $.fs.read(`${bridge.home}/.claudeflow/bridge-token`).then(t => String(t).trim()).catch(() => '')
-        const opened = token ? await run($, ['/usr/bin/open', `http://127.0.0.1:${BRIDGE_PORT}/?t=${token}&next=/pair`]) : undefined
+        const origin = tailnet.url ?? `http://claudeflow.localhost:${BRIDGE_PORT}`
+        const opened = token ? await run($, ['/usr/bin/open', `${origin}/?t=${token}&next=/pair`]) : undefined
         lines.push(
           opened?.exitCode === 0
             ? 'Opened the pairing page in your browser: scan its QR code with your phone, then Add to Home Screen.'
