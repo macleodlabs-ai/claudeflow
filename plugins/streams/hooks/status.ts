@@ -1,9 +1,13 @@
 import type { Health, Stream } from '../types'
 import { ago, clockOf, oneLine, type BadgeKind } from './classify'
 
-/** What the status card says of one stream: a state word, its colour kind, and one line of detail. */
+/**
+ * What the status card says of one stream: a state word, its colour kind, and one line of detail. Its clocks are
+ * times, not text (`since`: last active, `nextAt`: a loop's next tick, epoch ms), so a line stays the same while
+ * only time passes; each screen counts from them as it draws (`lineText`).
+ */
 export type StatusKind = BadgeKind | 'waiting'
-export type StatusLine = { id: string; area: string; kind?: StatusKind; state: string; detail: string }
+export type StatusLine = { id: string; area: string; kind?: StatusKind; state: string; detail: string; since?: number; nextAt?: number }
 export type StatusInput = {
   stream: Pick<Stream, 'id' | 'name' | 'summary' | 'lastAt'>
   health: Health
@@ -11,7 +15,6 @@ export type StatusInput = {
   running: { description: string; last: string; tools: number }[]
   /** The stream's last prompt or reply: a reply ending in a question is waiting on the person. */
   lastSaid?: { kind: string; text: string }
-  now: number
 }
 
 const STATE_WORD: Record<StatusKind, string> = {
@@ -35,22 +38,23 @@ export const questionOf = (text: string): string | undefined => {
 
 /** One stream's row on the status card: what it is doing, or what it last left the person with. */
 export function statusOf(x: StatusInput): StatusLine {
-  const { stream: s, now } = x
-  const line = (kind: StatusKind, detail: string, state = STATE_WORD[kind]): StatusLine => ({ id: s.id, area: s.name, kind, state, detail })
+  const { stream: s } = x
+  const line = (kind: StatusKind, detail: string, clock: { since?: number; nextAt?: number } = {}): StatusLine => ({ id: s.id, area: s.name, kind, state: STATE_WORD[kind], detail, ...clock })
   if (x.health === 'running') {
     const top = x.running[0]
     if (!top) return line('running', `main turn · ${s.summary}`)
     const more = x.running.length > 1 ? `${x.running.length} agents · ` : ''
     return line('running', `${more}${top.description}: ${top.tools ? `${top.last} (${top.tools} tools)` : 'starting up'}`)
   }
-  if (x.loop) {
-    const when = x.loop.kind === 'cron' ? x.loop.label : `next tick in ${clockOf(Math.max(0, x.loop.nextAt - now))}`
-    return line('loop', `${when} · ${s.summary}`)
-  }
+  if (x.loop) return x.loop.kind === 'cron' ? line('loop', `${x.loop.label} · ${s.summary}`) : line('loop', s.summary, { nextAt: x.loop.nextAt })
   const question = x.lastSaid?.kind === 'reply' ? questionOf(x.lastSaid.text) : undefined
   if (question && x.health !== 'error') return line('waiting', question)
-  return line(x.health, `${s.summary || '—'} · ${ago(now - s.lastAt)} ago`)
+  return line(x.health, s.summary || '—', { since: s.lastAt })
 }
+
+/** A line's detail with its clock counted to `now`, as the terminal and the app draw it: `next tick in 7:59 · …`, `… · 12s ago`. */
+export const lineText = (l: { detail: string; since?: number; nextAt?: number }, now: number): string =>
+  l.nextAt !== undefined ? `next tick in ${clockOf(Math.max(0, l.nextAt - now))} · ${l.detail}` : l.since !== undefined ? `${l.detail} · ${ago(now - l.since)} ago` : l.detail
 
 /** Status rows in the order that needs the person: running, looping, waiting, failed, then the finished. */
 export const sortStatus = (lines: StatusLine[], lastAt: Record<string, number>): StatusLine[] =>

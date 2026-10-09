@@ -2,7 +2,7 @@ import type { ElementTable, RenderElement } from 'claude-code'
 
 import type { Stream } from '../../types'
 import { oneLine } from '../classify'
-import type { LimitView, StatusLine } from '../status'
+import { lineText, type LimitView, type StatusLine } from '../status'
 import { STATE_COLOR, STATUS_ROWS, limitColor } from './look'
 
 export type Card = {
@@ -75,7 +75,7 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
               </Text>
             </Box>
             <Box flexGrow={1} flexShrink={1}>
-              <Text wrap="wrap">{oneLine(l.detail, Math.max(20, (width - areaW - stateW) * (l.id.startsWith('ticket:') ? 3 : 2)))}</Text>
+              <Text wrap="wrap">{oneLine(lineText(l, now), Math.max(20, (width - areaW - stateW) * (l.id.startsWith('ticket:') ? 3 : 2)))}</Text>
             </Box>
           </Box>,
         ]

@@ -18,9 +18,10 @@ export type PhoneStream = {
   color: string
   kind: StatusKind
   state: string
-  /** What it is about, without the clocks below: the phone keeps those running itself. */
+  /** What it is about, without the clocks below: the phone keeps those running itself (status.ts `lineText`). */
   detail: string
-  lastAt: number
+  /** When it was last active, for "· 12s ago"; absent while it runs or waits. */
+  since?: number
   /** When a self-paced loop ticks next. */
   nextAt?: number
   /** The question it waits on you for; absent unless it waits. */
@@ -75,22 +76,11 @@ export const commandOf = (c: unknown): PhoneCommand | undefined => {
   return undefined
 }
 
-/** The commands a reply carries, keeping only well-formed ones. */
-export const commandsOf = (body: string): { commands: PhoneCommand[]; isPhoneActive: boolean } => {
-  try {
-    const x = JSON.parse(body) as { commands?: unknown[]; phoneActive?: unknown }
-    return { commands: (x.commands ?? []).flatMap(c => commandOf(c) ?? []), isPhoneActive: x.phoneActive === true }
-  } catch {
-    return { commands: [], isPhoneActive: false }
-  }
-}
-
 export type SnapshotInput = {
   session: Snapshot['session']
   lines: readonly StatusLine[]
   streams: readonly Stream[]
   colorOf: (s: Stream) => string
-  loops: Record<string, { kind: string; nextAt: number }>
   agents: readonly AgentRun[]
   rows: readonly StreamRow[]
   status: readonly StatusLine[]
@@ -103,25 +93,21 @@ export type SnapshotInput = {
 /** The account a session runs as: the last folder of its config dir (`~/.claude-clients/macleod` is macleod). */
 export const accountOf = (configDir: string): string => configDir.replace(/\/+$/, '').split('/').pop() || 'default'
 
-/** A status detail without its clock, which changes every second and would make every snapshot news. */
-export const timeless = (detail: string): string => detail.replace(/ · \d+[smhd] ago$/, '').replace(/^next tick in [^·]+ · /, '')
-
 /** The streams in status order, each with its live agents and latest rows; code bodies stay on the Mac. */
 export function snapshotOf(x: SnapshotInput): Snapshot {
   const streams = x.lines.flatMap(l => {
     const s = x.streams.find(st => st.id === l.id)
     if (!s) return []
     const kind = l.kind ?? 'idle'
-    const loop = x.loops[s.id]
     const card: PhoneStream = {
       id: s.id,
       name: s.name,
       color: x.colorOf(s),
       kind,
       state: l.state,
-      detail: oneLine(timeless(l.detail), 240),
-      lastAt: s.lastAt,
-      ...(kind === 'loop' && loop?.kind === 'wakeup' ? { nextAt: loop.nextAt } : {}),
+      detail: oneLine(l.detail, 240),
+      ...(l.since !== undefined ? { since: l.since } : {}),
+      ...(l.nextAt !== undefined ? { nextAt: l.nextAt } : {}),
       ...(kind === 'waiting' ? { question: l.detail } : {}),
       agents: x.agents
         .filter(a => a.streamId === s.id && (a.status === 'running' || x.now - (a.endedAt ?? a.lastAt) < 10 * 60_000))
@@ -144,7 +130,3 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
   })
   return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates, permissions: [...(x.permissions ?? [])] }
 }
-
-/** Whether a snapshot is worth sending: it changed, or the devices have not heard from the session for a while. */
-export const isDue = (body: string, last: { body: string; at: number }, now: number): boolean =>
-  body !== last.body || now - last.at >= HEARTBEAT_MS
