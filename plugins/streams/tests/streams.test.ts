@@ -3,7 +3,8 @@ import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
-import { buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
+import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -542,9 +543,9 @@ describe('full chat style', () => {
     expect(codes.map(c => (c.props as { format?: string; language?: string }).format ?? (c.props as { language?: string }).language)).toEqual(['diff', 'bash'])
     const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
     expect(texts).toEqual(['why is the invoice total off?', 'Rounding happens here:\n\n```ts\nMath.round(x)\n```'])
-    await pane.press({ key: 'style' })
+    await pane.press({ key: 'style:compact' })
     expect(await pane.find({ type: 'Code' })).toBe(undefined)
-    await pane.press({ key: 'style' })
+    await pane.press({ key: 'style:full' })
     expect(await pane.find({ type: 'Code' })).toBeDefined()
   })
 
@@ -772,5 +773,318 @@ describe('filing a long history in parallel', () => {
     expect(await colourOf('p2')).toBe(billing)
     expect(await colourOf('p3')).toBe(billing)
     expect(await colourOf('p4')).not.toBe(billing)
+  })
+})
+
+describe('the status card', () => {
+  const BAR_PROPS = { bodyColumns: 120, hasSurvey: false } as never
+  const s = (id: string, lastAt = 0) => ({ id, name: id, summary: `${id} work`, lastAt })
+
+  // The card exists to answer "what needs me?": a reply that ends on a question is the person's move,
+  // so it must read as waiting, never as done.
+  test('a stream whose last reply asks a question is waiting for the person, with the question as its detail', () => {
+    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' }, now: 0 })
+    expect(line.kind).toBe('waiting')
+    expect(line.detail).toBe('Shall I commit it?')
+    expect(questionOf('All done.')).toBe(undefined)
+  })
+
+  test('running work says what it is doing now, and running and waiting rows sort above finished ones', () => {
+    const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }], now: 0 })
+    expect(run.detail).toBe('trace rounding: Grep toFixed (6 tools)')
+    const done = statusOf({ stream: s('docs', 9), health: 'done', running: [], now: 10_000 })
+    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' }, now: 0 })
+    expect(sortStatus([done, wait, run], { docs: 9 }).map(l => l.id)).toEqual(['billing', 'auth', 'docs'])
+  })
+
+  test('git rows say whether anything is unpushed or uncommitted', () => {
+    const rows = gitStatus('## main...origin/main [ahead 2]\n M src/a.ts\n?? notes.md\n')
+    expect(rows.map(r => [r.area, r.state, r.detail])).toEqual([
+      ['Git branch', 'main', '2 unpushed'],
+      ['Uncommitted', '2 files', 'src/a.ts, notes.md'],
+    ])
+    expect(gitStatus('## main...origin/main\n')[0]?.detail).toBe('up to date with origin/main')
+  })
+
+  // Asking for status is the most common question: answered locally it costs no model call and works mid-turn.
+  test('typing status shows the card without sending a prompt, and the bar button shows it too', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: BAR_PROPS })
+    expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+
+    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'composer' } })
+    expect(r.drop).toBeDefined()
+    expect(sent).toEqual(['why is the invoice total off?'])
+    expect(await bar.find({ key: 'st-open:billing' })).toBeDefined()
+
+    await bar.press({ key: 'status-close' })
+    expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+    await bar.press({ key: 'status' })
+    expect(await bar.find({ key: 'st-open:billing' })).toBeDefined()
+    await $.prompt.submit({ text: '#billing one more thing', wait: false, origin: { kind: 'composer' } })
+    expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+  })
+})
+
+describe('plugin updates', () => {
+  // A release is only worth a button when it is really later: a git-sha install has no order to compare.
+  test('only a later version counts as an update, and a sha install never does', () => {
+    expect(isNewer('0.3.4', '0.3.3')).toBe(true)
+    expect(isNewer('0.10.0', '0.9.9')).toBe(true)
+    expect(isNewer('0.3.3', '0.3.3')).toBe(false)
+    expect(isNewer('1.0.0', '1.0.0-beta')).toBe(true)
+    expect(isNewer('e18ff5086423', 'e18ff5086422')).toBe(false)
+    expect(updatesOf([{ id: 'a@m', version: '1.0.0', installPath: '' }, { id: 'b@m', version: '2.0.0', installPath: '' }], { 'a@m': '1.1.0', 'b@m': '2.0.0' })).toEqual([
+      { id: 'a@m', from: '1.0.0', to: '1.1.0' },
+    ])
+  })
+
+  test('the latest version is read from the marketplace copy the plugin was installed from', () => {
+    expect(pluginsDirOf('/cfg/plugins/cache/claudeflow/streams/0.3.3')).toBe('/cfg/plugins')
+    expect(manifestPathOf('/cfg/plugins/marketplaces/claudeflow', { name: 'streams', source: './plugins/streams' })).toBe(
+      '/cfg/plugins/marketplaces/claudeflow/plugins/streams/.claude-plugin/plugin.json',
+    )
+    expect(manifestPathOf('/m', { name: 'x', source: './' })).toBe('/m/.claude-plugin/plugin.json')
+    expect(manifestPathOf('/m', { name: 'x', source: { source: 'url', url: 'https://x' } })).toBe(undefined)
+  })
+
+  // The point is updating without a restart, from the phone as well as the terminal: one press installs and reloads.
+  test('/streams update installs every newer plugin and reloads plugins into the session', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const ran: string[] = []
+    on('process.run', async (_$, e) => {
+      ran.push(e.argv.join(' '))
+      const stdout =
+        e.argv[2] === 'list'
+          ? JSON.stringify({
+              installed: [
+                { id: 'streams@claudeflow', version: '0.3.3', installPath: '/cfg/plugins/cache/claudeflow/streams/0.3.3' },
+                { id: 'linear@official', version: 'e18ff5086423', installPath: '/cfg/plugins/cache/official/linear/e18ff5086423' },
+              ],
+            })
+          : ''
+      return { value: { exitCode: 0, stdout, stderr: '' } } as never
+    })
+    on('fs.read', async (_$, e) => {
+      if (e.path === '/cfg/plugins/marketplaces/claudeflow/.claude-plugin/marketplace.json')
+        return { value: JSON.stringify({ plugins: [{ name: 'streams', source: './plugins/streams' }] }) }
+      if (e.path === '/cfg/plugins/marketplaces/claudeflow/plugins/streams/.claude-plugin/plugin.json') return { value: JSON.stringify({ version: '0.3.5' }) }
+      if (e.path === '/cfg/plugins/marketplaces/official/.claude-plugin/marketplace.json')
+        return { value: JSON.stringify({ plugins: [{ name: 'linear', source: './plugins/linear' }] }) }
+      return { value: JSON.stringify({ version: 'f00' }) }
+    })
+    let reloads = 0
+    on('command.run', { command: 'reload-plugins' }, async () => {
+      reloads++
+      return { text: '' }
+    })
+    const r = await $.command.run({ command: 'streams', args: 'update', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
+    expect(r.text).toBe('Updated streams@claudeflow 0.3.3 → 0.3.5.')
+    expect(ran).toContain('claude plugin update streams@claudeflow')
+    expect(ran.some(c => c.includes('linear'))).toBe(false)
+    await clock.advance(500)
+    expect(reloads).toBe(1)
+  })
+})
+
+describe('the phone', () => {
+  const PANE_PROPS = { title: 'Streams', isFocused: false, bodyColumns: 44, placement: 'inline' } as never
+  const WORK = [
+    { type: 'user', uuid: 'u1', message: { role: 'user', content: '#docs rewrite the install guide' } },
+    { type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'text', text: 'Done. Shall I open a PR for it?' }] } },
+    { type: 'user', uuid: 'u2', message: { role: 'user', content: '#billing why is the total off?' } },
+    { type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Rounding is **per line**.' }] } },
+  ].map(l => JSON.stringify(l)).join('\n')
+
+  // On a phone the person reads and answers; the accordion puts what is waiting on them first and lets them answer it in one tap.
+  test('the phone draws an accordion: a waiting stream shows its question with a yes, and a tapped card opens its chat', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.stat', async () => ({ value: { kind: 'file', size: WORK.length, mtimeMs: 0, isLink: false } }) as never)
+    on('fs.read', async () => ({ value: WORK }) as never)
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    await $.classic.UserPromptSubmit({ prompt: 'next', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(1500)
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'mobile', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+    expect(await pane.find({ key: 'm:docs' })).toBeDefined()
+    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
+
+    await pane.press({ key: 'm-yes:docs' })
+    expect(sent.at(-1)).toBe('yes')
+
+    await pane.press({ key: 'm-open:billing' })
+    const texts = (await pane.findAll({ type: 'Markdown' })).map(m => (m.props as { text: string }).text)
+    expect(texts).toEqual(['why is the total off?', 'Rounding is **per line**.'])
+    await pane.press({ key: 'm-open:billing' })
+    expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
+  })
+})
+
+describe('tickets on the status card', () => {
+  // Working tickets, the person asks "where is TL-260?": the card answers per ticket, not per topic.
+  test('ticket ids are found as trackers write them, and look-alike standards are not tickets', () => {
+    expect(ticketsIn('build TL-260 then TL-262, and re-review TL-260')).toEqual(['TL-260', 'TL-262'])
+    expect(ticketsIn('encode as UTF-8 and hash with SHA-256 per ISO-8601')).toEqual([])
+  })
+
+  test('a ticket with a running agent says what it is doing and how long it has been quiet; a finished one gives its latest news', () => {
+    const lines = ticketLines({
+      rows: [
+        { kind: 'prompt', text: 'build TL-262 and fix TL-260', at: 0, streamId: 'tickets' },
+        { kind: 'reply', text: 'Started both. The TL-262 build is committed (6cbe94f6). Reviews come next.', at: 5_000, streamId: 'tickets' },
+      ],
+      agents: [{ description: 'TL-260 lottie fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
+      streamKind: { tickets: 'done' },
+      now: 10_000 + 7 * 60_000,
+    })
+    expect(lines.map(l => [l.area, l.state, l.detail])).toEqual([
+      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools, 7m with no output)'],
+      ['TL-262', 'DONE', 'The TL-262 build is committed (6cbe94f6).'],
+    ])
+  })
+
+  test('a ticket whose agent failed after the last word on it shows as an error', () => {
+    const [line] = ticketLines({
+      rows: [{ kind: 'prompt', text: 'ship ENG-7', at: 0, streamId: 's' }],
+      agents: [{ description: 'ENG-7 deploy', status: 'error', last: '', tools: 3, lastAt: 9, endedAt: 10, streamId: 's' }],
+      streamKind: { s: 'done' },
+      now: 20,
+    })
+    expect([line?.state, line?.detail]).toEqual(['ERROR', 'ENG-7 deploy failed'])
+  })
+})
+
+describe('folding the pane to a side tab', () => {
+  const DOCK = { title: 'Streams', isFocused: false, bodyColumns: 72, placement: 'dock' } as never
+  // The pane takes room from the transcript; folding it must be one press away and give the same pane back.
+  test('hide closes the docked pane to a tab in the bar, and the tab reopens it at the width it had', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const opened: unknown[] = []
+    const closed: string[] = []
+    on('ui.open', async (_$, e) => {
+      opened.push(e)
+      return { value: { isPlaced: true } } as never
+    })
+    on('ui.close', async (_$, e) => {
+      closed.push(e.id)
+      return { value: undefined } as never
+    })
+    await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: DOCK })
+    await pane.press({ key: 'collapse' })
+    expect(closed).toEqual(['streams'])
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    expect(await bar.find({ key: 'pane' })).toBe(undefined)
+    await bar.press({ key: 'tab' })
+    expect(opened.at(-1)).toMatchObject({ id: 'streams', columns: 72 })
+    expect(await bar.find({ key: 'tab' })).toBe(undefined)
+  })
+})
+
+describe('plan limits on the status card', () => {
+  // Read at a glance: how much is used, how long until it resets, and on which day, since a date alone needs a calendar.
+  test('a limit shows its percent as a bar, the time to reset in two units, and the weekday it resets', () => {
+    const now = Date.parse('2026-10-08T12:00:00Z')
+    const v = limitView({ kind: 'seven_day', percentUsed: 71.4, resetsAt: '2026-10-11T12:00:00Z' }, now)
+    expect([v.label, v.percent, v.bar, v.resetsIn]).toEqual(['week', 71, '▰▰▰▰▰▰▰▱▱▱', '3d 0h'])
+    expect(v.resetsAt.startsWith('Sun')).toBe(true)
+    expect(untilOf(2 * 3600_000 + 14 * 60_000)).toBe('2h 14m')
+    expect(untilOf(9 * 60_000)).toBe('9m')
+  })
+
+  test('the card ends with each limit, and its fixed columns never shrink, so every row lines up', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    on('session.usage', async () => ({ value: { startedAt: 0, rateLimits: [{ kind: 'five_hour', percentUsed: 38, resetsAt: '2030-01-01T00:00:00Z' }, { kind: 'seven_day', percentUsed: 85 }] } }) as never)
+    await $.prompt.submit({ text: '#billing a very long question that runs on and on so that its detail would squeeze the columns beside it', wait: false, origin: { kind: 'composer' } })
+    await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 80, hasSurvey: false } as never })
+    expect(await bar.find({ key: 'limit:5h' })).toBeDefined()
+    expect(await bar.find({ key: 'limit:week' })).toBeDefined()
+    const fixed = (await bar.findAll({ type: 'Box' })).filter(b => typeof (b.props as { width?: number }).width === 'number')
+    expect(fixed.length).toBeGreaterThan(4)
+    expect(fixed.every(b => (b.props as { flexShrink?: number }).flexShrink === 0)).toBe(true)
+  })
+})
+
+describe('closing the status card', () => {
+  // The prompt's arrows stay the prompt's (history), and the card closes when the person's focus leaves it.
+  test('arrows in the prompt are left to the prompt, and the card closes when focus leaves it', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    let history = 0
+    on('prompt.edit', async (_$, e) => {
+      history++
+      return { text: e.text, cursor: e.cursor }
+    })
+    on('ui.focus', async () => ({ value: {} }) as never)
+    await $.prompt.submit({ text: '#billing why is the total off?', wait: false, origin: { kind: 'composer' } })
+    await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 100, hasSurvey: false } as never })
+    const edit = ($.prompt as unknown as { edit: (e: unknown) => Promise<{ text: string }> }).edit
+    await edit({ origin: { kind: 'composer' }, key: { key: 'up' }, text: '', cursor: 0, start: 0, end: 0, inputText: '' } as never)
+    expect(history).toBe(1)
+    expect(await bar.find({ key: 'status-close' })).toBeDefined()
+    const ui = $.ui as unknown as { focus: (e: unknown) => Promise<unknown> }
+    await ui.focus({ component: 'AbovePrompt', requestId: 'band', origin: { kind: 'person' } }).catch(() => {})
+    expect(await bar.find({ key: 'status-close' })).toBe(undefined)
+  })
+})
+
+describe('status asked from the phone', () => {
+  // Remote Control relays the chat; when the app draws no plugin UI, a dropped prompt would answer nothing.
+  test('a typed status from a phone that draws no plugin UI goes to Claude instead of opening an unseen card', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.surfaces', async () => ({ value: ['terminal'] }) as never)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'bridge' } as never })
+    expect(r.drop).toBe(undefined)
+    expect(sent).toEqual(['status?'])
   })
 })

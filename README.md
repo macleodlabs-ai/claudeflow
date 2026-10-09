@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.3" src="https://img.shields.io/badge/version-0.3.3-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.4" src="https://img.shields.io/badge/version-0.3.4-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 59 passing" src="https://img.shields.io/badge/tests-59%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 74 passing" src="https://img.shields.io/badge/tests-74%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -96,12 +96,41 @@ Hide finished streams with `✕` and bring them back later. Fold any stream to i
 </tr>
 </table>
 
+### 📋 Status card
+
+Type `status`, or press `status` in the bar, and a card opens above the prompt with every piece of work in the session and where it stands. It is answered locally, so it costs no model call and works while a turn is running.
+
+![The status card above the prompt: git branch and uncommitted files, then each stream as running, waiting for you, done or idle, with what it is doing](assets/status-card.jpg)
+
+- **What needs you comes first**: running work, then loops, then streams **waiting for you** (their last reply ended on a question, shown as the detail), then failures, then finished work.
+- **Git rows on top**: the branch, whether anything is unpushed, and which files are uncommitted.
+- **Tickets**: any ticket id you name in a prompt or an agent's task (`TL-260`, `ENG-1042`) gets its own row: running agents on it say what they are doing and how long they have been quiet; otherwise its latest news, or that its agent failed.
+- **Plan limits at the bottom**: each window (5-hour, week) as a bar and percent, green, then yellow from 50%, red from 80%, with how long until it resets and the weekday and time it does.
+- **Click a stream's name** to open it in the pane. `✕ close` (top right) or your next prompt hides the card.
+- **Scroll a long card** with the wheel, or press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to move focus to it: then <kbd>↑</kbd> <kbd>↓</kbd> scroll and <kbd>q</kbd> closes it, without touching Claude's turn.
+- **On your phone** the card opens at the top of the streams accordion (its `status` button, or type `status`) and scrolls by touch.
+
+### 📱 On your phone
+
+Driving Claude Code from the Claude app over Remote Control? When your phone connects, streams opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
+
+<p align="center"><img src="assets/phone.jpg" width="640" alt="The streams accordion on a phone: running, waiting, done and idle cards; a tapped card shows live agents, markdown replies and a coloured diff"></p>
+
+- **A stream waiting on you** shows Claude's question with a **yes** button: one tap answers it, filed in that stream.
+- **Tap a card** to open it: its live agents, then its chat with markdown, highlighted commands and coloured diffs. Tap again to close it.
+- **⬆ update** appears here too, so you can update without going back to the Mac.
+
+### 🔄 Updates without a restart
+
+Once a session starts, and every six hours after, streams checks every plugin you have installed against its marketplace. When one has a newer release, an **⬆ update** button appears in the bar, the pane and on your phone, and a toast says so. Pressing it (or <kbd>u</kbd>, or `/streams update`) installs the updates on your Mac and reloads plugins into the running session: no restart.
+
 ### Status at a glance
 
 | Colour | Status | Meaning |
 | :---: | --- | --- |
 | 🟨 | **RUNNING** | A turn, subagent or loop is working now |
 | 🟩 | **DONE** | Finished cleanly |
+| 🟦 | **WAITING FOR YOU** | On the status card: the stream's last reply asked you something |
 | 🟥 | **ERROR** | A subagent or turn failed |
 | 🟧 | **STALLED** | No activity for longer than expected |
 | ↻ | **LOOP** | A `/loop` or cron is armed, with a countdown to the next tick. A loop that stops, or lapses 10 minutes without re-arming, drops back to its stream's status |
@@ -164,7 +193,10 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 | Command | What it does |
 | --- | --- |
+| `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
+| `/streams status` | Same as typing `status` |
+| `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
 | `/stream move <name>` | Refile the last prompt, and everything after it, under another stream (created if new) when it was sorted wrongly |
@@ -176,13 +208,15 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 | To | Do |
 | --- | --- |
+| See the status of all work | Press `status` in the bar (<kbd>t</kbd> when the bar has focus), or type `status`. Click a stream's name on the card to open it; `✕ close` or your next prompt hides it |
 | Focus a stream | Click its name in the pane, or press its pill |
 | Show everything | `← all streams`, or the `all` pill |
 | File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` Type `#` and the bar lists matching streams; <kbd>tab</kbd> completes the first |
 | Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
-| Compact a stream's chat | A stream's view draws its chat as the session does, with markdown, syntax-highlighted code and diffs. `≡ compact` switches to one line per row; `▤ full` switches back |
+| Fold the pane away | `⇥ hide` (<kbd>h</kbd>) folds the docked pane to a `◂ streams` tab at the right of the bar; the tab (<kbd>s</kbd>) brings it back at the width it had. It stays folded in new sessions until you open it |
+| Switch a stream's chat view | The stream header shows `view ◉ full ○ compact`: full draws the chat as the session does, with markdown, syntax-highlighted code and diffs; compact is one line per row. Click either, or press <kbd>v</kbd> in the pane |
 
 ### Keyboard
 
@@ -213,7 +247,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Setting | Default | Description |
 | --- | :---: | --- |
-| `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `≡ compact` / `▤ full` button switches it for the session. |
+| `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `view` switch in a stream's header changes it for the session. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 
 ### Model use
