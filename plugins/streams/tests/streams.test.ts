@@ -871,12 +871,11 @@ describe('plugin updates', () => {
       ran.push(e.argv.join(' '))
       const stdout =
         e.argv[2] === 'list'
-          ? JSON.stringify({
-              installed: [
-                { id: 'streams@claudeflow', version: '0.3.3', installPath: '/cfg/plugins/cache/claudeflow/streams/0.3.3' },
-                { id: 'linear@official', version: 'e18ff5086423', installPath: '/cfg/plugins/cache/official/linear/e18ff5086423' },
-              ],
-            })
+          ? // The CLI's real shape: a bare list of installed plugins.
+            JSON.stringify([
+              { id: 'streams@claudeflow', version: '0.3.3', installPath: '/cfg/plugins/cache/claudeflow/streams/0.3.3' },
+              { id: 'linear@official', version: 'e18ff5086423', installPath: '/cfg/plugins/cache/official/linear/e18ff5086423' },
+            ])
           : ''
       return { value: { exitCode: 0, stdout, stderr: '' } } as never
     })

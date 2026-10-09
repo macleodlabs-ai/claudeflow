@@ -841,7 +841,9 @@ async function checkUpdates($: $, force = false): Promise<Update[]> {
     await $.store.set(UPDATE_CHECK_KEY, now)
   }
   const listed = await run(['claude', 'plugin', 'list', '--json'])
-  const installed = ((JSON.parse(listed.stdout || '{}') as { installed?: Installed[] }).installed ?? []).filter(p => p.id.includes('@'))
+  // `plugin list --json` is a bare list; with `--available` it is `{ installed, available }`.
+  const parsed = JSON.parse(listed.stdout || '[]') as Installed[] | { installed?: Installed[] }
+  const installed = (Array.isArray(parsed) ? parsed : (parsed.installed ?? [])).filter(p => p.id.includes('@'))
   const readJson = async (path: string): Promise<unknown> => JSON.parse(String(await $.fs.read(path)))
   const markets = new Map<string, MarketEntry[]>()
   const latest: Record<string, string | undefined> = {}
