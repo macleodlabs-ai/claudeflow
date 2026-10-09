@@ -951,7 +951,7 @@ async function ensureBridge($: $): Promise<{ ok: boolean; said: string; home: st
 }
 
 /** Serves the bridge over Tailscale (HTTPS, your devices only) when Tailscale is signed in; says how it stands. */
-async function ensureTailnet($: $): Promise<{ url?: string; said: string }> {
+async function ensureTailnet($: $, home: string): Promise<{ url?: string; said: string }> {
   for (const bin of TAILSCALE_BINS) {
     const s = await run($, [bin, 'status', '--json'])
     if (s.exitCode !== 0 && !s.stdout) continue
@@ -959,6 +959,8 @@ async function ensureTailnet($: $): Promise<{ url?: string; said: string }> {
     if (!host) return { said: 'installed but signed out: open the Tailscale app and sign in, then run `/streams phone` again' }
     const served = await run($, [bin, 'serve', '--bg', String(BRIDGE_PORT)], 20_000)
     if (served.exitCode !== 0) return { said: `could not serve the bridge: ${oneLine(served.stderr || served.stdout, 200)}` }
+    // The bridge's pairing page reads it here: under launchd it cannot ask the Tailscale app itself.
+    await $.fs.write(`${home}/.claudeflow/phone-url`, `https://${host}\n`)
     return { url: `https://${host}`, said: `serving at https://${host}` }
   }
   return { said: 'not installed: run `! brew install --cask tailscale-app`, open Tailscale and sign in (on your phone too), then `/streams phone`' }
@@ -1075,7 +1077,7 @@ export const register: Register = (on, options) => {
     if (verb === 'phone') {
       const bridge = await ensureBridge($)
       phoneRetryAt = 0
-      const tailnet = bridge.ok ? await ensureTailnet($) : { said: 'waits for the bridge' }
+      const tailnet = bridge.ok ? await ensureTailnet($, bridge.home) : { said: 'waits for the bridge' }
       const lines = [`Phone bridge: ${bridge.said}.`, `Tailscale: ${tailnet.said}.`]
       if (bridge.ok) {
         // The pairing page opens on this Mac, already paired, and shows the phone's link as a QR code.

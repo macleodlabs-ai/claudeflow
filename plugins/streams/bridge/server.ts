@@ -49,8 +49,15 @@ const isPaired = (req: Request) => isSame(cookieOf(req), TOKEN) || isSame((req.h
 
 const APP = readFileSync(join(import.meta.dir, 'app.html'), 'utf8')
 
-/** This Mac's tailnet name while Tailscale is signed in: the address the phone opens. */
+/**
+ * This Mac's tailnet name: the address the phone opens. `/streams phone` records it when it serves the bridge,
+ * because the Tailscale app's command line does not answer a process launchd started.
+ */
 function tailnetHost(): string | undefined {
+  try {
+    const recorded = new URL(readFileSync(join(DIR, 'phone-url'), 'utf8').trim()).host
+    if (recorded) return recorded
+  } catch {}
   for (const bin of ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', 'tailscale']) {
     try {
       const r = Bun.spawnSync([bin, 'status', '--json'])
