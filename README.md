@@ -5,31 +5,31 @@
 <h1>claudeflow</h1>
 
 <p>
-  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-22d3ee?style=for-the-badge"></a>
-  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 154 passing" src="https://img.shields.io/badge/tests-154%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-5fe4f2?style=for-the-badge"></a>
+  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
+  <img alt="Tests 159 passing" src="https://img.shields.io/badge/tests-159%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
-  <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
+  <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
 </p>
 <p>
   <a href="#-install"><img alt="Installs" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmacleodlabs-ai%2Fclaudeflow%2Fstats%2Finstalls.json&style=for-the-badge&logo=download&logoColor=white"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=fcc2d7&label=stars"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ffd8a8"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/watchers"><img alt="Watchers" src="https://img.shields.io/github/watchers/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=b2f2bb"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ff94d1&label=stars"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ffb88a"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/watchers"><img alt="Watchers" src="https://img.shields.io/github/watchers/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=6ff0c0"></a>
 </p>
 <p>
-  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-a78bfa?style=flat-square">
-  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-34d399?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-b9a2ff?style=flat-square">
+  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-6ff0c0?style=flat-square&logo=apple&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-febc2e?style=flat-square">
-  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffd8a8"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8b90c4"></a>
-  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-12164a?style=flat-square"></a>
+  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-f2d6a2?style=flat-square">
+  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffb88a"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8a90c8"></a>
+  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-1a2050?style=flat-square"></a>
 </p>
 <p>
-  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff7b72?style=for-the-badge&labelColor=12164a"></a>
+  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff94d1?style=for-the-badge&labelColor=070a1f"></a>
 </p>
 
 <p>
@@ -338,10 +338,10 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | --- | --- | --- |
 | The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (124 tests) and `claude plugin validate --strict .` |
 | The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (9 tests against a real `wrangler dev`) |
-| The phone and tablet app | `app` | `bun test` (21 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
+| The phone and tablet app | `app` | `bun test` (26 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
 | Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (12 checks) |
 
-`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing, unlocking, answering and allowing. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol.
+`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing, unlocking, answering and allowing. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
 
 ---
 

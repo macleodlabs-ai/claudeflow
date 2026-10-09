@@ -22,6 +22,6 @@ export function usageBar(x: Snapshot, isOpen: boolean, now: number): string {
     )
     .join('')
   return `<div class="usage" data-usage role="button" aria-expanded="${isOpen}" tabindex="0">
-    <div class="usage-row"><span class="meta">Plan usage</span>${row}<span class="grow"></span><span class="chev">${isOpen ? '▾' : '▴'}</span></div>
+    <div class="usage-row"><span class="meta">Plan usage</span>${row}<span class="grow"></span><span class="chev" aria-hidden="true">▸</span></div>
     ${isOpen ? `<div class="more">${more}</div>` : ''}</div>`
 }

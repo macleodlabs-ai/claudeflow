@@ -39,7 +39,7 @@ let pendingRender = false
 
 function dispatch(a: Action) {
   state = reduce(state, a)
-  if (a.type === 'choose' || a.type === 'view' || a.type === 'toggle' || a.type === 'reveal' || a.type === 'usage')
+  if (a.type === 'choose' || a.type === 'view' || a.type === 'toggle' || a.type === 'reveal' || a.type === 'select' || a.type === 'usage')
     keep.set('cf:ui', { chosen: state.chosen, view: state.view, open: state.open, isUsageOpen: state.isUsageOpen })
 }
 
@@ -63,6 +63,11 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
 const linkOf = (room: string) => links.find(l => l.room() === room)
 
 const el = (id: string) => document.getElementById(id)!
+/** From 820 px the Streams view is a list and a detail pane (styles.css uses the same breakpoint). */
+const wide = matchMedia('(min-width: 820px)')
+wide.addEventListener?.('change', () => render())
+const side = matchMedia('(min-width: 1280px)')
+side.addEventListener?.('change', () => render())
 
 function render() {
   // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
@@ -72,7 +77,10 @@ function render() {
   }
   pendingRender = false
   const now = Date.now()
-  el('conn').classList.toggle('on', links.some(l => l.isOpen()))
+  const isOnline = links.some(l => l.isOpen())
+  el('conn').classList.toggle('on', isOnline)
+  const connText = isOnline ? 'Connected' : 'Reconnecting…'
+  if (el('conn').textContent !== connText) el('conn').textContent = connText
   const views: GateView[] = links.map(l => ({
     room: l.room(),
     gate: gateOf(l.pairing(), l.isUnlocked()),
@@ -84,7 +92,10 @@ function render() {
   }))
   el('gate').innerHTML = links.length ? gates(views) : unpaired()
   el('tabs').innerHTML = tabs(state, now)
-  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'))
+  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches)
+  // On a Mac the sidebar holds plan usage right under the session tabs.
+  const usage = el('main').querySelector('.usage')
+  if (usage && side.matches) el('tabs').append(usage)
   const hasUsage = !!currentOf(state, now)?.snapshot.limits?.length
   document.body.classList.toggle('has-usage', hasUsage)
   document.body.classList.toggle('usage-open', hasUsage && state.isUsageOpen)
@@ -162,6 +173,21 @@ document.addEventListener('click', async e => {
   if (tab) return dispatch({ type: 'choose', key: tab.dataset.session! }), render()
   const head = at('[data-toggle]')
   if (head) return dispatch({ type: 'toggle', key: head.dataset.toggle! }), render()
+  const pick = at('[data-select]')
+  if (pick) return dispatch({ type: 'select', key: pick.dataset.select! }), render()
+})
+
+// Card heads and the usage bar are role="button": Enter and Space work them from a keyboard, as on a button.
+document.addEventListener('keydown', e => {
+  const t = e.target as HTMLElement
+  if ((e.key === 'Enter' || e.key === ' ') && t.matches?.('[role="button"]:not(button)')) {
+    e.preventDefault()
+    // The redraw replaces the element: put focus back on its replacement so the keyboard keeps its place.
+    const attr = ['data-toggle', 'data-select', 'data-usage'].find(a => t.hasAttribute(a))
+    const sel = attr && `[${attr}="${CSS.escape(t.getAttribute(attr) ?? '')}"]`
+    t.click()
+    if (sel) document.querySelector<HTMLElement>(sel)?.focus()
+  }
 })
 
 // Clocks and permission countdowns move between snapshots: every second while a prompt counts down, else every 10 s.
