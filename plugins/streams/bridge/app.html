@@ -69,6 +69,20 @@
   .bar { height: 8px; border-radius: 4px; background: #262c36; overflow: hidden; }
   .bar > i { display: block; height: 100%; border-radius: 4px; }
   .empty { color: var(--dim); text-align: center; padding: 40px 0; }
+  .btn { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 9px 14px; color: #111; background: var(--fg); }
+  .btn.yes, .btn.allow { background: var(--done); color: #fff; }
+  .btn.deny, .btn.stop { background: var(--error); color: #fff; }
+  .btn.ghost { background: none; color: var(--fg); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .5; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .reply { display: flex; gap: 8px; margin-top: 10px; }
+  .reply textarea { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--fg); background: #0d1117; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; resize: none; }
+  .perm { background: #2a1f00; border: 1px solid var(--running); border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+  .perm .what { font: 13px/1.4 ui-monospace, Menlo, monospace; word-break: break-word; margin: 6px 0 0; }
+  .perm-head { display: flex; align-items: baseline; gap: 10px; }
+  .perm .left { color: var(--dim); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  .sent { color: var(--done); font-size: 13px; }
+  .session-bar { display: flex; align-items: center; gap: 10px; margin: -2px 0 10px; }
   .stale-note { color: var(--stalled); font-size: 12px; margin: -4px 0 10px; }
 </style>
 </head>
@@ -86,6 +100,10 @@ const keep = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} },
 }
 let sessions = []
+const drafts = {}
+let pendingRender = false
+const sentAt = {}
+let stopArmed = 0
 let chosen = keep.get('cf:session', '')
 const open = new Set(keep.get('cf:open', []))
 
@@ -122,9 +140,27 @@ function card(s, now) {
       <span class="badge bg-${s.kind} k-${s.kind}">${s.kind === 'waiting' ? 'waiting' : esc(s.state)}</span>
       <span class="chev">${isOpen ? '▾' : '▸'}</span>
     </div>
-    ${s.question ? `<div class="question">${esc(s.question)}</div>` : ''}
-    <div class="body">${agents}${rows || '<div class="row reply">Nothing filed yet.</div>'}</div>
+    ${s.question ? `<div class="question">${esc(s.question)}
+      <div class="actions"><button class="btn yes" data-answer="${esc(s.id)}" data-text="yes">Yes</button>
+      <button class="btn ghost" data-reply-open="${esc(s.id)}">Reply…</button>${sentNote(s.id)}</div></div>` : ''}
+    <div class="body">${agents}${rows || '<div class="row reply">Nothing filed yet.</div>'}${replyBox(s.id)}</div>
   </section>`
+}
+
+/** The reply box under an opened card (or a waiting one whose Reply was tapped), its draft kept across redraws. */
+function replyBox(id) {
+  return `<div class="reply"><textarea rows="2" placeholder="Reply in this stream…" data-draft="${esc(id)}">${esc(drafts[id] ?? '')}</textarea>
+    <button class="btn" data-send="${esc(id)}">Send</button></div>`
+}
+const sentNote = id => (sentAt[id] && Date.now() - sentAt[id] < 8000 ? '<span class="sent">✓ sent</span>' : '')
+
+/** Permission prompts the session holds for this phone: allow or deny, with the time left before the Mac asks instead. */
+function permBlock(x) {
+  return (x.permissions ?? []).map(p => `
+    <div class="perm"><div class="perm-head"><b>Claude wants to run ${esc(p.tool)}</b><span class="left">${Math.max(0, Math.round((p.at + 60000 - Date.now()) / 1000))}s left</span></div>
+      <div class="what">${esc(p.summary)}</div>
+      <div class="actions"><button class="btn allow" data-perm="${esc(p.id)}" data-decision="allow">Allow</button>
+      <button class="btn deny" data-perm="${esc(p.id)}" data-decision="deny">Deny</button></div></div>`).join('')
 }
 
 function statusBlock(x) {
@@ -142,6 +178,9 @@ function statusBlock(x) {
 }
 
 function render() {
+  // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
+  if (document.activeElement?.matches?.('textarea')) { pendingRender = true; return }
+  pendingRender = false
   const tabs = document.getElementById('tabs')
   const main = document.getElementById('main')
   if (!sessions.length) {
@@ -158,13 +197,69 @@ function render() {
   const counts = ['waiting', 'running', 'loop', 'error', 'stalled', 'done']
     .map(k => [k, x.streams.filter(s => s.kind === k).length]).filter(([, n]) => n)
   main.innerHTML = `
+    ${x.session.busy && !x.isStale ? `<div class="session-bar"><span class="meta">Claude is working</span><span class="grow"></span>
+      <button class="btn stop" data-stop>${Date.now() - stopArmed < 4000 ? 'Tap again to stop' : '■ Stop'}</button></div>` : ''}
+    ${permBlock(x)}
     ${x.isStale ? `<p class="stale-note">Not heard from for ${ago(Date.now(), x.seen)}: the session may have ended.</p>` : ''}
     <div class="chips">${counts.map(([k, n]) => `<span class="chip bg-${k} k-${k}">${GLYPH[k]} ${n} ${k}</span>`).join('')}</div>
     ${x.streams.length ? x.streams.map(s => card(s, x.at)).join('') : '<p class="empty">Streams appear as you prompt.</p>'}
     ${statusBlock(x)}`
 }
 
-document.addEventListener('click', e => {
+const current = () => sessions.find(s => s.session.id === chosen) ?? sessions[0]
+
+/** Sends the session one command through the bridge; the page shows it was sent, the stream shows what came of it. */
+async function send(command) {
+  const x = current()
+  if (!x) return false
+  const r = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session: x.session.id, ...command }) }).catch(() => undefined)
+  return !!r?.ok
+}
+
+document.addEventListener('input', e => {
+  const d = e.target.closest?.('[data-draft]')
+  if (d) drafts[d.dataset.draft] = d.value
+})
+document.addEventListener('focusout', () => setTimeout(() => { if (pendingRender) render() }, 0))
+
+document.addEventListener('click', async e => {
+  const answer = e.target.closest('[data-answer]')
+  if (answer) {
+    answer.disabled = true
+    if (await send({ kind: 'answer', streamId: answer.dataset.answer, text: answer.dataset.text })) sentAt[answer.dataset.answer] = Date.now()
+    render()
+    return
+  }
+  const sendBtn = e.target.closest('[data-send]')
+  if (sendBtn) {
+    const id = sendBtn.dataset.send
+    const text = (drafts[id] ?? '').trim()
+    if (!text) return
+    sendBtn.disabled = true
+    if (await send({ kind: 'answer', streamId: id, text })) { sentAt[id] = Date.now(); drafts[id] = '' }
+    document.activeElement?.blur?.()
+    render()
+    return
+  }
+  const replyOpen = e.target.closest('[data-reply-open]')
+  if (replyOpen) {
+    open.add(replyOpen.dataset.replyOpen)
+    render()
+    document.querySelector(`[data-draft="${CSS.escape(replyOpen.dataset.replyOpen)}"]`)?.focus()
+    return
+  }
+  const perm = e.target.closest('[data-perm]')
+  if (perm) {
+    perm.parentElement.querySelectorAll('button').forEach(b => (b.disabled = true))
+    await send({ kind: 'permission', requestId: perm.dataset.perm, decision: perm.dataset.decision })
+    return
+  }
+  if (e.target.closest('[data-stop]')) {
+    // Two taps, no dialog: a stray touch does not stop a turn.
+    if (Date.now() - stopArmed < 4000) { stopArmed = 0; await send({ kind: 'stop' }) } else stopArmed = Date.now()
+    render()
+    return
+  }
   const tab = e.target.closest('[data-session]')
   if (tab) { chosen = tab.dataset.session; keep.set('cf:session', chosen); render() }
   const head = e.target.closest('[data-toggle]')
@@ -179,7 +274,11 @@ document.addEventListener('click', e => {
 function connect() {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`)
   const dot = document.getElementById('conn')
-  ws.onopen = () => dot.classList.add('on')
+  const seen = () => { if (document.visibilityState === 'visible' && ws.readyState === 1) ws.send('{"type":"visible"}') }
+  ws.onopen = () => { dot.classList.add('on'); seen() }
+  clearInterval(window.seenTimer)
+  window.seenTimer = setInterval(seen, 10000)
+  document.addEventListener('visibilitychange', seen)
   ws.onmessage = m => {
     const msg = JSON.parse(m.data)
     if (msg.type === 'sessions') { sessions = msg.sessions; render() }
