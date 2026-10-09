@@ -790,24 +790,11 @@ async function ticketStatus($: $, streamLines: readonly StatusLine[], now: numbe
   })
 }
 
-/** The status card's rows top to bottom by key, and the band they are drawn in: what ↑ and ↓ move through. */
-let statusKeys: string[] = []
-let statusBand = ''
-let statusTop = 0
-
-/** Moves the status card one row up or down in the band's window. */
-async function scrollStatus($: $, by: number) {
-  statusTop = Math.max(0, Math.min(statusKeys.length - 1, statusTop + by))
-  const key = statusKeys[statusTop]
-  if (key && statusBand) await $.ui.scroll({ in: statusBand, to: { key }, block: 'start' }).catch(() => {})
-}
-
 /** A typed `status` or `status?` is a request for the card, answered here without a model turn. */
 const STATUS_ASK = /^\s*status\s*\??\s*$/i
 
 /** Shows the status card above the prompt, its git rows read now; the stream rows stay live as it shows. */
 async function openStatus($: $, band = '') {
-  statusTop = 0
   await update($, statusOpenA, () => true)
   // Opened from the bar, the band holds the keys: its ring goes to the card, so ↑↓ scroll it and Esc closes it.
   if (band) void $.ui.focus({ requestId: band, key: 'status-close' }).catch(() => {})
@@ -963,9 +950,12 @@ export const register: Register = (on, options) => {
       await checkUpdates($, true)
       return { text: await applyUpdates($) }
     }
-    await $.ui.open({ id: PANE, title: 'Streams', focus: true })
+    await update($, paneCollapsedA, () => false)
+    const opened = await $.ui.open({ id: PANE, title: 'Streams', focus: true })
     await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})
-    return { text: 'Streams navigator opened. `/streams import` files a past session of this project into streams.' }
+    const surfaces = await $.session.surfaces().catch(() => [] as const)
+    const where = `Attached: ${surfaces.join(', ') || 'none reported'}. Pane ${opened.isPlaced ? 'drawn' : `waiting: ${opened.reason}`}.`
+    return { text: `Streams navigator opened. ${where} \`/streams import\` files a past session of this project into streams.` }
   })
 
   on('command.run', { command: 'stream' }, async ($, e) => {
@@ -1116,13 +1106,6 @@ export const register: Register = (on, options) => {
   // and a tag naming a known stream is painted in that stream's colour.
   on('prompt.edit', async ($, e, next) => {
     const streams = await read($, streamsA)
-    // With the status card up and nothing typed, ↑ and ↓ scroll the card and Esc closes it.
-    const k = e.key?.key
-    if ((k === 'up' || k === 'down' || k === 'escape') && !e.text.trim() && (await read($, statusOpenA))) {
-      if (k === 'escape') await update($, statusOpenA, () => false)
-      else await scrollStatus($, k === 'down' ? 1 : -1)
-      return { text: e.text, cursor: e.cursor }
-    }
     const typing = partialTag(e.text, e.cursor)
     if (e.key?.key === 'tab' && !e.key.shift && typing !== undefined) {
       const [first] = tagMatches(streams, typing)
@@ -1172,7 +1155,6 @@ export const register: Register = (on, options) => {
     }
     if (!e.props.hasSurvey && e.surface !== 'mobile' && (await read($, statusOpenA))) {
       const { Box, Button, Text } = $.ui.resolve(e)
-      statusBand = e.requestId
       await read($, tickA)
       const now = await $.clock.now()
       const git: StatusLine[] = await read($, statusGitA)
@@ -1186,15 +1168,6 @@ export const register: Register = (on, options) => {
       // 16: room for a limit's bar and percent (`▰▰▰▰▱▱▱▱▱▱ 38%`).
       const stateW = Math.min(28, Math.max(limits.length ? 16 : 8, ...shown.map(l => l.state.length + 2)))
       const close = () => update($, statusOpenA, () => false)
-      statusKeys = [
-        'st-title',
-        'st-head',
-        ...shown.flatMap((l, i) => {
-          const headed = tickets.length && (l.id.startsWith('ticket:') ? i === git.length : i === git.length + tickets.length)
-          return headed ? [`st-h:${l.id}`, `st:${l.id}`] : [`st:${l.id}`]
-        }),
-        ...limits.map(l => `limit:${l.label}`),
-      ]
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="#8b949e" paddingX={1}>
           <Box key="st-title" gap={1}>
@@ -1202,8 +1175,7 @@ export const register: Register = (on, options) => {
             <Text dimColor>
               {streams.filter(s => !s.archived).length} streams · {new Date(now).toTimeString().slice(0, 5)}
             </Text>
-            {lines.length + limits.length > Math.max(4, e.props.maxRows - 4) ? <Text dimColor>· ↑↓ scroll</Text> : null}
-            <Text dimColor>· esc</Text>
+            <Text dimColor>· ctrl+x tab, then ↑↓ scroll · esc close</Text>
             <Box flexGrow={1} />
             <Button key="status-close" plain dimColor label="✕ close" onPress={close} />
           </Box>

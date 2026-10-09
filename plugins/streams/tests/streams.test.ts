@@ -1041,9 +1041,9 @@ describe('plan limits on the status card', () => {
   })
 })
 
-describe('scrolling and closing the status card', () => {
-  // The card can outgrow the band; it must be readable to the end and closed without reaching for the mouse.
-  test('with the card up and nothing typed, arrows scroll it instead of recalling history, and Esc closes it', ENGINE, async ($, on) => {
+describe('closing the status card', () => {
+  // The prompt's arrows stay the prompt's (history), and the card closes when the person's focus leaves it.
+  test('arrows in the prompt are left to the prompt, and the card closes when focus leaves it', ENGINE, async ($, on) => {
     mock.clock(on)
     mock.store(on)
     watchStatus(on)
@@ -1055,18 +1055,16 @@ describe('scrolling and closing the status card', () => {
       history++
       return { text: e.text, cursor: e.cursor }
     })
+    on('ui.focus', async () => ({ value: {} }) as never)
     await $.prompt.submit({ text: '#billing why is the total off?', wait: false, origin: { kind: 'composer' } })
     await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
     const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 100, hasSurvey: false } as never })
     const edit = ($.prompt as unknown as { edit: (e: unknown) => Promise<{ text: string }> }).edit
-    await edit({ origin: { kind: 'composer' }, key: { key: 'down' }, text: '', cursor: 0, start: 0, end: 0, inputText: '' } as never)
-    // The kit has no band to scroll, so what is held here is that the arrow was the card's, not the history's.
-    expect(history).toBe(0)
-    expect(await bar.find({ key: 'status-close' })).toBeDefined()
-    await edit({ origin: { kind: 'composer' }, key: { key: 'escape' }, text: '', cursor: 0, start: 0, end: 0, inputText: '' } as never)
-    expect(await bar.find({ key: 'status-close' })).toBe(undefined)
-    // With text in the box the arrows are the person's again.
-    await edit({ origin: { kind: 'composer' }, key: { key: 'up' }, text: 'draft', cursor: 5, start: 5, end: 5, inputText: '' } as never)
+    await edit({ origin: { kind: 'composer' }, key: { key: 'up' }, text: '', cursor: 0, start: 0, end: 0, inputText: '' } as never)
     expect(history).toBe(1)
+    expect(await bar.find({ key: 'status-close' })).toBeDefined()
+    const ui = $.ui as unknown as { focus: (e: unknown) => Promise<unknown> }
+    await ui.focus({ component: 'AbovePrompt', requestId: 'band', origin: { kind: 'person' } }).catch(() => {})
+    expect(await bar.find({ key: 'status-close' })).toBe(undefined)
   })
 })
