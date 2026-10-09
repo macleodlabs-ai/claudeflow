@@ -917,8 +917,8 @@ async function phoneSessionOf($: $, cwd: string): Promise<Snapshot['session']> {
   return { id, account: accountOf(configDir), project: cwd.split('/').pop() || cwd, busy: false }
 }
 
-const run = ($: $, argv: string[], timeoutMs = 10_000) =>
-  $.process.run(argv, { timeoutMs }).catch(err => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+/** A command that could not start, read as one that failed: setup reports it instead of throwing. */
+const failed = (err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) })
 
 /**
  * Puts the phone bridge where launchd runs it at login (`~/.claudeflow/bridge`) and starts it, when it is
@@ -926,9 +926,9 @@ const run = ($: $, argv: string[], timeoutMs = 10_000) =>
  */
 async function ensureBridge($: $): Promise<{ ok: boolean; said: string; home: string }> {
   const [home, uid, bun] = await Promise.all([
-    run($, ['/usr/bin/printenv', 'HOME']).then(r => r.stdout.trim()),
-    run($, ['/usr/bin/id', '-u']).then(r => r.stdout.trim()),
-    run($, ['/bin/sh', '-c', 'command -v bun']).then(r => r.stdout.trim()),
+    $.process.run(['/usr/bin/printenv', 'HOME'], { timeoutMs: 10_000 }).catch(failed).then(r => r.stdout.trim()),
+    $.process.run(['/usr/bin/id', '-u'], { timeoutMs: 10_000 }).catch(failed).then(r => r.stdout.trim()),
+    $.process.run(['/bin/sh', '-c', 'command -v bun'], { timeoutMs: 10_000 }).catch(failed).then(r => r.stdout.trim()),
   ])
   if (!home || !uid) return { ok: false, said: 'could not find your home folder', home }
   if (!bun) return { ok: false, said: 'needs Bun: install it from https://bun.sh, then run `/streams phone`', home }
@@ -942,9 +942,9 @@ async function ensureBridge($: $): Promise<{ ok: boolean; said: string; home: st
       isChanged = true
     }
   }
-  const isRunning = (await run($, ['/bin/launchctl', 'print', `gui/${uid}/${BRIDGE_LABEL}`])).exitCode === 0
+  const isRunning = (await $.process.run(['/bin/launchctl', 'print', `gui/${uid}/${BRIDGE_LABEL}`], { timeoutMs: 10_000 }).catch(failed)).exitCode === 0
   if (!isChanged && isRunning) return { ok: true, said: 'running', home }
-  const r = await run($, ['/bin/sh', `${dir}/install.sh`], 30_000)
+  const r = await $.process.run(['/bin/sh', `${dir}/install.sh`], { timeoutMs: 30_000 }).catch(failed)
   return r.exitCode === 0
     ? { ok: true, said: isRunning ? 'updated and restarted' : 'installed: it starts at login', home }
     : { ok: false, said: `did not start: ${oneLine(r.stderr || r.stdout, 200)}`, home }
@@ -953,11 +953,11 @@ async function ensureBridge($: $): Promise<{ ok: boolean; said: string; home: st
 /** Serves the bridge over Tailscale (HTTPS, your devices only) when Tailscale is signed in; says how it stands. */
 async function ensureTailnet($: $, home: string): Promise<{ url?: string; said: string }> {
   for (const bin of TAILSCALE_BINS) {
-    const s = await run($, [bin, 'status', '--json'])
+    const s = await $.process.run([bin, 'status', '--json'], { timeoutMs: 10_000 }).catch(failed)
     if (s.exitCode !== 0 && !s.stdout) continue
     const host = tailnetHostOf(s.stdout)
     if (!host) return { said: 'installed but signed out: open the Tailscale app and sign in, then run `/streams phone` again' }
-    const served = await run($, [bin, 'serve', '--bg', String(BRIDGE_PORT)], 20_000)
+    const served = await $.process.run([bin, 'serve', '--bg', String(BRIDGE_PORT)], { timeoutMs: 20_000 }).catch(failed)
     if (served.exitCode !== 0) return { said: `could not serve the bridge: ${oneLine(served.stderr || served.stdout, 200)}` }
     // The bridge's pairing page reads it here: under launchd it cannot ask the Tailscale app itself.
     await $.fs.write(`${home}/.claudeflow/phone-url`, `https://${host}\n`)
@@ -1084,7 +1084,7 @@ export const register: Register = (on, options) => {
         // the tailnet name (this Mac is on the tailnet too), or at a `.localhost` name, which browsers send to this Mac.
         const token = await $.fs.read(`${bridge.home}/.claudeflow/bridge-token`).then(t => String(t).trim()).catch(() => '')
         const origin = tailnet.url ?? `http://claudeflow.localhost:${BRIDGE_PORT}`
-        const opened = token ? await run($, ['/usr/bin/open', `${origin}/?t=${token}&next=/pair`]) : undefined
+        const opened = token ? await $.process.run(['/usr/bin/open', `${origin}/?t=${token}&next=/pair`], { timeoutMs: 10_000 }).catch(failed) : undefined
         lines.push(
           opened?.exitCode === 0
             ? 'Opened the pairing page in your browser: scan its QR code with your phone, then Add to Home Screen.'
