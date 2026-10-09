@@ -69,6 +69,11 @@
   .bar { height: 8px; border-radius: 4px; background: #262c36; overflow: hidden; }
   .bar > i { display: block; height: 100%; border-radius: 4px; }
   .empty { color: var(--dim); text-align: center; padding: 40px 0; }
+  .gate { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px 18px; margin: 12px 0 16px; text-align: center; }
+  .gate h2 { margin: 0 0 6px; font-size: 20px; text-transform: none; letter-spacing: 0; color: var(--fg); }
+  .gate p { color: var(--dim); margin: 0 0 16px; }
+  .gate .btn { font-size: 17px; padding: 12px 20px; }
+  .lock { color: var(--dim); font-size: 12px; text-align: center; margin: 18px 0 0; }
   .btn { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 9px 14px; color: #111; background: var(--fg); }
   .btn.yes, .btn.allow { background: var(--done); color: #fff; }
   .btn.deny, .btn.stop { background: var(--error); color: #fff; }
@@ -102,8 +107,10 @@
 <body>
 <header><h1>Streams</h1><span class="grow"></span><span id="conn" class="conn" title="connection"></span></header>
 <nav id="tabs" class="tabs"></nav>
+<div id="gate" class="gate" hidden></div>
 <main id="main"><p class="empty">Waiting for the bridge…</p></main>
-<script>
+<script type="module">
+import * as Seal from '/seal.js'
 const GLYPH = { running: '●', loop: '↻', waiting: '?', error: '✗', stalled: '◌', done: '✓', idle: '○' }
 const STATE_COLOR = { running: '#ffd33d', loop: '#ffd33d', stalled: '#ff9500', done: '#2ea043', error: '#ff7b72', idle: '#8b949e', waiting: '#79c0ff' }
 const ROW_CLASS = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
@@ -248,8 +255,7 @@ const current = () => sessions.find(s => s.session.id === chosen) ?? sessions[0]
 async function send(command) {
   const x = current()
   if (!x) return false
-  const r = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session: x.session.id, ...command }) }).catch(() => undefined)
-  return !!r?.ok
+  return transport.send({ session: x.session.id, ...command })
 }
 
 document.addEventListener('input', e => {
@@ -287,9 +293,12 @@ document.addEventListener('click', async e => {
   const perm = e.target.closest('[data-perm]')
   if (perm) {
     perm.parentElement.querySelectorAll('button').forEach(b => (b.disabled = true))
-    await send({ kind: 'permission', requestId: perm.dataset.perm, decision: perm.dataset.decision })
+    const ok = await send({ kind: 'permission', requestId: perm.dataset.perm, decision: perm.dataset.decision })
+    if (!ok) perm.parentElement.querySelectorAll('button').forEach(b => (b.disabled = false))
     return
   }
+  const gateBtn = e.target.closest('[data-gate]')
+  if (gateBtn) { gateBtn.disabled = true; await transport.gate?.(gateBtn.dataset.gate); return }
   if (e.target.closest('[data-stop]')) {
     // Two taps, no dialog: a stray touch does not stop a turn.
     if (Date.now() - stopArmed < 4000) { stopArmed = 0; await send({ kind: 'stop' }) } else stopArmed = Date.now()
@@ -310,21 +319,149 @@ document.addEventListener('click', async e => {
   }
 })
 
-function connect() {
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`)
-  const dot = document.getElementById('conn')
-  const seen = () => { if (document.visibilityState === 'visible' && ws.readyState === 1) ws.send('{"type":"visible"}') }
-  ws.onopen = () => { dot.classList.add('on'); seen() }
-  clearInterval(window.seenTimer)
-  window.seenTimer = setInterval(seen, 10000)
-  document.addEventListener('visibilitychange', seen)
-  ws.onmessage = m => {
-    const msg = JSON.parse(m.data)
-    if (msg.type === 'sessions') { sessions = msg.sessions; render() }
+const dot = () => document.getElementById('conn')
+
+/** The page on the Mac's own bridge (Tailscale or this Mac): a websocket for news, a POST for commands. */
+function localTransport() {
+  let ws
+  const seen = () => { if (document.visibilityState === 'visible' && ws?.readyState === 1) ws.send('{"type":"visible"}') }
+  function connect() {
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`)
+    ws.onopen = () => { dot().classList.add('on'); seen() }
+    ws.onmessage = m => {
+      const msg = JSON.parse(m.data)
+      if (msg.type === 'sessions') { sessions = msg.sessions; render() }
+    }
+    ws.onclose = () => { dot().classList.remove('on'); setTimeout(connect, 2000) }
   }
-  ws.onclose = () => { dot.classList.remove('on'); setTimeout(connect, 2000) }
+  setInterval(seen, 10000)
+  document.addEventListener('visibilitychange', seen)
+  return {
+    start: connect,
+    async send(body) {
+      const r = await fetch('/api/command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).catch(() => undefined)
+      return !!r?.ok
+    },
+  }
 }
-connect()
+
+/**
+ * The page served by the relay: everything to and from the Mac is sealed with keys only the Mac and this phone hold.
+ * Pairing makes a passkey; each connection is unlocked with it, and every Allow signs a fresh challenge from the Mac.
+ */
+function relayTransport(pairing) {
+  let ws, ch, eph, nonce, unlockChallenge, allowChallenge
+  const save = () => keep.set('cf:pair', pairing)
+  const gate = html => { const g = document.getElementById('gate'); g.hidden = !html; g.innerHTML = html || '' }
+  const b = Seal.b64u
+  const assert = async challenge => {
+    const c = await navigator.credentials.get({ publicKey: {
+      challenge: b.dec(challenge), rpId: location.hostname, userVerification: 'required',
+      allowCredentials: [{ type: 'public-key', id: b.dec(pairing.credentialId) }],
+    } })
+    return { authenticatorData: b.enc(c.response.authenticatorData), clientDataJSON: b.enc(c.response.clientDataJSON), signature: b.enc(c.response.signature) }
+  }
+  const sealed = async obj => ws?.readyState === 1 && ch && ws.send(JSON.stringify({ t: 'box', b: await ch.seal(obj) }))
+  async function hello(extra = {}) {
+    eph = await Seal.newKeyPair()
+    nonce = Seal.randomId()
+    ws.send(JSON.stringify({ t: 'hello', phonePub: pairing.key.pub, ephPub: await Seal.exportPub(eph.publicKey), nonce, ...extra }))
+  }
+  async function connect() {
+    if (!pairing.key) { pairing.key = await Seal.exportPair(await Seal.newKeyPair()); save() }
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/phone?mac=${pairing.mac}&id=${pairing.phone}`)
+    ch = undefined
+    ws.onopen = () => {
+      dot().classList.add('on')
+      if (pairing.credentialId) hello()
+      else gate(`<h2>Pair this phone</h2><p>Create a passkey for Claudeflow. You'll use Face ID or your passcode to open it and to allow Claude's actions.</p><button class="btn yes" data-gate="pair">Create passkey</button>`)
+    }
+    ws.onmessage = async m => {
+      const msg = JSON.parse(m.data)
+      if (msg.t === 'denied') {
+        gate(`<h2>This phone isn't paired</h2><p>${msg.why === 'not paired' ? 'The code has expired or was used. Run <b>/streams phone</b> on your Mac and scan the new code.' : esc(msg.why)}</p>`)
+        delete pairing.credentialId
+        save()
+        return
+      }
+      if (msg.t === 'welcome') {
+        const own = await Seal.importPair(pairing.key)
+        const keys = await Seal.connectionKeys({ ownStatic: own, peerStaticPub: pairing.macPub, ownEphemeral: eph, peerEphemeralPub: msg.ephPub, macNonce: msg.nonce, phoneNonce: nonce })
+        ch = Seal.channel(keys.phoneToMac, keys.macToPhone)
+        unlockChallenge = msg.challenge
+        // Paired once: the one-time secret is spent, so it is not kept.
+        if (pairing.secret) { delete pairing.secret; save() }
+        gate(`<h2>Locked</h2><p>Unlock with your passkey to see your sessions.</p><button class="btn yes" data-gate="unlock">Unlock</button>`)
+        return
+      }
+      if (msg.t === 'box' && ch) {
+        const x = await ch.open(msg.b).catch(() => undefined)
+        if (!x) return
+        if (x.t === 'sessions') { gate(''); sessions = x.sessions; render(); prefetch() }
+        else if (x.t === 'challenge') allowChallenge = x.challenge
+        else if (x.t === 'locked') gate(`<h2>Locked</h2><p>${esc(x.why)}</p><button class="btn yes" data-gate="unlock">Try again</button>`)
+      }
+    }
+    ws.onclose = () => { dot().classList.remove('on'); setTimeout(connect, 2000) }
+  }
+  // An Allow needs a fresh challenge from the Mac, fetched as soon as a prompt shows, so the tap goes straight to Face ID.
+  function prefetch() {
+    if (!allowChallenge && sessions.some(x => (x.permissions ?? []).length)) sealed({ t: 'challenge' })
+  }
+  setInterval(() => { if (document.visibilityState === 'visible') sealed({ t: 'visible' }) }, 10000)
+  return {
+    start: connect,
+    async gate(kind) {
+      if (kind === 'pair') {
+        const cred = await navigator.credentials.create({ publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          rp: { name: 'Claudeflow', id: location.hostname },
+          user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'Claudeflow phone', displayName: 'Claudeflow' },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' },
+          attestation: 'none',
+        } }).catch(() => undefined)
+        if (!cred) return gate(`<h2>Pair this phone</h2><p>The passkey wasn't created.</p><button class="btn yes" data-gate="pair">Try again</button>`)
+        pairing.credentialId = b.enc(cred.rawId)
+        save()
+        const proof = await Seal.pairingProof(pairing.secret ?? '', pairing.key.pub)
+        await hello({ proof, registration: { credentialId: pairing.credentialId, publicKey: b.enc(cred.response.getPublicKey()), clientDataJSON: b.enc(cred.response.clientDataJSON) } })
+        return
+      }
+      if (kind === 'unlock' && unlockChallenge) {
+        const assertion = await assert(unlockChallenge).catch(() => undefined)
+        if (assertion) await sealed({ t: 'unlock', assertion })
+        else gate(`<h2>Locked</h2><p>Unlock with your passkey to see your sessions.</p><button class="btn yes" data-gate="unlock">Unlock</button>`)
+      }
+    },
+    async send(command) {
+      let assertion
+      if (command.kind === 'permission' && command.decision === 'allow') {
+        if (!allowChallenge) { prefetch(); return false }
+        assertion = await assert(allowChallenge).catch(() => undefined)
+        allowChallenge = undefined
+        if (!assertion) return false
+      }
+      await sealed({ t: 'command', command, assertion })
+      prefetch()
+      return true
+    },
+  }
+}
+
+/** Which page this is: opened from a relay pairing link (#m=…), already paired through one, or on the Mac's own bridge. */
+function pickTransport() {
+  const h = new URLSearchParams(location.hash.slice(1))
+  let pairing = keep.get('cf:pair', null)
+  if (h.get('m') && h.get('k')) {
+    // The fragment stays in the address: Add to Home Screen keeps it, so the Home Screen app can pair once too.
+    if (!pairing || pairing.mac !== h.get('m') || !pairing.credentialId) pairing = { mac: h.get('m'), macPub: h.get('k'), secret: h.get('s'), phone: Seal.randomId() }
+    keep.set('cf:pair', pairing)
+  }
+  return pairing ? relayTransport(pairing) : localTransport()
+}
+const transport = pickTransport()
+transport.start()
 setInterval(() => { if (document.visibilityState === 'visible') render() }, 10000)
 // A phone wakes the page without a reconnect: check the line when it comes back.
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') render() })

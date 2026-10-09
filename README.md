@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.6.0" src="https://img.shields.io/badge/version-0.6.0-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
   <img alt="Tests 84 passing" src="https://img.shields.io/badge/tests-84%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
@@ -173,6 +173,26 @@ Open the link in Safari (or Chrome on Android), then **Share → Add to Home Scr
 That's it. The bridge starts at login and every plugin update refreshes it, so there is nothing to keep running. Run `/streams phone` again any time to see the QR code.
 
 **Optional: a nicer address.** Your Mac's Tailscale name comes from its computer name (`your-mac.tail1234.ts.net`). To rename it, run `/Applications/Tailscale.app/Contents/MacOS/Tailscale set --hostname=claudeflow`, then `/streams phone`. This renames the Mac for everything on your Tailscale network, not just streams.
+
+#### Without Tailscale: through a relay
+
+A relay is a small server both your Mac and your phone connect out to, so no VPN is needed. Everything between them is **sealed end to end**: the relay forwards messages it cannot open, change or replay.
+
+1. Point streams at a relay: `/streams phone relay https://relay.example.com` (Macleod Labs runs one for the hosted tier; you can [run your own](relay/Dockerfile)).
+2. Run `/streams phone` and scan the QR code. It works for 10 minutes. The keys travel after the `#` in the link, which browsers never send to any server, the relay included.
+3. Your phone creates a **passkey**. From then on it unlocks with Face ID (or your passcode) every time it connects, and every **Allow** needs Face ID again. Your Mac checks those signatures itself.
+
+`/streams phone relay off` goes back to Tailscale.
+
+<details>
+<summary><b>How the relay is kept out</b></summary>
+
+- Mac and phone each keep a P-256 key pair. The QR code gives the phone the Mac's public key; the phone proves it saw the code with an HMAC under the code's one-time secret.
+- Each connection mixes fresh ephemeral keys with those long-term keys (ECDH → HKDF-SHA256) and seals every message with AES-256-GCM and a counter, so old traffic stays private and a replayed or altered message is dropped. A relay that swaps in its own key derives different keys and can read nothing.
+- The passkey's public key is kept on the Mac at pairing; unlocking and allowing check a fresh signature over a challenge from the Mac, the relay's address and Face ID / passcode.
+- `RELAY_SHOW=1 bun relay/server.ts` prints exactly what the relay sees: public keys during the handshake, then sealed blobs. `bun test relay` runs the checks above.
+
+</details>
 
 <details>
 <summary><b>How it works and what it can see</b></summary>

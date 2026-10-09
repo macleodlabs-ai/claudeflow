@@ -5,11 +5,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSy
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { relayUrlOf, startRemote } from './remote.ts'
 
 const SOCKET = process.env.CLAUDEFLOW_SOCKET ?? '/tmp/claudeflow-bridge.sock'
 const HOST = process.env.CLAUDEFLOW_HOST ?? '127.0.0.1'
 const PORT = Number(process.env.CLAUDEFLOW_PORT ?? 7878)
-const DIR = join(homedir(), '.claudeflow')
+const DIR = process.env.CLAUDEFLOW_DIR ?? join(homedir(), '.claudeflow')
 const TOKEN_FILE = join(DIR, 'bridge-token')
 
 /** A session not heard from for this long is shown as gone quiet; after DROP_MS it leaves the list. */
@@ -65,6 +66,7 @@ const cookieOf = (req: Request) => /(?:^|;\s*)cf=([^;]+)/.exec(req.headers.get('
 const isPaired = (req: Request) => isSame(cookieOf(req), TOKEN) || isSame((req.headers.get('authorization') ?? '').replace(/^Bearer /, ''), TOKEN)
 
 const APP = readFileSync(join(import.meta.dir, 'app.html'), 'utf8')
+const SEAL = readFileSync(join(import.meta.dir, 'seal.js'), 'utf8')
 
 /** What a browser that is not paired sees: where pairing happens, never the token. */
 const UNPAIRED = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not paired</title>
@@ -93,11 +95,12 @@ function tailnetHost(): string | undefined {
 }
 
 /** The pairing page: the phone's link as a QR code to scan, for a browser on this Mac that is already paired. */
-function pairPage(): string {
-  const host = tailnetHost()
-  const link = host ? `https://${host}/?t=${TOKEN}` : ''
+async function pairPage(): Promise<string> {
+  // Through the relay the link carries the Mac's key and a one-time secret after `#`, which no server is sent.
+  const host = remote ? new URL(relayUrl!).host : tailnetHost()
+  const link = remote ? await remote.pairLink() : host ? `https://${host}/?t=${TOKEN}` : ''
   const body = host
-    ? `<div id="qr"></div><p>Scan with your phone's camera, then <b>Share → Add to Home Screen</b>.</p><p class="dim">${host}</p>`
+    ? `<div id="qr"></div><p>Scan with your phone's camera, then <b>Share → Add to Home Screen</b>.</p><p class="dim">${host}${remote ? ' · end-to-end encrypted · the code works for 10 minutes' : ''}</p>`
     : `<p>Tailscale is not signed in on this Mac, so your phone cannot reach the bridge yet.</p><p class="dim">Install Tailscale (<code>brew install --cask tailscale-app</code>), sign in here and on your phone, then run <code>/streams phone</code> again.</p>`
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pair your phone</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d1117;color:#e6edf3;font:16px/1.5 -apple-system,Helvetica,sans-serif;text-align:center;padding:16px}
@@ -143,7 +146,7 @@ chmodSync(SOCKET, 0o600)
 const outbound = Bun.serve<undefined, never>({
   hostname: HOST,
   port: PORT,
-  fetch(req, server) {
+  async fetch(req, server) {
     const url = new URL(req.url)
     const t = url.searchParams.get('t')
     if (t !== null) {
@@ -156,6 +159,7 @@ const outbound = Bun.serve<undefined, never>({
       })
     }
     if (url.pathname === '/icon.svg') return new Response(ICON, { headers: { 'content-type': 'image/svg+xml' } })
+    if (url.pathname === '/seal.js') return new Response(SEAL, { headers: { 'content-type': 'text/javascript; charset=utf-8' } })
     if (!isPaired(req)) return new Response(UNPAIRED, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
     switch (url.pathname) {
       case '/':
@@ -172,7 +176,7 @@ const outbound = Bun.serve<undefined, never>({
           icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
         })
       case '/pair':
-        return new Response(pairPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
+        return new Response(await pairPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
       case '/api/sessions':
         return Response.json(listOf())
       case '/api/command':
@@ -202,16 +206,28 @@ async function takeCommand(req: Request): Promise<Response> {
   const hosts = [req.headers.get('host'), req.headers.get('x-forwarded-host')]
   if (origin && !hosts.includes(new URL(origin).host)) return new Response('wrong origin', { status: 403 })
   const body = (await req.json().catch(() => undefined)) as Record<string, unknown> | undefined
-  const session = typeof body?.session === 'string' ? body.session : ''
-  const command = body && commandOf(body)
-  if (!sessions.has(session) || !command) return new Response('bad command', { status: 400 })
+  return body && queueCommand(body) ? Response.json({ ok: true }) : new Response('bad command', { status: 400 })
+}
+
+/** Queues a phone's command for its session, from the page here or through the relay; false when it is not one. */
+function queueCommand(body: Record<string, unknown>): boolean {
+  const session = typeof body.session === 'string' ? body.session : ''
+  const command = commandOf(body)
+  if (!sessions.has(session) || !command) return false
   queued.set(session, [...(queued.get(session) ?? []), command].slice(-20))
   phoneSeenAt = Date.now()
-  return Response.json({ ok: true })
+  return true
 }
+
+// With a relay set (CLAUDEFLOW_RELAY, or ~/.claudeflow/relay-url), phones reach this Mac through it, sealed end to end.
+const relayUrl = relayUrlOf(DIR)
+const remote = relayUrl
+  ? await startRemote(DIR, relayUrl, queueCommand, () => (phoneSeenAt = Date.now()), line => console.log(`relay: ${line}`))
+  : undefined
 
 function publish() {
   outbound.publish('all', JSON.stringify({ type: 'sessions', sessions: listOf() }))
+  remote?.publish(listOf())
 }
 
 // Sessions that went quiet are marked, then dropped, without waiting for news.

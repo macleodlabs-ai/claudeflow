@@ -148,7 +148,7 @@ export const isDue = (body: string, last: { body: string; at: number }, now: num
   body !== last.body || now - last.at >= HEARTBEAT_MS
 
 /** The bridge's files as the plugin ships them, copied to `~/.claudeflow/bridge` where launchd runs them: a plugin update moves its own folder. */
-export const BRIDGE_FILES = ['server.ts', 'app.html', 'install.sh'] as const
+export const BRIDGE_FILES = ['server.ts', 'remote.ts', 'seal.js', 'app.html', 'install.sh'] as const
 export const BRIDGE_LABEL = 'ai.macleodlabs.claudeflow-bridge'
 export const BRIDGE_PORT = 7878
 /** Where Tailscale's command line is: inside the Mac app, or on PATH from Homebrew. */
