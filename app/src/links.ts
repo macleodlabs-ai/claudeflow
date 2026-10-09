@@ -16,8 +16,6 @@ export type Pairing = {
   credentialId?: string
   /** A session welcomed this device: from now on it unlocks with its passkey. */
   isPaired: boolean
-  /** The account name, learnt from the first snapshot (the link has none). */
-  label?: string
 }
 
 const ROOM = /^[A-Za-z0-9_-]{16,64}$/

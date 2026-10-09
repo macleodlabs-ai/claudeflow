@@ -2,9 +2,8 @@
 // hello) and one per Allow. Sessions check them with seal.ts's verifyPasskey; the challenge strings come from
 // passkeyChallenge, so the bytes signed here are exactly the b64u the session compares.
 import { b64u, fromB64u } from '../../plugins/streams/hooks/remote/seal'
-
-export type Registration = { credentialId: string; publicKey: string; clientDataJSON: string }
-export type Assertion = { authenticatorData: string; clientDataJSON: string; signature: string }
+import type { Registration } from '../../plugins/streams/hooks/remote/device'
+import type { PasskeyAssertion } from '../../plugins/streams/hooks/remote/snapshot'
 
 const bytesOf = (b: ArrayBuffer): Uint8Array => new Uint8Array(b)
 const buf = (s: string): Uint8Array<ArrayBuffer> => new Uint8Array(fromB64u(s))
@@ -33,7 +32,7 @@ export async function createPasskey(label: string, challenge: string): Promise<R
 }
 
 /** Signs a challenge with Face ID (or the passcode); undefined when the person cancels. */
-export async function assertPasskey(credentialId: string, challenge: string): Promise<Assertion | undefined> {
+export async function assertPasskey(credentialId: string, challenge: string): Promise<PasskeyAssertion | undefined> {
   const cred = (await navigator.credentials
     .get({
       publicKey: {

@@ -4,12 +4,13 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates/versions'
-import { PHONE_ROWS, accountOf, commandsOf, permissionSummary, snapshotOf, timeless, type SnapshotInput } from '../hooks/remote/snapshot'
+import { PHONE_ROWS, accountOf, commandOf, permissionSummary, snapshotOf, type SnapshotInput } from '../hooks/remote/snapshot'
 import { snapshotKey } from '../hooks/remote/link'
 import { completeTag, partialTag, tagMatches, NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, isFollowUp, loopKey, parseTag, parseVerdict, slug, buildPrompt, FINISHED_MS } from '../hooks/classify'
 import { BATCH_SYSTEM, MERGE_SYSTEM, inParallel, parseBatch, parseMerge, readTranscript } from '../hooks/history'
 import { CODE_LIMIT, codeOf, toolLine } from '../hooks/tools'
-import { gitStatus, limitView, questionOf, sortStatus, statusOf, ticketLines, ticketsIn, untilOf } from '../hooks/status'
+import { gitStatus, limitView, lineText, questionOf, sortStatus, statusOf, ticketLines, ticketsIn, untilOf } from '../hooks/status'
+import { statusLinesOf, type Facts } from '../hooks/streams/model'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -788,17 +789,17 @@ describe('the status card', () => {
   // The card exists to answer "what needs me?": a reply that ends on a question is the person's move,
   // so it must read as waiting, never as done.
   test('a stream whose last reply asks a question is waiting for the person, with the question as its detail', () => {
-    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' }, now: 0 })
+    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' } })
     expect(line.kind).toBe('waiting')
     expect(line.detail).toBe('Shall I commit it?')
     expect(questionOf('All done.')).toBe(undefined)
   })
 
   test('running work says what it is doing now, and running and waiting rows sort above finished ones', () => {
-    const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }], now: 0 })
+    const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }] })
     expect(run.detail).toBe('trace rounding: Grep toFixed (6 tools)')
-    const done = statusOf({ stream: s('docs', 9), health: 'done', running: [], now: 10_000 })
-    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' }, now: 0 })
+    const done = statusOf({ stream: s('docs', 9), health: 'done', running: [] })
+    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' } })
     expect(sortStatus([done, wait, run], { docs: 9 }).map(l => l.id)).toEqual(['billing', 'auth', 'docs'])
   })
 
@@ -1063,7 +1064,6 @@ describe('what the phone is sent', () => {
       ],
       streams: [...STREAMS, { ...STREAMS[0]!, id: 'docs', name: 'Docs' }],
       colorOf: () => '#a5d8ff',
-      loops: {},
       agents: [
         { id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 },
         { id: 'a2', streamId: 'auth-refactor', description: 'Old run', status: 'done', startedAt: at(0), endedAt: at(1), lastAt: at(1), last: '', tools: 1 },
@@ -1087,11 +1087,42 @@ describe('what the phone is sent', () => {
     expect(snap.streams[0]?.rows.at(-1)?.text.length).toBeLessThan(700)
   })
 
-  // A clock in the detail would make every snapshot differ from the last, so a quiet session would send every tick.
-  test('a detail is sent without its clock; the phone counts from lastAt and nextAt', () => {
-    expect(timeless('Move sessions to JWT · 12s ago')).toBe('Move sessions to JWT')
-    expect(timeless('next tick in 7m 59s · check CI')).toBe('check CI')
-    expect(timeless('Is 5s ago a time? · yes')).toBe('Is 5s ago a time? · yes')
+  // A clock in the text would make every snapshot differ from the last, so a quiet session would post every tick and
+  // spend the free plan's requests. Clocks travel as times; the terminal and the phone count them as they draw.
+  test('the same facts a few seconds later make the same snapshot, and each screen counts the clocks itself', () => {
+    const streams: Stream[] = [
+      { ...STREAMS[0]!, lastAt: at(48) },
+      { ...STREAMS[0]!, id: 'ci', name: 'CI', summary: 'check CI' },
+      { ...STREAMS[0]!, id: 'billing', name: 'Billing', summary: 'fix rounding' },
+    ]
+    const facts = (now: number): Facts => ({
+      busy: true,
+      current: 'billing',
+      agents: { a1: { id: 'a1', streamId: 'billing', description: 'trace rounding', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Grep toFixed', tools: 6 } },
+      inflight: {},
+      outcome: {},
+      rows: [],
+      loops: { ci: { kind: 'wakeup', nextAt: at(540), label: '' } },
+      now,
+    })
+    const health = { 'auth-refactor': 'idle', ci: 'idle', billing: 'running' } as const
+    const snapAt = (now: number) => {
+      const lines = statusLinesOf(facts(now), streams, health)
+      return { lines, snap: snapshotOf({ session: { id: 's1', account: 'macleod', project: 'p', busy: true }, lines, streams, colorOf: () => '#a5d8ff', agents: Object.values(facts(now).agents), rows: [], status: [], limits: [], updates: [], now }) }
+    }
+    const first = snapAt(at(60))
+    const later = snapAt(at(67))
+    expect(snapshotKey(later.snap)).toBe(snapshotKey(first.snap))
+    // The terminal draws the same words it always did, counted to its own now.
+    const text = (lines: typeof first.lines, now: number) => Object.fromEntries(lines.map(l => [l.id, lineText(l, now)]))
+    expect(text(first.lines, at(60))).toEqual({ billing: 'trace rounding: Grep toFixed (6 tools)', ci: 'next tick in 8:00 · check CI', 'auth-refactor': 'Move sessions to JWT · 12s ago' })
+    expect(text(later.lines, at(67))).toEqual({ billing: 'trace rounding: Grep toFixed (6 tools)', ci: 'next tick in 7:53 · check CI', 'auth-refactor': 'Move sessions to JWT · 19s ago' })
+    // The phone gets the same times to count from.
+    expect(first.snap.streams.map(s => [s.id, s.detail, s.since, s.nextAt])).toEqual([
+      ['billing', 'trace rounding: Grep toFixed (6 tools)', undefined, undefined],
+      ['ci', 'check CI', undefined, at(540)],
+      ['auth-refactor', 'Move sessions to JWT', at(48), undefined],
+    ])
   })
 
   // A running agent's elapsed time would do the same for as long as any agent runs: 1,800 posts an hour.
@@ -1101,7 +1132,6 @@ describe('what the phone is sent', () => {
       lines: [{ id: 'auth-refactor', area: 'Auth refactor', kind: 'running', state: 'RUNNING', detail: '1 agent' }],
       streams: STREAMS,
       colorOf: () => '#a5d8ff',
-      loops: {},
       agents: [{ id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 }],
       rows: [],
       status: [],
@@ -1122,23 +1152,17 @@ describe('what the phone is sent', () => {
 describe('acting from the phone', () => {
   // The phone is a remote for this Mac: only the commands it is meant to send may reach a session.
   test('only well-formed answers, stops and permission decisions are taken from a device', () => {
-    const { commands, isPhoneActive } = commandsOf(
-      JSON.stringify({
-        phoneActive: true,
-        commands: [
-          { id: '1', kind: 'answer', streamId: 'docs', text: 'yes' },
-          { id: '2', kind: 'answer', streamId: 'docs', text: '   ' },
-          { id: '3', kind: 'stop' },
-          { id: '4', kind: 'permission', requestId: 't1', decision: 'allow' },
-          { id: '5', kind: 'permission', requestId: 't1', decision: 'always' },
-          { id: '6', kind: 'shell', command: 'rm -rf /' },
-          { kind: 'stop' },
-        ],
-      }),
-    )
-    expect(commands.map(c => c.id)).toEqual(['1', '3', '4'])
-    expect(isPhoneActive).toBe(true)
-    expect(commandsOf('not json')).toEqual({ commands: [], isPhoneActive: false })
+    const sent = [
+      { id: '1', kind: 'answer', streamId: 'docs', text: 'yes' },
+      { id: '2', kind: 'answer', streamId: 'docs', text: '   ' },
+      { id: '3', kind: 'stop' },
+      { id: '4', kind: 'permission', requestId: 't1', decision: 'allow' },
+      { id: '5', kind: 'permission', requestId: 't1', decision: 'always' },
+      { id: '6', kind: 'shell', command: 'rm -rf /' },
+      { kind: 'stop' },
+      'not an object',
+    ]
+    expect(sent.flatMap(c => commandOf(c) ?? []).map(c => c.id)).toEqual(['1', '3', '4'])
   })
 
   test('a permission card says what the call would do', () => {

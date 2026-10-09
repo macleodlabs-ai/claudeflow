@@ -1,9 +1,10 @@
 // The app: keeps this device's identity and paired rooms, runs a link per room, and draws the state on each change.
 // Taps go through one delegated click handler; everything a session receives is sealed by the room's link.
 import { newIdentity, randomId } from '../../plugins/streams/hooks/remote/seal'
+import type { PhoneCommand } from '../../plugins/streams/hooks/remote/snapshot'
 import { gateOf, parseLink, withLink, type Pairing } from './links'
 import { currentOf, initial, isStopConfirmed, reduce, type Action, type State } from './state'
-import { PING_MS, roomLink, type Command, type Device, type RoomLink } from './transport'
+import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
 import { page, tabs } from './views/page'
 
@@ -90,7 +91,7 @@ function render() {
 }
 
 /** Sends the shown session one command; the page shows it was sent, the stream shows what came of it. */
-async function send(command: Command): Promise<boolean> {
+async function send(command: PhoneCommand): Promise<boolean> {
   const t = currentOf(state, Date.now())
   const link = t && linkOf(t.room)
   return !!link && (await link.send(t.snapshot.session.id, command))

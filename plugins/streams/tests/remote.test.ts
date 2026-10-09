@@ -2,116 +2,20 @@ import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { p256, sha256 } from '../hooks/vendor/noble'
-import { b64u, channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, PAIRING_MS, backoffMs, createLink, isPostDue, type Device, type Identity, type OutFrame, type Pairing, type UpResponse } from '../hooks/remote/link'
+import { p256 } from '../hooks/vendor/noble'
+import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
+import { PAIRING_MS, createLink, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { HEARTBEAT_MS, PHONE_PERMISSION_MS, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { STORE, TICK_MS } from '../hooks/remote/index'
+import { spkiOf } from './authenticator'
+import { ORIGIN, RELAY, SESSION, T0, account, cycle, phone, room, snapshot, tOf } from './room'
 
 // The relay forwards every frame and could replay, reorder or forge any of them; the session's side must let in only
 // devices that paired with the QR code's secret or prove their passkey now, and run an Allow only with Face ID.
-// These tests play two real devices (real keys, real passkeys) against the session's link, through a fake relay.
+// These tests play real devices against the session's link through a fake relay (room.ts).
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
-
-const RELAY = 'https://claudeflow-relay.example.workers.dev'
-const ORIGIN = RELAY
-const HOST = 'claudeflow-relay.example.workers.dev'
-const SPKI_HEADER = Uint8Array.from('3059301306072a8648ce3d020106082a8648ce3d030107034200'.match(/../g) ?? [], h => parseInt(h, 16))
-const utf8 = (s: string) => new TextEncoder().encode(s)
-const concat = (...parts: Uint8Array[]) => Uint8Array.from(parts.flatMap(p => [...p]))
-
-/** A WebAuthn assertion as an authenticator makes it: over the challenge, on the origin, user present and verified. */
-function assertion(key: Uint8Array, challenge: string, origin = ORIGIN, host = HOST) {
-  const clientDataJSON = utf8(JSON.stringify({ type: 'webauthn.get', challenge, origin, crossOrigin: false }))
-  const authData = concat(sha256(utf8(host)), Uint8Array.of(0x05), Uint8Array.of(0, 0, 0, 1))
-  const signature = p256.sign(concat(authData, sha256(clientDataJSON)), key, { prehash: true, format: 'der' })
-  return { authenticatorData: b64u(authData), clientDataJSON: b64u(clientDataJSON), signature: b64u(signature) }
-}
-
-/** A phone or tablet as the app runs it: its own id, X25519 keys and passkey, and one connection at a time. */
-function phone(account: Identity, label: string) {
-  const id = randomId()
-  const keys = newIdentity()
-  const passkey = p256.utils.randomSecretKey()
-  const spki = b64u(concat(SPKI_HEADER, p256.getPublicKey(passkey, false)))
-  let eph = newIdentity()
-  let nonce = randomId(32)
-  let ch: ReturnType<typeof channel> | undefined
-  const accountPk = publicKeyOf(account.sk)
-  return {
-    id,
-    pk: keys.pk,
-    passkey,
-    /** The device as $.store keeps it once paired. */
-    stored: (): Device => ({ id, pk: keys.pk, credentialId: `cred-${label}`, credentialKey: spki, label, pairedAt: 0 }),
-    /** A new connection's hello: pairing with the QR code's secret, or unlocking with Face ID at `now`. */
-    hello(o: { now: number; secret?: string; origin?: string; minute?: number; key?: Uint8Array; challenge?: string }) {
-      eph = newIdentity()
-      nonce = randomId(32)
-      ch = undefined
-      const base = { t: 'hello', device: id, pk: keys.pk, eph: eph.pk, nonce, label }
-      if (o.secret !== undefined) {
-        const challenge = o.challenge ?? passkeyChallenge('pair', account.room, id, keys.pk)
-        const clientDataJSON = b64u(utf8(JSON.stringify({ type: 'webauthn.create', challenge, origin: o.origin ?? ORIGIN })))
-        const proof = pairingProof(o.secret, id, keys.pk, `cred-${label}`, spki)
-        return { ...base, proof, registration: { credentialId: `cred-${label}`, publicKey: spki, clientDataJSON } }
-      }
-      const minute = o.minute ?? Math.floor(o.now / 60_000)
-      return { ...base, passkey: assertion(o.key ?? passkey, passkeyChallenge('hello', account.room, eph.pk, minute), o.origin ?? ORIGIN) }
-    },
-    /** Reads what the session sent: a welcome opens the channel, a box is opened with it. */
-    receive(data: unknown): unknown {
-      const d = data as { t: string; eph: string; nonce: string; b: string }
-      if (d.t === 'welcome') {
-        const k = connectionKeys({ ownSk: keys.sk, peerPk: accountPk, ownEphSk: eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: nonce })
-        ch = channel(k.deviceToSession, k.sessionToDevice)
-        return d
-      }
-      if (d.t === 'box' && ch) return ch.open(d.b)
-      return d
-    },
-    isUnlocked: () => ch !== undefined,
-    command: (command: PhoneCommand) => ({ t: 'box', b: (ch as ReturnType<typeof channel>).seal({ t: 'command', command }) }),
-    /** An Allow with Face ID over this request on this connection. */
-    allow(requestId: string, key = passkey): PhoneCommand {
-      return { id: randomId(), kind: 'permission', requestId, decision: 'allow', passkey: assertion(key, passkeyChallenge('allow', requestId, eph.pk)) }
-    },
-  }
-}
-
-type Phone = ReturnType<typeof phone>
-
-function snapshot(at: number, extra: Partial<Snapshot> = {}): Snapshot {
-  return { v: 1, session: { id: 'sess-1', account: 'macleod', project: 'p', busy: false }, at, streams: [], status: [], limits: [], updates: [], permissions: [], ...extra }
-}
-
-/** The room in miniature: device frames get a seq, and frames from the session reach their device. */
-function room(phones: Phone[]) {
-  let seq = 0
-  const queued: UpResponse['frames'] = []
-  return {
-    from: (p: Phone, data: unknown) => queued.push({ seq: ++seq, from: p.id, data }),
-    answer: (active: Phone[] = phones): UpResponse => ({ frames: queued.splice(0), devices: phones.map(p => ({ id: p.id, isActive: active.includes(p) })) }),
-    /** Delivers the session's frames, returning what each phone read. */
-    deliver(frames: OutFrame[]): Map<string, unknown[]> {
-      const got = new Map<string, unknown[]>()
-      for (const f of frames) {
-        const p = phones.find(x => x.id === f.to)
-        if (!p) continue
-        got.set(p.id, [...(got.get(p.id) ?? []), p.receive(f.data)])
-      }
-      return got
-    },
-  }
-}
-
-function account(): Identity {
-  return { room: randomId(), token: randomId(32), sk: newIdentity().sk }
-}
-
-const T0 = 1_700_000_000_000
 
 describe('pairing and unlocking', () => {
   test('two devices pair with the QR code, unlock, each get their own sealed snapshot, and both send commands', () => {
@@ -120,29 +24,29 @@ describe('pairing and unlocking', () => {
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
     const relay = room([a, b])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     relay.from(a, a.hello({ now: T0, secret: pairing.secret }))
     relay.from(b, b.hello({ now: T0, secret: pairing.secret }))
-    const taken = link.take(relay.answer(), { devices: [], pairing, now: T0 })
-    expect(taken.paired.map(d => d.label)).toEqual(['iPhone', 'iPad'])
-    expect(taken.paired[0]).toMatchObject({ id: a.id, pk: a.pk, credentialId: 'cred-iPhone', pairedAt: T0 })
-    relay.deliver(taken.send)
+    const first = cycle(link, relay, { devices: [], pairing, now: T0 })
+    expect(first.paired.map(d => d.label)).toEqual(['iPhone', 'iPad'])
+    expect(first.paired[0]).toMatchObject({ id: a.id, pk: a.pk, credentialId: 'cred-iPhone', pairedAt: T0 })
     expect(a.isUnlocked() && b.isUnlocked()).toBe(true)
 
-    const frames = link.snapshots(snapshot(T0, { streams: [] }), T0)
-    expect(frames.map(f => f.to).sort()).toEqual([a.id, b.id].sort())
-    // Sealed per device: nothing readable on the wire, and one device's box does not open with the other's channel.
-    expect(JSON.stringify(frames)).not.toContain('sess-1')
-    const got = relay.deliver(frames)
-    expect(got.get(a.id)).toEqual([{ t: 'snapshot', snapshot: snapshot(T0) }])
-    expect(got.get(b.id)).toEqual([{ t: 'snapshot', snapshot: snapshot(T0) }])
-    const forB = frames.find(f => f.to === b.id) as OutFrame
-    expect(() => a.receive(forB.data)).toThrow()
+    // The welcomes and the first snapshot go in the same tick, sealed per device: nothing readable on the wire, and
+    // one device's box does not open with the other's channel.
+    const boxes = first.frames.filter(f => tOf(f) === 'box')
+    expect(boxes.map(f => f.to).sort()).toEqual([a.id, b.id].sort())
+    expect(JSON.stringify(boxes)).not.toContain(SESSION)
+    const snapshotsOf = (id: string) => (first.read.get(id) as { t: string }[]).filter(m => m.t === 'snapshot')
+    expect(snapshotsOf(a.id)).toEqual([{ t: 'snapshot', snapshot: snapshot(T0) }])
+    expect(snapshotsOf(b.id)).toEqual([{ t: 'snapshot', snapshot: snapshot(T0) }])
+    const forB = boxes.find(f => f.to === b.id) as OutFrame
+    expect(a.receive(forB.data)).toBeUndefined()
 
     relay.from(a, a.command({ id: 'c1', kind: 'answer', streamId: 'docs', text: 'yes, ship it' }))
     relay.from(b, b.command({ id: 'c2', kind: 'stop' }))
-    const after = link.take(relay.answer(), { devices: taken.paired, now: T0 + 1000 })
+    const after = cycle(link, relay, { devices: first.paired, now: T0 + 1000 })
     expect(after.commands).toEqual([
       { device: a.id, command: { id: 'c1', kind: 'answer', streamId: 'docs', text: 'yes, ship it' } },
       { device: b.id, command: { id: 'c2', kind: 'stop' } },
@@ -154,14 +58,13 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     // A hello waits in the room up to two minutes, so the previous minute's Face ID still counts.
-    relay.from(a, a.hello({ now: T0, minute: Math.floor(T0 / 60_000) - 1 }))
-    const taken = link.take(relay.answer(), { devices: [a.stored()], now: T0 })
-    expect(taken.send.map(f => (f.data as { t: string }).t)).toEqual(['welcome'])
-    expect(taken.paired).toEqual([])
-    relay.deliver(taken.send)
-    expect(relay.deliver(link.snapshots(snapshot(T0), T0)).get(a.id)).toHaveLength(1)
+    relay.from(a, a.hello({ now: T0 - 60_000 }))
+    const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
+    expect(r.frames.map(tOf)).toEqual(['welcome', 'box'])
+    expect(r.paired).toEqual([])
+    expect(a.isUnlocked()).toBe(true)
   })
 
   test('an unpaired device, or a paired id with another key, is denied and gets no channel', () => {
@@ -170,16 +73,16 @@ describe('pairing and unlocking', () => {
     const stranger = phone(me, 'stranger')
     const a = phone(me, 'iPhone')
     const relay = room([stranger, a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     relay.from(stranger, stranger.hello({ now: T0 }))
     const forged = { ...a.hello({ now: T0 }), pk: newIdentity().pk }
     relay.from(a, forged)
-    const taken = link.take(relay.answer(), { devices: [a.stored()], now: T0 })
-    expect(taken.send.map(f => f.data)).toEqual([
+    const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
+    expect(r.frames.map(f => f.data)).toEqual([
       { t: 'denied', why: 'not paired' },
       { t: 'denied', why: 'not paired' },
     ])
-    expect(link.snapshots(snapshot(T0), T0)).toEqual([])
+    expect(cycle(link, relay, { devices: [a.stored()], now: T0 + 1000 }).frames).toEqual([])
   })
 
   test('an expired pairing, or a proof made without the secret, is denied', () => {
@@ -188,18 +91,19 @@ describe('pairing and unlocking', () => {
     const late = phone(me, 'late')
     const guess = phone(me, 'guess')
     const relay = room([late, guess])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     relay.from(late, late.hello({ now: T0, secret: pairing.secret }))
     relay.from(guess, guess.hello({ now: T0, secret: randomId(32) }))
-    const taken = link.take(relay.answer(), { devices: [], pairing, now: T0 + PAIRING_MS })
-    expect(taken.send.map(f => f.data)).toEqual([
+    // Someone is still paired, so the session keeps polling after the pairing closes.
+    const r = cycle(link, relay, { devices: [phone(me, 'old').stored()], pairing, now: T0 + PAIRING_MS })
+    expect(r.frames.map(f => f.data)).toEqual([
       { t: 'denied', why: 'pairing expired' },
       { t: 'denied', why: 'pairing expired' },
     ])
-    expect(taken.paired).toEqual([])
+    expect(r.paired).toEqual([])
     relay.from(guess, guess.hello({ now: T0, secret: randomId(32) }))
-    expect(link.take(relay.answer(), { devices: [], pairing, now: T0 }).send.map(f => f.data)).toEqual([{ t: 'denied', why: 'bad pairing proof' }])
+    expect(cycle(link, relay, { devices: [], pairing, now: T0 }).frames.map(f => f.data)).toEqual([{ t: 'denied', why: 'bad pairing proof' }])
   })
 
   test('a registration made on another site, or for another pairing, does not pair', () => {
@@ -207,13 +111,13 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     relay.from(a, a.hello({ now: T0, secret: pairing.secret, origin: 'https://evil.example' }))
     relay.from(a, a.hello({ now: T0, secret: pairing.secret, challenge: passkeyChallenge('pair', randomId(), a.id, a.pk) }))
-    const taken = link.take(relay.answer(), { devices: [], pairing, now: T0 })
-    expect(taken.paired).toEqual([])
-    expect(taken.send.map(f => f.data)).toEqual(Array(2).fill({ t: 'denied', why: 'bad registration' }))
+    const r = cycle(link, relay, { devices: [], pairing, now: T0 })
+    expect(r.paired).toEqual([])
+    expect(r.frames.map(f => f.data)).toEqual(Array(2).fill({ t: 'denied', why: 'bad registration' }))
   })
 
   test('a pairing hello the relay replays with its own passkey or another device\'s id is denied', () => {
@@ -224,16 +128,16 @@ describe('pairing and unlocking', () => {
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
     const relay = room([a, b])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     const hello = a.hello({ now: T0, secret: pairing.secret }) as { registration: Record<string, string> }
-    const relayKey = b64u(concat(SPKI_HEADER, p256.getPublicKey(p256.utils.randomSecretKey(), false)))
+    const relayKey = spkiOf(p256.utils.randomSecretKey())
     relay.from(a, { ...hello, registration: { ...hello.registration, publicKey: relayKey } })
     relay.from(a, { ...hello, registration: { ...hello.registration, credentialId: 'cred-relay' } })
     relay.from(b, { ...hello, device: b.id })
-    const taken = link.take(relay.answer(), { devices: [b.stored()], pairing, now: T0 })
-    expect(taken.paired).toEqual([])
-    expect(taken.send.map(f => f.data)).toEqual(Array(3).fill({ t: 'denied', why: 'bad pairing proof' }))
+    const r = cycle(link, relay, { devices: [b.stored()], pairing, now: T0 })
+    expect(r.paired).toEqual([])
+    expect(r.frames.map(f => f.data)).toEqual(Array(3).fill({ t: 'denied', why: 'bad pairing proof' }))
   })
 
   test('a hello passkey from an older minute, another origin or another key is denied', () => {
@@ -241,45 +145,27 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
-    const minute = Math.floor(T0 / 60_000)
-    relay.from(a, a.hello({ now: T0, minute: minute - 2 }))
-    relay.from(a, a.hello({ now: T0, minute: minute + 1 }))
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    relay.from(a, a.hello({ now: T0 - 120_000 }))
+    relay.from(a, a.hello({ now: T0 + 60_000 }))
     relay.from(a, a.hello({ now: T0, origin: 'https://evil.example' }))
     relay.from(a, a.hello({ now: T0, key: p256.utils.randomSecretKey() }))
-    const taken = link.take(relay.answer(), { devices: [a.stored()], now: T0 })
-    expect(taken.send.map(f => f.data)).toEqual(Array(4).fill({ t: 'denied', why: 'passkey not verified' }))
-  })
-
-  test('only a paired device, or any while a pairing is open, makes the session poll faster', () => {
-    // Anyone with the room id (a forgotten phone, an old QR code) can keep a socket open and ping. Counting it would
-    // keep every session of the account polling fast all day and spend the free plan's requests.
-    const me = account()
-    const a = phone(me, 'iPhone')
-    const stranger = phone(me, 'stranger')
-    const relay = room([a, stranger])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
-    link.take(relay.answer([stranger]), { devices: [a.stored()], now: T0 })
-    expect(link.isAnyActive()).toBe(false)
-    link.take(relay.answer([a]), { devices: [a.stored()], now: T0 })
-    expect(link.isAnyActive()).toBe(true)
-    const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
-    link.take(relay.answer([stranger]), { devices: [a.stored()], pairing, now: T0 })
-    expect(link.isAnyActive()).toBe(true)
-    link.take(relay.answer([stranger]), { devices: [a.stored()], pairing, now: T0 + PAIRING_MS })
-    expect(link.isAnyActive()).toBe(false)
+    const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
+    expect(r.frames.map(f => f.data)).toEqual(Array(4).fill({ t: 'denied', why: 'passkey not verified' }))
   })
 
   test('a forgotten device loses its channel at once', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     relay.from(a, a.hello({ now: T0 }))
-    relay.deliver(link.take(relay.answer(), { devices: [a.stored()], now: T0 }).send)
+    cycle(link, relay, { devices: [a.stored()], now: T0 })
     relay.from(a, a.command({ id: 'c1', kind: 'stop' }))
-    expect(link.take(relay.answer(), { devices: [], now: T0 }).commands).toEqual([])
-    expect(link.snapshots(snapshot(T0), T0)).toEqual([])
+    const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
+    const r = cycle(link, relay, { devices: [], pairing, now: T0 + HEARTBEAT_MS, snapshot: snapshot(T0, { status: [{ id: 'x', area: 'x', state: 'x', detail: 'news' }] }) })
+    expect(r.commands).toEqual([])
+    expect(r.frames.filter(f => tOf(f) === 'box')).toEqual([])
   })
 })
 
@@ -288,14 +174,14 @@ describe('allowing a tool from a phone', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
     relay.from(a, a.hello({ now: T0 }))
-    relay.deliver(link.take(relay.answer(), { devices: [a.stored()], now: T0 }).send)
-    const send = (c: PhoneCommand) => {
-      relay.from(a, a.command(c))
-      return link.take(relay.answer(), { devices: [a.stored()], now: T0 }).commands.map(x => x.command)
+    cycle(link, relay, { devices: [a.stored()], now: T0 })
+    const send = (...boxes: unknown[]) => {
+      for (const b of boxes) relay.from(a, b)
+      return cycle(link, relay, { devices: [a.stored()], now: T0 }).commands.map(x => x.command)
     }
-    return { a, relay, link, send }
+    return { a, relay, link, send: (c: PhoneCommand) => send(a.command(c)), sendBox: send }
   }
 
   test('an Allow without Face ID, or with someone else\'s, is ignored; a Deny needs none', () => {
@@ -310,13 +196,10 @@ describe('allowing a tool from a phone', () => {
 
   test('a replayed Allow is ignored, and a request is checked only once', () => {
     // Each Face ID is for one request: the same box again, or a second Allow for the same request, does nothing.
-    const { a, relay, link, send } = unlocked()
-    const allow = a.allow('toolu_1')
-    const box = a.command(allow)
-    relay.from(a, box)
-    expect(link.take(relay.answer(), { devices: [a.stored()], now: T0 }).commands).toHaveLength(1)
-    relay.from(a, box)
-    expect(link.take(relay.answer(), { devices: [a.stored()], now: T0 }).commands).toEqual([])
+    const { a, send, sendBox } = unlocked()
+    const box = a.command(a.allow('toolu_1'))
+    expect(sendBox(box)).toHaveLength(1)
+    expect(sendBox(box)).toEqual([])
     expect(send(a.allow('toolu_1'))).toEqual([])
   })
 
@@ -325,40 +208,8 @@ describe('allowing a tool from a phone', () => {
     const { a, relay, link, send } = unlocked()
     const old = a.allow('toolu_9')
     relay.from(a, a.hello({ now: T0 }))
-    relay.deliver(link.take(relay.answer(), { devices: [a.stored()], now: T0 }).send)
+    cycle(link, relay, { devices: [a.stored()], now: T0 })
     expect(send(old)).toEqual([])
-  })
-})
-
-describe('the polling budget', () => {
-  test('snapshots are not re-sealed when unchanged, only on change or as a heartbeat', () => {
-    // Every send is a request on the free plan's 100k a day; the clock alone changing is not news.
-    const me = account()
-    const a = phone(me, 'iPhone')
-    const relay = room([a])
-    const link = createLink({ identity: me, session: 'sess-1', origin: ORIGIN })
-    relay.from(a, a.hello({ now: T0 }))
-    relay.deliver(link.take(relay.answer(), { devices: [a.stored()], now: T0 }).send)
-    expect(link.snapshots(snapshot(T0), T0)).toHaveLength(1)
-    expect(link.snapshots(snapshot(T0 + 2000), T0 + 2000)).toEqual([])
-    expect(link.snapshots(snapshot(T0 + 4000, { session: { id: 'sess-1', account: 'macleod', project: 'p', busy: true } }), T0 + 4000)).toHaveLength(1)
-    expect(link.snapshots(snapshot(T0 + 6000, { session: { id: 'sess-1', account: 'macleod', project: 'p', busy: true } }), T0 + 4000 + HEARTBEAT_MS)).toHaveLength(1)
-  })
-
-  test('a session posts every tick only while a permission waits on a device, every 6 s while one looks, otherwise on news or every 30 s', () => {
-    // Every session of the account polls on its own: 2 s for all of them while a device looks would spend the free
-    // plan's 100k requests a day in a few hours. Fast polling is kept for an Allow waiting on Face ID.
-    const quiet = { isActive: false, isHolding: false, hasNews: false, isChanged: false, now: 10_000, lastAt: 0 }
-    expect(isPostDue(quiet)).toBe(false)
-    expect(isPostDue({ ...quiet, isActive: true, now: TICK_MS, lastAt: 0 })).toBe(false)
-    expect(isPostDue({ ...quiet, isActive: true, now: ACTIVE_POLL_MS, lastAt: 0 })).toBe(true)
-    expect(isPostDue({ ...quiet, isActive: true, isHolding: true, now: TICK_MS, lastAt: 0 })).toBe(true)
-    expect(isPostDue({ ...quiet, isChanged: true })).toBe(true)
-    expect(isPostDue({ ...quiet, hasNews: true })).toBe(true)
-    expect(isPostDue({ ...quiet, now: HEARTBEAT_MS })).toBe(true)
-    // A relay that is down is retried less and less often, never more than five minutes apart.
-    expect([1, 2, 3].map(backoffMs)).toEqual([4000, 8000, 16000])
-    expect(backoffMs(30)).toBe(5 * 60_000)
   })
 })
 
@@ -367,7 +218,7 @@ function session(on: On) {
   const clock = mock.clock(on, { now: T0 })
   mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod' })
   on('session.cwd', async () => ({ value: '/work/claudeflow' }))
-  on('session.id', async () => ({ value: 'sess-1' }))
+  on('session.id', async () => ({ value: SESSION }))
   on('session.start', async (_$, e) => e as never)
   on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
   on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
@@ -401,7 +252,7 @@ describe('the session on the relay', () => {
     await clock.advance(TICK_MS)
     expect(sent).toHaveLength(1)
     expect(sent[0]?.url).toBe(`${RELAY}/v1/room/${me.room}/up`)
-    expect(sent[0]?.body).toEqual({ token: me.token, session: 'sess-1', since: 0, frames: [] })
+    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [] })
     // Nothing changed and no device looks: no request until the heartbeat, which carries the cursor on.
     await clock.advance(HEARTBEAT_MS - TICK_MS)
     expect(sent).toHaveLength(1)

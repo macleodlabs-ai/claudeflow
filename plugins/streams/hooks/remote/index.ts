@@ -4,7 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { mem } from '../state'
 import { gitStatus, limitView, type StatusLine } from '../status'
 import { colorOf, healthsOf, statusLinesOf, ticketsOf, type Facts } from '../streams/model'
-import { PAIRING_MS, backoffMs, createLink, devicesOf, identityOf, isPostDue, originOf, pairingOf, snapshotKey, upOf, type Link, type OutFrame } from './link'
+import { PAIRING_MS, createLink, devicesOf, identityOf, originOf, pairingOf, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import { HEARTBEAT_MS, PHONE_PERMISSION_MS, accountOf, permissionSummary, snapshotOf, type PendingPermission, type PhoneCommand, type Snapshot } from './snapshot'
 
@@ -49,10 +49,8 @@ export type RemoteOptions = {
 let me: Snapshot['session'] | undefined
 /** The sealed link to the devices, made once the account has an identity. */
 let link: Link | undefined
-/** What was last posted and when, and when the relay may be tried again after it failed. */
-const poll = { lastBody: '', lastAt: 0, fails: 0, retryAt: 0, isBusy: false }
-/** Welcomes and denials not yet posted. */
-let outbox: OutFrame[] = []
+/** A tick is running: the next one waits, so two posts never race on the same link. */
+let isTicking = false
 
 /** Permission prompts held for the devices, by call id, each with the answer that releases it. */
 const held = new Map<string, { ask: PendingPermission; answer: (d: 'allow' | 'deny') => void }>()
@@ -68,63 +66,46 @@ async function remoteStart($: $, e: { cwd: string }) {
 }
 
 /**
- * Every tick: post `up` when it is due (ARCHITECTURE.md, "Polling budget"), sending welcomes and sealed snapshots
- * and taking back hellos and commands. Quiet with no relay set, nothing paired and no pairing open, and after a
- * failed post until its backoff ends.
+ * Every tick: post `up` when the link says one is due (link.ts, `next`), sending welcomes and sealed snapshots and
+ * taking back hellos and commands. Only the effects are here: $.store, the post itself, and the commands.
  */
 async function remoteTick($: $) {
-  if (!options.relayUrl || !me || poll.isBusy) return
-  poll.isBusy = true
+  if (!options.relayUrl || !me || isTicking) return
+  isTicking = true
   try {
     const now = await $.clock.now()
-    if (now < poll.retryAt) return
     const [identity, stored, pairing] = await Promise.all([
       $.store.get(STORE.identity).then(identityOf),
       $.store.get(STORE.devices).then(devicesOf),
       $.store.get(STORE.pairing).then(pairingOf),
     ])
-    // No device could answer: the relay is not asked, so an unpaired account spends none of the free plan.
-    if (!identity || (!stored.length && !(pairing && now < pairing.until))) return
-    let devices = stored
+    if (!identity) return
     if (link?.room !== identity.room) link = createLink({ identity, session: me.id, origin: originOf(options.relayUrl) })
-    const snap = await snapshotNow($, me)
-    const body = snapshotKey(snap)
-    if (!isPostDue({ isActive: link.isAnyActive(), isHolding: held.size > 0, hasNews: outbox.length > 0, isChanged: body !== poll.lastBody, now, lastAt: poll.lastAt })) return
-    // A second round only when the first answered hellos: their welcomes, and the first snapshot, go at once.
-    for (let round = 0; round < 2; round++) {
-      const frames = [...outbox, ...link.snapshots(snap, now)]
-      outbox = []
+    let devices = stored
+    // No device could answer, or the relay is backing off: no snapshot is made, and the relay is not asked.
+    if (link.isQuiet({ devices, pairing, now })) return
+    const snapshot = await snapshotNow($, me)
+    let post = link.next({ devices, pairing, now, snapshot, isHolding: held.size > 0 })
+    while (post) {
       const r = await $.http
         .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/room/${identity.room}/up`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ token: identity.token, session: me.id, since: link.since(), frames }),
+          body: JSON.stringify(post),
         })
         .catch(() => undefined)
-      const answer = r?.ok ? upOf(r.text) : undefined
-      if (!answer) {
-        outbox = frames.filter(f => (f.data as { t?: string }).t !== 'box')
-        link.unsent()
-        poll.fails++
-        poll.retryAt = now + backoffMs(poll.fails)
-        return
-      }
-      poll.fails = 0
-      poll.lastBody = body
-      poll.lastAt = now
-      const taken = link.take(answer, { devices, pairing, now })
-      if (taken.paired.length) {
+      const got = link.answered(r?.ok ? r.text : undefined, now)
+      if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
         const fresh = devicesOf(await $.store.get(STORE.devices))
-        devices = [...fresh.filter(d => !taken.paired.some(p => p.id === d.id)), ...taken.paired]
+        devices = [...fresh.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired]
         await $.store.set(STORE.devices, devices)
       }
-      for (const c of taken.commands) await phoneCommand($, c.command).catch(() => {})
-      outbox = taken.send
-      if (!outbox.length) break
+      for (const c of got.commands) await phoneCommand($, c.command).catch(() => {})
+      post = got.again ? link.next({ devices, pairing, now, snapshot, isHolding: held.size > 0 }) : undefined
     }
   } finally {
-    poll.isBusy = false
+    isTicking = false
   }
 }
 
@@ -153,7 +134,6 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     lines,
     streams,
     colorOf,
-    loops,
     agents: Object.values(agents),
     rows,
     status: [...git.lines, ...ticketsOf(facts, lines)],

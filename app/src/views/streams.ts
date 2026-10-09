@@ -1,7 +1,7 @@
 // The Streams view: a card per stream, a waiting one with its question and Yes / Reply, and a reply box whose
 // draft comes from the state, so a redraw from a new snapshot keeps what was typed.
 import { SENT_MS, streamKey, type State } from '../state'
-import { clock, color, detailOf, esc, GLYPH, kindOf, STATE_COLOR, type Stream } from './util'
+import { clock, color, esc, GLYPH, kindOf, lineText, STATE_COLOR, type Stream } from './util'
 
 const ROW_CLASS: Record<string, string> = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
 
@@ -32,7 +32,7 @@ export function card(s: State, sessionKey: string, x: Stream, now: number): stri
     : ''
   return `<section class="card ${isOpen ? 'open' : ''}" style="--c:${color(x.color)}">
     <div class="head" data-toggle="${esc(key)}">${icon}
-      <div class="title"><div class="name">${esc(x.name)}</div>${x.question ? '' : `<div class="detail">${esc(detailOf(x, now))}</div>`}</div>
+      <div class="title"><div class="name">${esc(x.name)}</div>${x.question ? '' : `<div class="detail">${esc(lineText(x, now))}</div>`}</div>
       <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>
       <span class="chev">${isOpen ? '▾' : '▸'}</span></div>
     ${question}

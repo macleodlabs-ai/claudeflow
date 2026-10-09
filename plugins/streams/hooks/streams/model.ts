@@ -77,7 +77,6 @@ export function statusLinesOf(f: Facts, streams: readonly Stream[], health: Reco
           .filter(a => a.streamId === s.id && a.status === 'running')
           .sort((a, b) => b.lastAt - a.lastAt),
         lastSaid: f.rows.findLast(r => r.streamId === s.id && (r.kind === 'prompt' || r.kind === 'reply')),
-        now: f.now,
       })
     })
   return sortStatus(lines, Object.fromEntries(streams.map(s => [s.id, s.lastAt])))

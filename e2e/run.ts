@@ -1,12 +1,13 @@
 // End-to-end proof, all on this Mac: the real relay (`wrangler dev`), the real app (relay/cloudflare/public, built by
 // app/build.sh), two headless Chrome devices with virtual passkeys, and a Claude Code session played by the plugin's
-// own pure remote core (hooks/remote/link.ts + seal.ts) posting to /v1/room/{room}/up with real fetch calls.
+// own pure remote core (hooks/remote/link.ts + seal.ts) posting to /v1/room/{room}/up with real fetch calls, on
+// the link's own polling cadence.
 // Run from the repo root with Node 22+ on PATH (wrangler needs it): bun e2e/run.ts [shots dir]
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PAIRING_MS, createLink, upOf, type Device, type Identity, type Pairing } from '../plugins/streams/hooks/remote/link'
+import { PAIRING_MS, createLink, type Device, type Identity, type Pairing } from '../plugins/streams/hooks/remote/link'
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
 import type { PhoneCommand, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
 
@@ -18,6 +19,12 @@ const PORT = 8791
 const ORIGIN = `http://localhost:${PORT}`
 const UP = `http://127.0.0.1:${PORT}`
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+/**
+ * How long a hello or a command may wait for the session to read it. The session learns that a device is looking
+ * only from a post's answer after the device was welcomed and pinged, so until then it polls at its idle 30 s
+ * (ARCHITECTURE.md, "Polling budget").
+ */
+const POLL_WAIT_MS = 45_000
 
 const results: { name: string; ok: boolean; why?: string }[] = []
 const check = (name: string, ok: boolean, why = '') => {
@@ -97,6 +104,9 @@ async function openDevice(name: string, port: number) {
 }
 
 // ---- the session: what hooks/remote/index.ts does on each tick, with plain fetch and memory for $.store ----
+/** hooks/remote/index.ts's TICK_MS (index.ts needs the engine, so it is not imported here). */
+const TICK_MS = 2000
+
 function startSession() {
   const sk = newIdentity().sk
   const identity: Identity = { room: randomId(), token: randomId(32), sk }
@@ -118,35 +128,30 @@ function startSession() {
     session: { id, account: 'e2e', project: 'claudeflow', busy: true },
     at: Date.now(),
     streams: [
-      { id: 'st1', name: 'relay deploy', color: '#79c0ff', kind: 'waiting', state: 'WAITING FOR YOU', detail: '', lastAt: at, question: 'Deploy the relay now?', agents: [], rows: [{ kind: 'prompt', text: 'ship the relay', at }] },
-      { id: 'st2', name: 'phone app', color: '#ffd33d', kind: 'running', state: 'RUNNING', detail: 'building views', lastAt: at, agents: [], rows: [] },
+      { id: 'st1', name: 'relay deploy', color: '#79c0ff', kind: 'waiting', state: 'WAITING FOR YOU', detail: '', question: 'Deploy the relay now?', agents: [], rows: [{ kind: 'prompt', text: 'ship the relay', at }] },
+      { id: 'st2', name: 'phone app', color: '#ffd33d', kind: 'running', state: 'RUNNING', detail: 'building views', agents: [], rows: [] },
     ],
     status: [{ id: 'g', area: 'main', state: 'clean', detail: '' }],
     limits: [],
     updates: [],
     permissions: s.permissions,
   }) as Snapshot
-  const post = async (frames: unknown[]) => {
-    s.posts++
-    const r = await fetch(`${UP}/v1/room/${identity.room}/up`, { method: 'POST', body: JSON.stringify({ token: identity.token, session: id, since: link.since(), frames }) })
-    return upOf(await r.text())
-  }
+  // The same calls as index.ts's tick, on the same 2 s clock: the link decides when to post and what.
   void (async () => {
-    let out: unknown[] = []
     while (s.isRunning) {
-      const r = await post(out).catch(() => undefined)
-      out = []
-      if (r) {
-        const now = Date.now()
-        const t = link.take(r, { devices: s.devices, pairing, now })
-        for (const d of t.paired) s.devices = [...s.devices.filter(x => x.id !== d.id), d]
-        s.commands.push(...t.commands)
-        for (const f of t.send) if ((f.data as { t: string }).t === 'denied') s.denied.push({ to: f.to, why: (f.data as { why: string }).why })
-        // Welcomes first, then the first sealed snapshot behind them, in one post (index.ts does the same).
-        out = [...t.send, ...link.snapshots(snapshot(), now)]
-        if (out.length) continue
+      const now = Date.now()
+      const known = () => ({ devices: s.devices, pairing, now, snapshot: snapshot(), isHolding: s.permissions.length > 0 })
+      let post = link.next(known())
+      while (post) {
+        s.posts++
+        for (const f of post.frames) if ((f.data as { t: string }).t === 'denied') s.denied.push({ to: f.to, why: (f.data as { why: string }).why })
+        const r = await fetch(`${UP}/v1/room/${identity.room}/up`, { method: 'POST', body: JSON.stringify(post) }).catch(() => undefined)
+        const got = link.answered(r?.ok ? await r.text().catch(() => undefined) : undefined, now)
+        for (const d of got.paired) s.devices = [...s.devices.filter(x => x.id !== d.id), d]
+        s.commands.push(...got.commands)
+        post = got.again ? link.next(known()) : undefined
       }
-      await sleep(400)
+      await sleep(TICK_MS)
     }
   })()
   return s
@@ -163,7 +168,7 @@ const stopLeftovers = () => {
 // ---- the run ----
 let failed = false
 try {
-  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets three minutes.
+  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets four minutes.
   await Promise.race([
     (async () => {
       const v = spawnSync('node', ['--version']).stdout?.toString().trim() ?? ''
@@ -186,7 +191,7 @@ try {
       await d1.shot('e2e-01-device1-pair.png')
       check('both devices show "Pair this device" for the link', true)
       await Promise.all([d1, d2].map(d => d.tap('[data-gate="pair"]')))
-      await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?')))
+      await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?', POLL_WAIT_MS)))
       const [id1, id2] = await Promise.all([d1.deviceId(), d2.deviceId()])
       check('both devices paired with a passkey and are stored by the session', s.devices.length === 2 && [id1, id2].every(i => s.devices.some(d => d.id === i)), JSON.stringify(s.devices.map(d => d.id)))
       check('each device opened the session\'s sealed snapshot', true)
@@ -198,13 +203,13 @@ try {
       check('after a reload both devices are Locked', !(await d1.text()).includes('Deploy the relay now?'))
       await d2.shot('e2e-03-device2-locked.png')
       await Promise.all([d1, d2].map(d => d.tap('[data-gate="unlock"]')))
-      await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?')))
+      await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?', POLL_WAIT_MS)))
       check('both devices unlocked with a passkey hello and see the snapshot', true)
       await d2.shot('e2e-04-device2-unlocked.png')
 
       // Device 1 answers Yes.
       await d1.tap('[data-answer]')
-      const answer = await until('the answer command', () => s.commands.find(c => c.command.kind === 'answer'))
+      const answer = await until('the answer command', () => s.commands.find(c => c.command.kind === 'answer'), POLL_WAIT_MS)
       check('device 1 taps Yes and the session receives "answer yes" from device 1',
         answer.device === id1 && answer.command.kind === 'answer' && answer.command.text === 'yes' && answer.command.streamId === 'st1', JSON.stringify(answer))
 
@@ -222,7 +227,7 @@ try {
       await d3.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${randomId(32)}`)
       await d3.see('Pair this device')
       await d3.tap('[data-gate="pair"]')
-      await d3.see('bad pairing proof')
+      await d3.see('bad pairing proof', POLL_WAIT_MS)
       const id3 = await d3.deviceId()
       check('an unpaired device with a bogus secret is denied ("bad pairing proof")', s.denied.some(x => x.to === id3 && x.why === 'bad pairing proof'))
       check('the denied device is not stored and saw no snapshot', !s.devices.some(d => d.id === id3) && !(await d3.text()).includes('Deploy the relay now?'))
@@ -232,8 +237,8 @@ try {
       s.isRunning = false
       for (const d of [d1, d2, d3]) d.close()
     })(),
-    sleep(180_000).then(() => {
-      throw new Error('the run took over 3 minutes')
+    sleep(240_000).then(() => {
+      throw new Error('the run took over 4 minutes')
     }),
   ])
 } catch (e) {

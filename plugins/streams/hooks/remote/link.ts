@@ -2,8 +2,8 @@ import { channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyCh
 import { HEARTBEAT_MS, commandOf, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 
 // One session's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), with no engine in it: it
-// reads what the relay answered and says what to send, which devices were paired and which commands to do. The
-// engine adapter (index.ts) does the posting, the store and the effects, so all of this runs in plain tests.
+// reads what the relay answered and says what to post and when, which devices were paired and which commands to do.
+// The engine adapter (index.ts) does the posting, the store and the effects, so all of this runs in plain tests.
 
 /** The account's identity in $.store: room id, relay token, X25519 secret key (all b64u). */
 export type Identity = { room: string; token: string; sk: string }
@@ -84,18 +84,40 @@ const assertionOf = (v: unknown): PasskeyAssertion | undefined => {
 /** One open, sealed connection with a device. */
 type Conn = { device: Device; ch: ReturnType<typeof channel>; peerEph: string; last: { body: string; at: number } }
 
-export type Taken = {
-  /** Welcomes and denials, to post now. */
-  send: OutFrame[]
-  /** Devices that paired with this hello: the adapter adds them to $.store for every session. */
+type Taken = { send: OutFrame[]; paired: Device[]; commands: { device: string; command: PhoneCommand }[] }
+
+/** What the session knows of its devices on this tick, from $.store: the paired ones, and an open pairing. */
+export type Known = { devices: Device[]; pairing?: Pairing; now: number }
+
+/** The body of `POST /v1/room/{room}/up`. */
+export type UpBody = { token: string; session: string; since: number; frames: OutFrame[] }
+
+export type Answered = {
+  /** Devices that paired with this post's hellos: the adapter adds them to $.store for every session. */
   paired: Device[]
   /** Commands opened from sealed boxes, checked; an `allow` only with a verified passkey. */
   commands: { device: string; command: PhoneCommand }[]
+  /**
+   * Post again now: hellos were answered, so the welcomes and the first snapshot go at once. Call `next` again with
+   * the devices just paired among `devices`, or their new channels are closed as forgotten.
+   */
+  again: boolean
 }
 
+/** How long to wait before trying the relay again after `fails` failures in a row: 4 s doubling, at most 5 min. */
+const backoffMs = (fails: number): number => Math.min(5 * 60_000, 2000 * 2 ** Math.max(1, fails))
+
+/** How often a session posts while a device looks and nothing waits on it: every third 2 s tick. */
+export const ACTIVE_POLL_MS = 6000
+
+/** Posts in one tick at most: the first, and one more when it answered hellos. A relay that keeps sending hellos gets no more. */
+export const MAX_ROUNDS = 2
+
 /**
- * The session's link to its devices: one sealed channel per device, made by answering its hello. `identity` is the
- * account's; `origin` is the relay's, where the devices' passkeys live.
+ * The session's link to its devices: one sealed channel per device, made by answering its hello, and the post cycle
+ * that carries them (ARCHITECTURE.md, "Polling budget"). `identity` is the account's; `origin` is the relay's, where
+ * the devices' passkeys live. Each tick the adapter asks `next` for a post, sends it, and hands the answer (or the
+ * failure) to `answered`; the link keeps the cursor, the welcomes not yet sent, the cadence and the backoff.
  */
 export function createLink(o: { identity: Identity; session: string; origin: string }) {
   const conns = new Map<string, Conn>()
@@ -103,6 +125,14 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   const allowsTried = new Set<string>()
   let connected = new Map<string, boolean>()
   let since = 0
+  /** What was last posted and when, and when the relay may be tried again after it failed. */
+  const poll = { lastBody: '', lastAt: 0, fails: 0, retryAt: 0 }
+  /** Welcomes and denials not yet posted. */
+  let outbox: OutFrame[] = []
+  /** The post on the wire, read back by `answered`. */
+  let sent: { frames: OutFrame[]; body: string; known: Known } | undefined
+  /** Which post of this tick comes next: 0 is the tick's first, which waits until one is due. */
+  let round = 0
 
   function welcome(h: Hello, device: Device): OutFrame {
     const eph = newIdentity()
@@ -157,88 +187,114 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     return passkey && verifyPasskey(passkey, conn.device.credentialKey, challenge, o.origin) ? c : undefined
   }
 
+  /** Reads an `up` answer: hellos answered (pairing new devices), boxes opened into commands. */
+  function take(r: UpResponse, w: Known): Taken {
+    const out: Taken = { send: [], paired: [], commands: [] }
+    const before = connected
+    // Anyone who knows the room id can open a socket there: only devices that may talk to this session count.
+    const isPairing = !!w.pairing && w.now < w.pairing.until
+    const mayTalk = r.devices.filter(d => isPairing || w.devices.some(x => x.id === d.id))
+    connected = new Map(mayTalk.map(d => [d.id, d.isActive === true]))
+    // A device back after a gap gets the snapshot at once, not at the next heartbeat.
+    for (const [id, c] of conns) if (connected.has(id) && !before.has(id)) c.last = { body: '', at: 0 }
+    const devices = [...w.devices]
+    for (const f of r.frames) {
+      if (typeof f.seq === 'number' && f.seq > since) since = f.seq
+      const data = obj(f.data)
+      if (data.t === 'hello') {
+        const h = helloOf(data)
+        if (!h) continue
+        const admitted = admit(h, devices, w.pairing, w.now)
+        if (typeof admitted === 'string') {
+          out.send.push({ to: h.device, data: { t: 'denied', why: admitted } })
+          continue
+        }
+        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey)) {
+          devices.splice(0, devices.length, ...devices.filter(d => d.id !== admitted.id), admitted)
+          out.paired.push(admitted)
+        }
+        out.send.push(welcome(h, admitted))
+      } else if (data.t === 'box') {
+        const conn = conns.get(f.from)
+        const c = conn && command(conn, data.b)
+        if (c) out.commands.push({ device: f.from, command: c })
+      }
+    }
+    return out
+  }
+
+  /** The snapshot sealed for every unlocked, connected device it is news to (or due again as a heartbeat). */
+  function snapshots(s: Snapshot, now: number): OutFrame[] {
+    const body = snapshotKey(s)
+    const out: OutFrame[] = []
+    for (const [id, c] of conns) {
+      if (!connected.has(id)) continue
+      if (body === c.last.body && now - c.last.at < HEARTBEAT_MS) continue
+      c.last = { body, at: now }
+      out.push({ to: id, data: { t: 'box', b: c.ch.seal({ t: 'snapshot', snapshot: s }) } })
+    }
+    return out
+  }
+
+  /** Whether no device could answer, or the relay failed and its backoff has not ended: then no snapshot is needed. */
+  const isQuiet = (k: Known): boolean => k.now < poll.retryAt || (!k.devices.length && !(k.pairing && k.now < k.pairing.until))
+
   return {
     room: o.identity.room,
-
-    /** The relay cursor: device frames up to here are read. */
-    since: () => since,
-
-    /** Whether a paired device (any device while a pairing is open) is looking now: the session then polls faster. */
-    isAnyActive: () => [...connected.values()].some(Boolean),
 
     /** Whether a device with an open channel is looking now: only then are permission prompts held for it. */
     isLooking: () => [...conns.keys()].some(id => connected.get(id) === true),
 
-    /** Reads an `up` answer: hellos answered (pairing new devices), boxes opened into commands. */
-    take(r: UpResponse, w: { devices: Device[]; pairing?: Pairing; now: number }): Taken {
-      const out: Taken = { send: [], paired: [], commands: [] }
-      // A forgotten device loses its channel at once, in every session.
-      for (const id of conns.keys()) if (!w.devices.some(d => d.id === id)) conns.delete(id)
-      const before = connected
-      // Anyone who knows the room id can open a socket there: only devices that may talk to this session count.
-      const isPairing = !!w.pairing && w.now < w.pairing.until
-      const mayTalk = r.devices.filter(d => isPairing || w.devices.some(x => x.id === d.id))
-      connected = new Map(mayTalk.map(d => [d.id, d.isActive === true]))
-      // A device back after a gap gets the snapshot at once, not at the next heartbeat.
-      for (const [id, c] of conns) if (connected.has(id) && !before.has(id)) c.last = { body: '', at: 0 }
-      const devices = [...w.devices]
-      for (const f of r.frames) {
-        if (typeof f.seq === 'number' && f.seq > since) since = f.seq
-        const data = obj(f.data)
-        if (data.t === 'hello') {
-          const h = helloOf(data)
-          if (!h) continue
-          const admitted = admit(h, devices, w.pairing, w.now)
-          if (typeof admitted === 'string') {
-            out.send.push({ to: h.device, data: { t: 'denied', why: admitted } })
-            continue
-          }
-          if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey)) {
-            devices.splice(0, devices.length, ...devices.filter(d => d.id !== admitted.id), admitted)
-            out.paired.push(admitted)
-          }
-          out.send.push(welcome(h, admitted))
-        } else if (data.t === 'box') {
-          const conn = conns.get(f.from)
-          const c = conn && command(conn, data.b)
-          if (c) out.commands.push({ device: f.from, command: c })
+    isQuiet,
+
+    /**
+     * The post to send now, or none. A tick's first post waits until one is due: every tick while a permission is
+     * held for a looking device (`isHolding`), when there are welcomes to send, or when the snapshot changed; every
+     * 6 s while a paired device (any device while a pairing is open) looks; otherwise every 30 s. An account with
+     * nothing paired and no pairing open never posts, and a failed post waits out its backoff.
+     */
+    next(k: Known & { snapshot: Snapshot; isHolding: boolean }): UpBody | undefined {
+      // A forgotten device loses its channel at once, in every session: nothing more is sealed for it.
+      for (const id of conns.keys()) if (!k.devices.some(d => d.id === id)) conns.delete(id)
+      if (isQuiet(k)) return undefined
+      const body = snapshotKey(k.snapshot)
+      const isActive = [...connected.values()].some(Boolean)
+      const isDue = round > 0 || k.isHolding || outbox.length > 0 || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
+      if (!isDue) return undefined
+      const frames = [...outbox, ...snapshots(k.snapshot, k.now)]
+      outbox = []
+      sent = { frames, body, known: { devices: k.devices, pairing: k.pairing, now: k.now } }
+      return { token: o.identity.token, session: o.session, since, frames }
+    },
+
+    /**
+     * Reads what the relay answered the last post: its body when the post succeeded, undefined when it failed. A
+     * failure keeps the welcomes and denials to send again, drops the sealed snapshots (they are sealed afresh next
+     * time, on the channel's next counter) and backs off: 4 s, doubling, at most 5 min.
+     */
+    answered(text: string | undefined, now: number): Answered {
+      const s = sent
+      sent = undefined
+      const r = text === undefined ? undefined : upOf(text)
+      if (!s || !r) {
+        if (s) {
+          outbox = [...s.frames.filter(f => obj(f.data).t !== 'box'), ...outbox]
+          for (const c of conns.values()) c.last = { body: '', at: 0 }
+          poll.fails++
+          poll.retryAt = now + backoffMs(poll.fails)
         }
+        round = 0
+        return { paired: [], commands: [], again: false }
       }
-      return out
-    },
-
-    /** The snapshot sealed for every unlocked, connected device it is news to (or due again as a heartbeat). */
-    snapshots(s: Snapshot, now: number): OutFrame[] {
-      const body = snapshotKey(s)
-      const out: OutFrame[] = []
-      for (const [id, c] of conns) {
-        if (!connected.has(id)) continue
-        if (body === c.last.body && now - c.last.at < HEARTBEAT_MS) continue
-        c.last = { body, at: now }
-        out.push({ to: id, data: { t: 'box', b: c.ch.seal({ t: 'snapshot', snapshot: s }) } })
-      }
-      return out
-    },
-
-    /** The post carrying the last snapshots failed: send them again next time. */
-    unsent() {
-      for (const c of conns.values()) c.last = { body: '', at: 0 }
+      poll.fails = 0
+      poll.lastBody = s.body
+      poll.lastAt = now
+      const t = take(r, s.known)
+      outbox = t.send
+      round = outbox.length && round + 1 < MAX_ROUNDS ? round + 1 : 0
+      return { paired: t.paired, commands: t.commands, again: round > 0 }
     },
   }
 }
 
 export type Link = ReturnType<typeof createLink>
-
-/** How long to wait before trying the relay again after `fails` failures in a row: 4 s doubling, at most 5 min. */
-export const backoffMs = (fails: number): number => Math.min(5 * 60_000, 2000 * 2 ** Math.max(1, fails))
-
-/** How often a session posts while a device looks and nothing waits on it: every third 2 s tick. */
-export const ACTIVE_POLL_MS = 6000
-
-/**
- * Whether to post `up` this tick (ARCHITECTURE.md, "Polling budget"): every tick while a permission is held for a
- * looking device, when there is something to send, or when the snapshot changed; every 6 s while a device looks;
- * otherwise only when a heartbeat is due.
- */
-export const isPostDue = (x: { isActive: boolean; isHolding: boolean; hasNews: boolean; isChanged: boolean; now: number; lastAt: number }): boolean =>
-  x.isHolding || x.hasNews || x.isChanged || x.now - x.lastAt >= (x.isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)

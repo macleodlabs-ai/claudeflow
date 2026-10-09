@@ -19,10 +19,11 @@ Claude Code sessions (each one, every account)            Phones / tablets (any 
 | --- | --- | --- |
 | `plugins/streams/hooks/vendor/noble.js` (+ `.d.ts`) | @noble/curves, ciphers, hashes **2.4.0**, bundled to one ESM file (`bun build`, target browser). The plugin runtime's `crypto.subtle` has only `digest`, so all crypto is pure JS. | — |
 | `plugins/streams/hooks/remote/seal.ts` | The protocol's crypto, shared by plugin and app (the app build imports this same file). | vendor/noble |
-| `plugins/streams/hooks/remote/` (other files) | The session's side: identity, pairing, per-device channels, snapshot fan-out, commands, held permissions, passkey checks. Pure logic takes injected I/O so it is testable without the engine. | seal |
+| `plugins/streams/hooks/remote/device.ts` | The device's side of the protocol (hello, welcome, sealed snapshots and commands), pure: passkey assertions come in as data. Shared like seal.ts: the app's `transport.ts` adds only the WebSocket and WebAuthn, and the plugin's tests run it against the real session link. | seal |
+| `plugins/streams/hooks/remote/` (other files) | The session's side: identity, pairing, per-device channels, snapshot fan-out, commands, held permissions, passkey checks. `link.ts` is pure and owns the whole post cycle (what to post and when, backoff, retries); `index.ts` only runs its effects. | seal |
 | `plugins/streams/hooks/` (rest) | Streams: classify/routing (`classify.ts`), state, terminal UI split into components (`ui/`), updates. Each module exports `wireX(on)` and registers its own hooks; `register.tsx` only calls them in order (the order decides which hook answers first). | — |
 | `relay/cloudflare/` | Worker + Durable Object `Room` (SQLite-backed: the free plan's only kind). Serves the app as static assets. | — |
-| `app/` | The phone/tablet app source: static HTML + CSS + TS modules, built by `app/build.sh` (bun build) into `relay/cloudflare/public/`. Includes the pairing page with the QR code (qrcode-generator **2.0.4**, bundled). | seal |
+| `app/` | The phone/tablet app source: static HTML + CSS + TS modules, built by `app/build.sh` (bun build) into `relay/cloudflare/public/`. Includes the pairing page with the QR code (qrcode-generator **2.0.4**, bundled). | seal, device |
 | `e2e/run.ts` | The end-to-end proof: `wrangler dev`, a session played by `remote/link.ts`, two headless Chrome devices with virtual passkeys, and a refused stranger. | all of the above |
 
 Removed: the local bridge (`plugins/streams/bridge/`), launchd install, Tailscale mode, the Bun relay (`relay/server.ts`, `relay/Dockerfile`), and the Pane's `mobile` surface branch (no phone client draws plugin UI).
@@ -67,7 +68,7 @@ Plain (public values only):
 - The registration's `clientDataJSON` is checked for type, origin and challenge (its signature is not checked: no attestation); the pairing proof is what ties the stored passkey to this pairing.
 
 Sealed (after welcome; `{ t: "box", b }`):
-- session → device: `{ t: "snapshot", snapshot }` (the existing `Snapshot` shape, plus `permissions`), on change and every 30 s. Nothing in it is a running clock (a stream's detail has its "· 5s ago" cut, an agent carries `startedAt` and `endedAt`, not its elapsed time), so an unchanged session is not news every tick; the app counts the time itself.
+- session → device: `{ t: "snapshot", snapshot }` (the existing `Snapshot` shape, plus `permissions`), on change and every 30 s. Nothing in it is a running clock: a stream carries its clocks as times (`since`, last active; `nextAt`, a loop's next tick; epoch ms, copied from its status line) beside a `detail` with no clock in it, and an agent carries `startedAt` and `endedAt`, not its elapsed time. So an unchanged session is not news every tick. The terminal and the app both count the time as they draw (`status.ts` `lineText`).
 - device → session: `{ t: "command", command }` with the commands `answer`, `stop`, `permission`. An `allow` carries `command.passkey`: an assertion over `passkeyChallenge("allow", requestId, eph)`, `eph` being the device's ephemeral key from this connection's hello; the session checks it once per requestId (a failed check uses that try up).
 
 ### Pairing
@@ -76,7 +77,7 @@ Sealed (after welcome; `{ t: "box", b }`):
 
 ### Polling budget (free plan: 100k requests/day across Worker + Room)
 
-A session ticks every 2 s and posts `up` when its sealed snapshot changes or it has frames to send; every tick while it holds a permission prompt for a looking device (the Allow should land fast); every 6 s while a device is active; otherwise every 30 s. Only paired devices count as active (any device while a pairing is open): anyone with the room id can open a socket, and must not keep the account polling fast. A session whose account has no paired device and no open pairing never calls the relay. When it answers hellos it posts again in the same tick, so the welcome and the first snapshot arrive together. Device pings every 15 s while visible (WebSocket messages count 1/20).
+A session ticks every 2 s and posts `up` when its sealed snapshot changes or it has frames to send; every tick while it holds a permission prompt for a looking device (the Allow should land fast); every 6 s while a device is active; otherwise every 30 s. Only paired devices count as active (any device while a pairing is open): anyone with the room id can open a socket, and must not keep the account polling fast. A session whose account has no paired device and no open pairing never calls the relay. When it answers hellos it posts again in the same tick, so the welcome and the first snapshot arrive together. Device pings every 15 s while visible (WebSocket messages count 1/20). All of this is decided in `remote/link.ts` (`next` says what to post and when, `answered` reads the answer or the failure); `remote/index.ts` and `e2e/run.ts` only make the posts.
 
 Counted for 3 sessions (each post is one Worker and one Room request): idle with nothing looking, 3 × 2,880 posts = 17,280 requests a day; with a device looking, 3 × 600 posts = 3,600 requests an hour, so about 23 hours of looking a day fit in the rest. Posts on change come on top: a session that is working changes often.
 

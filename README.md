@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 145 passing" src="https://img.shields.io/badge/tests-145%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 149 passing" src="https://img.shields.io/badge/tests-149%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -336,7 +336,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (115 tests) and `claude plugin validate --strict .` |
+| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (119 tests) and `claude plugin validate --strict .` |
 | The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (9 tests against a real `wrangler dev`) |
 | The phone and tablet app | `app` | `bun test` (21 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
 | Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (12 checks) |
