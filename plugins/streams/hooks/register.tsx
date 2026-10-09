@@ -4,8 +4,8 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 import type { AgentRun, ChatStyle, Folded, Health, Stream, StreamRow, StreamRowKind } from '../types'
 import type { Installed, MarketEntry, Update } from './updates'
 import { CHECK_EVERY_MS, manifestPathOf, pluginsDirOf, updatesOf } from './updates'
-import type { Snapshot } from './phone'
-import { BRIDGE_FILES, BRIDGE_LABEL, BRIDGE_PORT, BRIDGE_SOCKET, HEARTBEAT_MS, PUSH_EVERY_MS, RETRY_MS, TAILSCALE_BINS, accountOf, isDue, snapshotOf, tailnetHostOf } from './phone'
+import type { PendingPermission, PhoneCommand, Snapshot } from './phone'
+import { BRIDGE_FILES, BRIDGE_LABEL, BRIDGE_PORT, BRIDGE_SOCKET, HEARTBEAT_MS, PUSH_EVERY_MS, RETRY_MS, TAILSCALE_BINS, PHONE_PERMISSION_MS, accountOf, commandsOf, isDue, permissionSummary, snapshotOf, tailnetHostOf } from './phone'
 import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal, StatusKind, StatusLine } from './classify'
 import {
   BATCH_SYSTEM,
@@ -904,6 +904,12 @@ let phoneLast = { body: '', at: 0 }
 let phoneRetryAt = 0
 let phoneSession: Snapshot['session'] | undefined
 let phoneGit: { lines: StatusLine[]; at: number } = { lines: [], at: 0 }
+/** Whether the bridge says a phone has the page open now: only then do permission prompts go to it. */
+let isPhoneActive = false
+/** The main turn running now, for the phone's stop. */
+let runningTurn = ''
+/** Permission prompts held for the phone, by call id, each with the answer that releases it. */
+const heldPermissions = new Map<string, { ask: PendingPermission; answer: (d: 'allow' | 'deny') => void }>()
 
 /** Who this session is, for the phone's session list: its id, the account it runs as and its project folder. */
 async function phoneSessionOf($: $, cwd: string): Promise<Snapshot['session']> {
@@ -1001,6 +1007,7 @@ async function pushPhone($: $) {
     status: [...phoneGit.lines, ...(await ticketStatus($, lines, now))],
     limits,
     updates,
+    permissions: [...heldPermissions.values()].map(h => h.ask),
     now,
   })
   // The send time is left out of the comparison: only a change in what the phone draws is news.
@@ -1017,6 +1024,34 @@ async function pushPhone($: $) {
     .catch(() => false)
   if (sent) phoneLast = { body, at: now }
   else phoneRetryAt = now + RETRY_MS
+  if (sent || phoneLast.at) await takeCommands($)
+}
+
+/** Fetches what the phone asked of this session since the last tick, and does it. */
+async function takeCommands($: $) {
+  if (!phoneSession || (await $.clock.now()) < phoneRetryAt) return
+  const reply = await $.http
+    .fetch(`http://bridge/sessions/${encodeURIComponent(phoneSession.id)}/commands`, { socketPath: BRIDGE_SOCKET })
+    .then(r => (r.ok ? r.text : ''))
+    .catch(() => '')
+  const { commands, isPhoneActive: active } = commandsOf(reply)
+  isPhoneActive = active
+  for (const c of commands) await doCommand($, c).catch(err => $.ui.log(`phone command ${c.kind} failed: ${String(err)}`))
+}
+
+/** One thing the phone asked: an answer filed in its stream, a stop, or a permission decided. */
+async function doCommand($: $, c: PhoneCommand) {
+  if (c.kind === 'permission') {
+    heldPermissions.get(c.requestId)?.answer(c.decision)
+    return
+  }
+  if (c.kind === 'stop') {
+    if (runningTurn) await $.turn.abort({ turnId: runningTurn })
+    return
+  }
+  // The stream is made current first, so the answer is filed where it was asked, as the phone's yes is.
+  if ((await read($, streamsA)).some(st => st.id === c.streamId)) await update($, currentA, () => c.streamId)
+  await $.prompt.submit({ text: c.text, asUser: true })
 }
 
 export const register: Register = (on, options) => {
@@ -1205,6 +1240,26 @@ export const register: Register = (on, options) => {
     return r
   })
 
+  // While the phone has the page open, a permission prompt goes to it first; unanswered, it comes to the Mac as usual.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    const id = e.tool_use_id
+    if (verdict.decision !== 'ask' || !isPhoneActive || !id) return verdict
+    const ask: PendingPermission = { id, tool: e.tool, summary: permissionSummary(e.tool, e.input), at: await $.clock.now() }
+    let answer: (d: 'allow' | 'deny') => void = () => {}
+    const answered = new Promise<'allow' | 'deny'>(resolve => (answer = resolve))
+    heldPermissions.set(id, { ask, answer })
+    // Sent on the next tick, not after the heartbeat: the phone shows the prompt within two seconds.
+    phoneLast = { body: '', at: phoneLast.at }
+    try {
+      const decision = await Promise.race([answered, $.clock.sleep(PHONE_PERMISSION_MS).then(() => undefined)])
+      return decision ? { ...verdict, decision, reason: `${decision === 'allow' ? 'Allowed' : 'Denied'} on your phone` } : verdict
+    } finally {
+      heldPermissions.delete(id)
+      phoneLast = { body: '', at: phoneLast.at }
+    }
+  })
+
   on('tool.call', async ($, e, next) => {
     const sid = await inStream($, e.agentId)
     if (sid) await noteLoop($, sid, String(e.tool), e as unknown as LoopArgs).catch(() => {})
@@ -1225,6 +1280,7 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
+    runningTurn = e.turnId
     await update($, busyA, () => true)
     const startedAt = await $.clock.now()
     await update($, turnStartedAtA, () => startedAt)
@@ -1235,6 +1291,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
+    if (e.turnId === runningTurn) runningTurn = ''
     // A subagent's run is one turn of its loop: its end is the agent's end.
     const agentId = e.agentId
     if (agentId) {
