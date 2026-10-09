@@ -1040,7 +1040,7 @@ export const register: Register = (on, options) => {
       const shown = lines.slice(0, STATUS_ROWS)
       const width = e.props.bodyColumns
       const areaW = Math.min(24, Math.max(10, ...shown.map(l => l.area.length + 2)))
-      const stateW = Math.min(18, Math.max(8, ...shown.map(l => l.state.length + 2)))
+      const stateW = Math.min(28, Math.max(8, ...shown.map(l => l.state.length + 2)))
       const close = () => update($, statusOpenA, () => false)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="#8b949e" paddingX={1}>

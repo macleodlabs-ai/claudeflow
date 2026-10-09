@@ -499,7 +499,7 @@ export function statusOf(x: StatusInput): StatusLine {
     const top = x.running[0]
     if (!top) return line('running', `main turn · ${s.summary}`)
     const more = x.running.length > 1 ? `${x.running.length} agents · ` : ''
-    return line('running', `${more}${top.description}: ${top.last} (${top.tools} tools)`)
+    return line('running', `${more}${top.description}: ${top.tools ? `${top.last} (${top.tools} tools)` : 'starting up'}`)
   }
   if (x.loop) {
     const when = x.loop.kind === 'cron' ? x.loop.label : `next tick in ${clockOf(Math.max(0, x.loop.nextAt - now))}`
