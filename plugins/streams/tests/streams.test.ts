@@ -1222,7 +1222,7 @@ describe('setting up the phone', () => {
       return { value: undefined } as never
     })
     const r = await $.command.run({ command: 'streams', args: 'phone', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
-    expect(wrote).toEqual(['server.ts', 'app.html', 'install.sh'].map(f => `/Users/me/.claudeflow/bridge/${f}`))
+    expect(wrote).toEqual(['server.ts', 'remote.ts', 'seal.js', 'app.html', 'install.sh'].map(f => `/Users/me/.claudeflow/bridge/${f}`))
     expect(ran).toContain('/bin/sh /Users/me/.claudeflow/bridge/install.sh')
     expect(r.text).toContain('Phone bridge: updated and restarted.')
     expect(r.text).toContain('signed out')

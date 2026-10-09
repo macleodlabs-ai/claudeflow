@@ -1115,6 +1115,17 @@ export const register: Register = (on, options) => {
       await checkUpdates($, true)
       return { text: await applyUpdates($) }
     }
+    if (verb === 'phone' && rest[0] === 'relay') {
+      // `/streams phone relay <url>` sends the phone through a hosted relay, sealed end to end; `off` goes back to Tailscale.
+      const url = rest[1] ?? ''
+      const home = (await $.process.run(['/usr/bin/printenv', 'HOME'], { timeoutMs: 5000 }).catch(failed)).stdout.trim()
+      const uid = (await $.process.run(['/usr/bin/id', '-u'], { timeoutMs: 5000 }).catch(failed)).stdout.trim()
+      if (!home || !uid) return { text: 'Could not find your home folder.' }
+      if (url !== 'off' && !/^https?:\/\/[^\s]+$/.test(url)) return { text: 'Usage: `/streams phone relay https://relay.example.com`, or `/streams phone relay off`.' }
+      await $.fs.write(`${home}/.claudeflow/relay-url`, url === 'off' ? '' : `${url}\n`)
+      await $.process.run(['/bin/launchctl', 'kickstart', '-k', `gui/${uid}/${BRIDGE_LABEL}`], { timeoutMs: 10_000 }).catch(failed)
+      return { text: url === 'off' ? 'Phone relay off: the bridge serves your phone over Tailscale again.' : `Phone relay set to ${url}. Run \`/streams phone\` to pair your phone through it.` }
+    }
     if (verb === 'phone') {
       const bridge = await ensureBridge($)
       phoneRetryAt = 0
