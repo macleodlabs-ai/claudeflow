@@ -4,6 +4,8 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 import type { AgentRun, ChatStyle, Folded, Health, Stream, StreamRow, StreamRowKind } from '../types'
 import type { Installed, MarketEntry, Update } from './updates'
 import { CHECK_EVERY_MS, manifestPathOf, pluginsDirOf, updatesOf } from './updates'
+import type { Snapshot } from './phone'
+import { BRIDGE_SOCKET, HEARTBEAT_MS, PUSH_EVERY_MS, RETRY_MS, accountOf, isDue, snapshotOf } from './phone'
 import type { BadgeKind, Fold, HistoryItem, HistoryTurn, Proposal, StatusKind, StatusLine } from './classify'
 import {
   BATCH_SYSTEM,
@@ -897,6 +899,71 @@ async function applyUpdates($: $): Promise<string> {
   return said
 }
 
+/** What this session last sent the phone bridge, and when the bridge may next be tried after it did not answer. */
+let phoneLast = { body: '', at: 0 }
+let phoneRetryAt = 0
+let phoneSession: Snapshot['session'] | undefined
+let phoneGit: { lines: StatusLine[]; at: number } = { lines: [], at: 0 }
+
+/** Who this session is, for the phone's session list: its id, the account it runs as and its project folder. */
+async function phoneSessionOf($: $, cwd: string): Promise<Snapshot['session']> {
+  const [id, configDir] = await Promise.all([
+    $.session.id(),
+    $.process
+      .run(['/usr/bin/printenv', 'CLAUDE_CONFIG_DIR'], { timeoutMs: 3000 })
+      .then(r => r.stdout.trim())
+      .catch(() => ''),
+  ])
+  return { id, account: accountOf(configDir), project: cwd.split('/').pop() || cwd, busy: false }
+}
+
+/** Sends the bridge this session's streams when they changed (or as a heartbeat); quiet when no bridge runs. */
+async function pushPhone($: $) {
+  const now = await $.clock.now()
+  if (!phoneSession || now < phoneRetryAt) return
+  const [streams, busy, agents, rows, updates, loops] = await Promise.all([
+    read($, streamsA),
+    read($, busyA),
+    read($, agentsA),
+    read($, rowsA),
+    read($, updatesA),
+    read($, loopsA),
+  ])
+  if (now - phoneGit.at >= HEARTBEAT_MS) {
+    const r = await $.process.run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 }).catch(() => undefined)
+    phoneGit = { lines: r?.exitCode === 0 ? gitStatus(r.stdout) : [], at: now }
+  }
+  const lines = await streamStatus($, streams, await healthNow($, streams), now)
+  const limits = ((await $.session.usage().catch(() => undefined))?.rateLimits ?? []).map(l => limitView(l, now))
+  const snap = snapshotOf({
+    session: { ...phoneSession, busy },
+    lines,
+    streams,
+    colorOf,
+    loops,
+    agents: Object.values(agents),
+    rows,
+    status: [...phoneGit.lines, ...(await ticketStatus($, lines, now))],
+    limits,
+    updates,
+    now,
+  })
+  // The send time is left out of the comparison: only a change in what the phone draws is news.
+  const body = JSON.stringify({ ...snap, at: 0 })
+  if (!isDue(body, phoneLast, now)) return
+  const sent = await $.http
+    .fetch(`http://bridge/sessions/${encodeURIComponent(phoneSession.id)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(snap),
+      socketPath: BRIDGE_SOCKET,
+    })
+    .then(r => r.ok)
+    .catch(() => false)
+  if (sent) phoneLast = { body, at: now }
+  else phoneRetryAt = now + RETRY_MS
+}
+
 export const register: Register = (on, options) => {
   isDiagnosing = options.diagnostics === true
   defaultStyle = options.chatStyle === 'compact' ? 'compact' : 'full'
@@ -929,6 +996,9 @@ export const register: Register = (on, options) => {
     if (e.isInteractive) {
       void checkUpdates($).catch(() => {})
       $.clock.every(CHECK_EVERY_MS, () => void checkUpdates($).catch(() => {}))
+      // The phone bridge, when one runs on this Mac, shows these streams on the phone.
+      phoneSession = await phoneSessionOf($, e.cwd).catch(() => undefined)
+      $.clock.every(PUSH_EVERY_MS, () => void pushPhone($).catch(() => {}))
     }
     work($)
     return next(e)
