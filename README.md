@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.3.4" src="https://img.shields.io/badge/version-0.3.4-22d3ee?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-22d3ee?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 74 passing" src="https://img.shields.io/badge/tests-74%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 79 passing" src="https://img.shields.io/badge/tests-79%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
@@ -112,7 +112,25 @@ Type `status`, or press `status` in the bar, and a card opens above the prompt w
 
 ### 📱 On your phone
 
-Driving Claude Code from the Claude app over Remote Control? When your phone connects, streams opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
+Claude Code's Remote Control does not draw plugin UI in the phone app yet, so streams brings its own: the **phone bridge**, a small server on your Mac that every session reports to and that serves your phone a live page of all of them.
+
+<p align="center"><img src="assets/phone-bridge.jpg" width="320" alt="The phone bridge page: a tab per session, colour chips, a waiting question shown on its card, an opened card with its agents' tool counts and times, then git, tickets and plan limits"></p>
+
+- **Every session, one page:** a tab per running session (`macleod · claudeflow`), the busiest first. A session that stops reporting greys out, then leaves.
+- **What needs you first:** a waiting stream's question shows on its card without opening it.
+- **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
+- **Status underneath:** git, tickets and plan limits with when each resets.
+- It is read-only for now: answering, stopping a turn and approving permissions from the phone come next.
+
+**Set it up** (needs [Bun](https://bun.sh)):
+
+```sh
+bridge/install.sh          # runs the bridge at login and prints your pairing link
+```
+
+The bridge listens on `127.0.0.1:7878`, so reach it from your phone over [Tailscale](https://tailscale.com): `tailscale serve 7878` gives it an HTTPS address only your devices can open. Open the pairing link there once, then **Add to Home Screen**. Sessions reach the bridge over a Unix socket only your user can open, and the phone needs the pairing token (kept in `~/.claudeflow/bridge-token`). Run `bun bridge/server.ts pair` to see the link again.
+
+When a phone client that draws plugin UI attaches, streams also opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
 
 <p align="center"><img src="assets/phone.jpg" width="640" alt="The streams accordion on a phone: running, waiting, done and idle cards; a tapped card shows live agents, markdown replies and a coloured diff"></p>
 
