@@ -4,29 +4,37 @@
 <meta charset="utf-8">
 <style>
   :root {
-    --bg0: #070a1f; --bg1: #12164a; --glass: rgba(26, 30, 78, 0.72); --edge: rgba(150, 160, 255, 0.35);
-    --text: #e8eaff; --dim: #8b90c4; --sky: #a5d8ff; --mint: #b2f2bb; --peach: #ffd8a8; --lav: #d0bfff; --pink: #fcc2d7;
-    --run: #ffd33d; --done: #7ee787; --err: #ff7b72;
+    /* BRAND.md tokens */
+    --bg0: #05071a; --bg1: #0c1033; --nebula: #2a1f7a; --glass: rgba(22, 27, 72, 0.66); --edge: rgba(150, 160, 255, 0.32);
+    --text: #eef0ff; --soft: #d6d9ff; --dim: #a9aee0; --faint: #8a90c8; --ink: #070a1f; --brand: #7c83ff;
+    --sky: #7cc8ff; --mint: #6ff0c0; --peach: #ffb88a; --lav: #b9a2ff; --pink: #ff94d1;
+    --run: #ffe03d; --done: #2fd67b; --err: #ff4d6a;
+    --flow: linear-gradient(90deg, var(--sky), var(--mint), var(--peach), var(--lav), var(--pink));
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1344px; height: 768px; overflow: hidden; }
   body {
     font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
     background:
-      radial-gradient(ellipse 55% 60% at 52% 55%, rgba(88, 80, 236, 0.45), transparent 70%),
-      radial-gradient(ellipse 35% 40% at 80% 30%, rgba(34, 211, 238, 0.12), transparent 70%),
-      linear-gradient(160deg, var(--bg0), var(--bg1) 55%, var(--bg0));
+      radial-gradient(ellipse 38% 48% at 4% -6%, rgba(42, 31, 122, 0.95), transparent 70%),
+      radial-gradient(ellipse 50% 55% at 52% 62%, rgba(88, 80, 236, 0.30), transparent 70%),
+      radial-gradient(ellipse 60% 18% at 70% 104%, rgba(77, 141, 255, 0.35), transparent 70%),
+      linear-gradient(170deg, var(--bg0), var(--bg1) 55%, var(--bg0));
     color: var(--text); position: relative;
   }
-  /* faint circuit traces */
-  .traces { position: absolute; inset: 0; opacity: 0.22; }
-  .title { position: absolute; left: 78px; top: 70px; }
-  .title h1 { font-weight: 300; font-size: 64px; letter-spacing: 0.5px; }
-  .title p { margin-top: 12px; font-size: 21px; color: #b8bdf0; font-weight: 300; }
+  /* the motif: strands untangling into the pane */
+  .strands { position: absolute; left: 846px; top: 18px; width: 400px; height: 160px;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%); mask-image: linear-gradient(90deg, transparent, #000 22%); }
+  .title { position: absolute; left: 78px; top: 64px; }
+  .title h1 { display: flex; align-items: center; gap: 18px; font-family: ui-rounded, "SF Pro Rounded", -apple-system, sans-serif;
+    font-weight: 600; font-size: 64px; letter-spacing: -0.02em; }
+  .title h1 img { width: 62px; height: 62px; border-radius: 15px; box-shadow: 0 0 40px rgba(124, 131, 255, 0.45); }
+  .title .flowline { height: 4px; width: 330px; margin: 10px 0 0 80px; border-radius: 2px; background: var(--flow); box-shadow: 0 0 18px rgba(185, 162, 255, 0.5); }
+  .title p { margin: 16px 0 0 80px; font-size: 21px; color: var(--dim); font-weight: 400; }
   .mono { font-family: "SF Mono", Menlo, Monaco, monospace; }
   .win {
     position: absolute; border-radius: 14px; background: var(--glass); border: 1px solid var(--edge);
-    box-shadow: 0 0 60px rgba(110, 100, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+    box-shadow: 0 0 60px rgba(124, 131, 255, 0.30), inset 0 1px 0 rgba(255,255,255,0.06);
     backdrop-filter: blur(6px); overflow: hidden;
   }
   .bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 14px; border-bottom: 1px solid rgba(150,160,255,0.15); }
@@ -34,15 +42,15 @@
   .chat { left: 150px; top: 238px; width: 640px; height: 366px; }
   .rows { padding: 14px 18px; font-size: 13.5px; line-height: 1.55; }
   .row { display: flex; gap: 12px; margin-bottom: 9px; }
-  .stripe { width: 3px; border-radius: 2px; flex: none; }
-  .row .t { color: #d6d9ff; }
+  .stripe { width: 3px; border-radius: 2px; flex: none; box-shadow: 0 0 10px currentColor; }
+  .row .t { color: var(--soft); }
   .row .t b { color: #ffffff; font-weight: 600; }
   .row .t .d { color: var(--dim); }
-  .pane { left: 820px; top: 206px; width: 400px; height: 398px; box-shadow: 0 0 80px rgba(34, 211, 238, 0.25), inset 0 1px 0 rgba(255,255,255,0.08); }
+  .pane { left: 820px; top: 206px; width: 400px; height: 398px; box-shadow: 0 0 80px rgba(124, 200, 255, 0.22), inset 0 1px 0 rgba(255,255,255,0.08); }
   .pane .rows { font-size: 13px; line-height: 1.5; }
   .s { margin-bottom: 13px; }
   .s .name { font-weight: 600; }
-  .blk { display: inline-block; width: 9px; height: 12px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; }
+  .blk { display: inline-block; width: 9px; height: 12px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; box-shadow: 0 0 10px currentColor; }
   .meta { font-size: 12px; color: var(--dim); margin: 2px 0 3px 17px; }
   .ag { margin-left: 17px; font-size: 12.5px; }
   .run { color: var(--run); font-weight: 700; }
@@ -50,42 +58,38 @@
   .bad { color: var(--err); font-weight: 700; }
   .act { color: var(--run); margin-left: 34px; font-size: 12px; opacity: 0.9; }
   .pills { position: absolute; left: 150px; top: 634px; display: flex; gap: 10px; align-items: center; font-size: 13px; }
-  .pill { padding: 5px 12px; border-radius: 7px; font-weight: 700; color: #000; box-shadow: 0 0 22px rgba(255, 211, 61, 0.18); }
+  .pill { padding: 5px 12px; border-radius: 999px; font-weight: 700; color: var(--ink); box-shadow: 0 0 22px rgba(255, 224, 61, 0.22); }
   .k { color: var(--dim); font-weight: 400; margin-right: 6px; }
 </style>
 </head>
 <body>
-  <svg class="traces" viewBox="0 0 1344 768" fill="none" stroke="#7c83ff" stroke-width="1">
-    <path d="M0 520 H140 L170 490 H260"/><path d="M0 560 H120 L150 590 H230"/><path d="M1344 180 H1250 L1220 150 H1120"/>
-    <path d="M1344 700 H1260 L1230 670 H1150"/><path d="M640 0 V120 L670 150 V190"/><path d="M700 768 V700 L730 670"/>
-    <circle cx="260" cy="490" r="3" fill="#7c83ff"/><circle cx="230" cy="590" r="3" fill="#7c83ff"/><circle cx="1120" cy="150" r="3" fill="#7c83ff"/>
-    <circle cx="1150" cy="670" r="3" fill="#7c83ff"/><circle cx="670" cy="190" r="3" fill="#7c83ff"/>
-  </svg>
+  <img class="strands" src="../app/strands.svg" alt="">
 
   <div class="title">
-    <h1>claudeflow</h1>
+    <h1><img src="../app/icon.svg" alt="">claudeflow</h1>
+    <div class="flowline"></div>
     <p>One Claude Code session, many threads of work — untangled into live, colour-coded streams.</p>
   </div>
 
   <div class="win chat mono">
-    <div class="bar"><span class="dot" style="background:#a78bfa"></span><span class="dot" style="background:#22d3ee"></span></div>
+    <div class="bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div>
     <div class="rows">
-      <div class="row"><span class="stripe" style="background:var(--sky)"></span><span class="t"><b>❯ refactor auth to signed JWTs</b></span></div>
-      <div class="row"><span class="stripe" style="background:var(--sky)"></span><span class="t">⏺ Moving session storage behind a token service…<br><span class="d">  ⎿ Read src/auth/session.ts · Edit src/auth/token.ts</span></span></div>
-      <div class="row"><span class="stripe" style="background:var(--peach)"></span><span class="t"><b>❯ why is the invoice total off by a cent?</b></span></div>
-      <div class="row"><span class="stripe" style="background:var(--peach)"></span><span class="t">⏺ Spawning 3 agents to trace the rounding path<br><span class="d">  ⎿ Agent(trace rounding) · Agent(check fx tables)</span></span></div>
-      <div class="row"><span class="stripe" style="background:var(--mint)"></span><span class="t"><b>❯ how do I convert UTC to local time?</b> <span class="d">(sent mid-turn)</span></span></div>
-      <div class="row"><span class="stripe" style="background:var(--mint)"></span><span class="t">⏺ Use Intl.DateTimeFormat with the local zone.</span></div>
-      <div class="row"><span class="stripe" style="background:var(--lav)"></span><span class="t"><b>❯ /loop check the deploy</b></span></div>
-      <div class="row"><span class="stripe" style="background:var(--sky)"></span><span class="t">⏺ Token service done; 12 tests pass.</span></div>
+      <div class="row"><span class="stripe" style="background:var(--sky);color:var(--sky)"></span><span class="t"><b>❯ refactor auth to signed JWTs</b></span></div>
+      <div class="row"><span class="stripe" style="background:var(--sky);color:var(--sky)"></span><span class="t">⏺ Moving session storage behind a token service…<br><span class="d">  ⎿ Read src/auth/session.ts · Edit src/auth/token.ts</span></span></div>
+      <div class="row"><span class="stripe" style="background:var(--peach);color:var(--peach)"></span><span class="t"><b>❯ why is the invoice total off by a cent?</b></span></div>
+      <div class="row"><span class="stripe" style="background:var(--peach);color:var(--peach)"></span><span class="t">⏺ Spawning 3 agents to trace the rounding path<br><span class="d">  ⎿ Agent(trace rounding) · Agent(check fx tables)</span></span></div>
+      <div class="row"><span class="stripe" style="background:var(--mint);color:var(--mint)"></span><span class="t"><b>❯ how do I convert UTC to local time?</b> <span class="d">(sent mid-turn)</span></span></div>
+      <div class="row"><span class="stripe" style="background:var(--mint);color:var(--mint)"></span><span class="t">⏺ Use Intl.DateTimeFormat with the local zone.</span></div>
+      <div class="row"><span class="stripe" style="background:var(--lav);color:var(--lav)"></span><span class="t"><b>❯ /loop check the deploy</b></span></div>
+      <div class="row"><span class="stripe" style="background:var(--sky);color:var(--sky)"></span><span class="t">⏺ Token service done; 12 tests pass.</span></div>
     </div>
   </div>
 
   <div class="win pane mono">
-    <div class="bar"><span class="dot" style="background:#22d3ee"></span><span style="font-size:12px;color:var(--dim);margin-left:6px">Streams · 4 live</span></div>
+    <div class="bar"><span class="dot" style="background:var(--sky);box-shadow:0 0 10px var(--sky)"></span><span style="font-size:12px;color:var(--dim);margin-left:6px">Streams · 4 live</span></div>
     <div class="rows">
       <div class="s">
-        <div class="name"><span class="blk" style="background:var(--peach)"></span><span class="run">●</span> billing-rounding</div>
+        <div class="name"><span class="blk" style="background:var(--peach);color:var(--peach)"></span><span class="run">●</span> <span style="color:var(--peach)">billing-rounding</span></div>
         <div class="meta"><span class="run">RUNNING</span> · 3 agents · 41s</div>
         <div class="ag"><span class="run">● RUNNING 0:41</span>  trace rounding</div>
         <div class="act">↳ 6 tools · Grep "toFixed" src/billing</div>
@@ -93,16 +97,16 @@
         <div class="ag"><span class="bad">✗ ERROR 0:18</span>  scan tax code</div>
       </div>
       <div class="s">
-        <div class="name"><span class="blk" style="background:var(--sky)"></span><span class="run">●</span> auth-jwt</div>
+        <div class="name"><span class="blk" style="background:var(--sky);color:var(--sky)"></span><span class="run">●</span> <span style="color:var(--sky)">auth-jwt</span></div>
         <div class="meta"><span class="run">RUNNING</span> · main turn 1:12</div>
         <div class="act" style="margin-left:17px">↳ Edit src/auth/token.ts</div>
       </div>
       <div class="s">
-        <div class="name"><span class="blk" style="background:var(--lav)"></span><span class="run">↻</span> deploy-watch</div>
+        <div class="name"><span class="blk" style="background:var(--lav);color:var(--lav)"></span><span class="run">↻</span> <span style="color:var(--lav)">deploy-watch</span></div>
         <div class="meta"><span class="run">↻ LOOP next 0:48</span> · 6 ticks</div>
       </div>
       <div class="s">
-        <div class="name"><span class="blk" style="background:var(--mint)"></span><span class="ok">✓</span> timezones</div>
+        <div class="name"><span class="blk" style="background:var(--mint);color:var(--mint)"></span><span class="ok">✓</span> <span style="color:var(--mint)">timezones</span></div>
         <div class="meta"><span class="ok">DONE</span> · 2 rows</div>
       </div>
     </div>
@@ -113,7 +117,7 @@
     <span class="pill" style="background:var(--run)">1 ● billing-rounding ⟳3</span>
     <span class="pill" style="background:var(--run)">2 ● auth-jwt</span>
     <span class="pill" style="background:var(--run)">3 ↻ deploy-watch</span>
-    <span class="pill" style="background:#2ea043;color:#fff">4 ✓ timezones</span>
+    <span class="pill" style="background:var(--done);box-shadow:0 0 22px rgba(47,214,123,.22)">4 ✓ timezones</span>
   </div>
 </body>
 </html>

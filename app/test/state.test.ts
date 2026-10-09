@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { currentOf, FORGET_MS, initial, isStopConfirmed, keyOf, reduce, STALE_MS, streamKey, tabsOf, type Snapshot } from '../src/state'
-import { replyBox } from '../src/views/streams'
+import { replyBox, selectedOf, streamsView } from '../src/views/streams'
 
 const snap = (id: string, account = 'macleod', streams: Snapshot['streams'] = []): Snapshot => ({
   v: 1,
@@ -64,4 +64,23 @@ test('Stop takes two taps within 4 s, so a stray touch does not stop a turn', ()
   s = reduce(s, { type: 'stop-armed', now: 10_000 })
   expect(isStopConfirmed(s, 12_000)).toBe(true)
   expect(isStopConfirmed(s, 15_000)).toBe(false)
+})
+
+describe("the wide layout's detail pane", () => {
+  const sk = keyOf('r', 's1')
+  const st = (id: string, kind: string) => ({ id, name: id, color: '#a5d8ff', kind, state: kind.toUpperCase(), detail: '', agents: [], rows: [] }) as any
+  const streams = [st('a', 'running'), { ...st('b', 'waiting'), question: 'Ship it?' }, st('c', 'done')]
+
+  test('with nothing chosen it shows the stream that needs you, so a question is never hidden behind a list row', () => {
+    expect(selectedOf(initial(), sk, streams)).toBe(streamKey(sk, 'b'))
+    expect(streamsView(initial(), sk, streams, 0, true)).toContain('data-answer="' + streamKey(sk, 'b') + '"')
+  })
+
+  test('choosing a stream already opened on the phone shows it rather than closing it', () => {
+    let s = reduce(initial(), { type: 'toggle', key: streamKey(sk, 'c') })
+    s = reduce(s, { type: 'toggle', key: streamKey(sk, 'a') })
+    s = reduce(s, { type: 'select', key: streamKey(sk, 'c') })
+    expect(s.open).toContain(streamKey(sk, 'a'))
+    expect(selectedOf(s, sk, streams)).toBe(streamKey(sk, 'c'))
+  })
 })

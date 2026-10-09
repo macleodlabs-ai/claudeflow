@@ -14,13 +14,13 @@ export function tabs(s: State, now: number): string {
     .map(t => {
       const x = t.snapshot
       const live = (x.streams ?? []).filter(st => st.kind === 'running' || st.kind === 'waiting').length
-      return `<button class="tab ${t.key === current?.key ? 'on' : ''} ${t.isStale ? 'stale' : ''}" data-session="${esc(t.key)}">
-      ${x.session.busy ? '● ' : ''}${esc(x.session.account)} · ${esc(x.session.project)}${live ? `<span class="n">${live}</span>` : ''}</button>`
+      return `<button class="tab ${t.key === current?.key ? 'on' : ''} ${t.isStale ? 'stale' : ''}" data-session="${esc(t.key)}" aria-current="${t.key === current?.key}">
+      ${x.session.busy ? '<span class="busy" aria-label="working">●</span> ' : ''}<span class="who">${esc(x.session.account)}</span> · ${esc(x.session.project)}${live ? `<span class="n">${live}</span>` : ''}</button>`
     })
     .join('')
 }
 
-function session(s: State, t: SessionTab, now: number): string {
+function session(s: State, t: SessionTab, now: number, isWide: boolean): string {
   const x = t.snapshot
   const streams = x.streams ?? []
   const stop =
@@ -30,16 +30,17 @@ function session(s: State, t: SessionTab, now: number): string {
       : ''
   const stale = t.isStale ? `<p class="stale-note">Not heard from for ${clock(now - t.seen)}: the session may have ended.</p>` : ''
   const views = `<div class="views" role="tablist">
-    <button data-view="streams" class="${s.view === 'streams' ? 'on' : ''}">Streams</button>
-    <button data-view="status" class="${s.view === 'status' ? 'on' : ''}">Status</button></div>`
-  const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now)
-  return `${stop}${permissions(x, now)}${stale}
-    <div class="chips">${chips(streams)}</div>${views}${body}${usageBar(x, s.isUsageOpen, now)}`
+    <button data-view="streams" role="tab" aria-selected="${s.view === 'streams'}" class="${s.view === 'streams' ? 'on' : ''}">Streams</button>
+    <button data-view="status" role="tab" aria-selected="${s.view === 'status'}" class="${s.view === 'status' ? 'on' : ''}">Status</button></div>`
+  const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide)
+  // From 820 px the working line and Stop sit at the right of the toolbar, by the streams they stop.
+  return `${isWide ? '' : stop}${permissions(x, now)}${stale}
+    <div class="toolbar"><div class="chips">${chips(streams)}</div>${views}${isWide ? stop : ''}</div>${body}${usageBar(x, s.isUsageOpen, now)}`
 }
 
-/** The page below the gates; empty-state text when nothing has arrived yet. */
-export function page(s: State, now: number, hasOpenRoom: boolean): string {
+/** The page below the gates; empty-state text when nothing has arrived yet. `isWide` is the 820 px two-pane layout. */
+export function page(s: State, now: number, hasOpenRoom: boolean, isWide = false): string {
   const t = currentOf(s, now)
-  if (t) return session(s, t, now)
-  return hasOpenRoom ? '<p class="empty">No sessions yet. Open Claude Code with the streams mod on the Mac.</p>' : ''
+  if (t) return session(s, t, now, isWide)
+  return hasOpenRoom ? '<div class="empty"><span class="motif" aria-hidden="true"></span>Nothing flowing yet. Start Claude Code on your Mac.</div>' : ''
 }

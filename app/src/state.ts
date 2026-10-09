@@ -50,6 +50,8 @@ export type Action =
   | { type: 'view'; view: View }
   | { type: 'toggle'; key: string }
   | { type: 'reveal'; key: string }
+  /** Show a stream in the wide layout's detail pane: the last opened card is the selected one. */
+  | { type: 'select'; key: string }
   | { type: 'usage' }
   | { type: 'draft'; key: string; text: string }
   | { type: 'sent'; key: string; now: number }
@@ -70,6 +72,8 @@ export function reduce(s: State, a: Action): State {
       return { ...s, open: s.open.includes(a.key) ? s.open.filter(k => k !== a.key) : [...s.open, a.key] }
     case 'reveal':
       return s.open.includes(a.key) ? s : { ...s, open: [...s.open, a.key] }
+    case 'select':
+      return { ...s, open: [...s.open.filter(k => k !== a.key), a.key] }
     case 'usage':
       return { ...s, isUsageOpen: !s.isUsageOpen }
     case 'draft':

@@ -17,7 +17,7 @@ function one(g: GateView, isMany: boolean): string {
     return `<div class="gate">${who}<h2>Pair this device</h2>
       <p>Create a passkey for Claudeflow. You'll use Face ID or your passcode to open it and to allow Claude's actions.</p>${why}${btn('pair', 'Create passkey')}${offline}</div>`
   if (g.gate === 'locked')
-    return `<div class="gate">${who}<h2>Locked</h2><p>Unlock with your passkey to see your sessions.</p>${why}${btn('unlock', 'Unlock')}
+    return `<div class="gate">${who}<h2>Locked</h2><p>Unlock to see your streams.</p>${why}${btn('unlock', 'Unlock')}
       ${g.canRepair ? ` ${btn('pair', 'Pair again')}` : ''}${offline}</div>`
   return `<div class="gate">${who}<h2>Not paired</h2>${why}<p>${NOT_PAIRED}</p></div>`
 }
