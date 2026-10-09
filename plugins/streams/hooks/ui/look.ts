@@ -4,21 +4,24 @@ import type { StatusKind } from '../status'
 
 // The colours, glyphs and sizes the terminal views share.
 
-/** Status words as bold coloured text on the terminal's own background. */
+/**
+ * Status words as bold coloured text on the terminal's own background, in the brand's status hues (BRAND.md).
+ * Running stays yellow and done green; their exact hex is pinned by tests/streams.test.ts.
+ */
 export const STATUS_WORD: Record<BadgeKind, string> = {
   running: '#ffd33d',
   loop: '#ffd33d',
-  stalled: '#ff9500',
+  stalled: '#ff8a2a',
   done: '#7ee787',
-  error: '#ff7b72',
-  idle: '#8b949e',
+  error: '#ff4d6a',
+  idle: '#8a90c8',
 }
 
 /** The status card's state words: the pane's status colours, and a blue that asks for the person. */
-export const STATE_COLOR: Record<StatusKind, string> = { ...STATUS_WORD, waiting: '#79c0ff' }
+export const STATE_COLOR: Record<StatusKind, string> = { ...STATUS_WORD, waiting: '#4d8dff' }
 
 /** A limit's colour by how much of it is used: green, then yellow from half, red from 80%. */
-export const limitColor = (percent: number): string => (percent >= 80 ? '#ff7b72' : percent >= 50 ? '#ffd33d' : '#7ee787')
+export const limitColor = (percent: number): string => (percent >= 80 ? STATUS_WORD.error : percent >= 50 ? STATUS_WORD.running : STATUS_WORD.done)
 
 export const STATUS_GLYPH: Record<AgentRun['status'], string> = { running: '●', done: '✓', error: '✗' }
 
