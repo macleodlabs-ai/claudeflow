@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" fill="none">
+<!-- The small-size mark (header and favicon): four thick strands that cross once and fan out. icon.svg is the 180 px+ version. -->
+<defs><radialGradient id="bg" cx=".18" cy=".12" r="1.1"><stop offset="0" stop-color="#2a1f7a"/><stop offset=".5" stop-color="#0d1240"/><stop offset="1" stop-color="#070a1f"/></radialGradient></defs>
+<rect width="180" height="180" rx="40" fill="url(#bg)"/>
+<g stroke-width="12" stroke-linecap="round">
+<path d="M26 104 C56 104 62 76 92 82 C112 86 118 46 140 46" stroke="#7cc8ff"/>
+<path d="M26 80 C56 80 64 108 92 98 C112 92 118 76 140 76" stroke="#6ff0c0"/>
+<path d="M26 92 C58 92 70 70 92 92 C112 110 118 106 140 106" stroke="#ffb88a"/>
+<path d="M26 116 C58 116 66 86 92 104 C112 118 118 136 140 136" stroke="#ff94d1"/>
+</g>
+<circle cx="144" cy="46" r="11" fill="#7cc8ff"/><circle cx="144" cy="76" r="11" fill="#6ff0c0"/><circle cx="144" cy="106" r="11" fill="#ffb88a"/><circle cx="144" cy="136" r="11" fill="#ff94d1"/>
+</svg>

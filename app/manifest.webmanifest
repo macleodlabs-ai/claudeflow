@@ -1,0 +1,11 @@
+{
+  "name": "Claudeflow Streams",
+  "short_name": "Streams",
+  "display": "standalone",
+  "background_color": "#070a1f",
+  "theme_color": "#070a1f",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
