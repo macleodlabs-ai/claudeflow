@@ -119,7 +119,8 @@ Claude Code's Remote Control does not draw plugin UI in the phone app yet, so st
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`), the busiest first. A session that stops reporting greys out, then leaves.
 - **What needs you first:** a waiting stream's question shows on its card without opening it.
 - **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
-- **Status underneath:** git, tickets and plan limits with when each resets.
+- **Streams | Status:** switch to the status card, as on the terminal: git, tickets, then every stream and what it is doing.
+- **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
 - **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. Every opened card has a reply box; what you send is filed in that stream.
 - **Stop** a running turn (tap twice, so a stray touch doesn't).
 - **Allow or deny permission prompts.** While the Streams page is open on your phone, a prompt goes there first, with what the call would do (`Bash: git push …`). Unanswered after 60 seconds, or with no phone looking, it appears on the Mac as usual.
