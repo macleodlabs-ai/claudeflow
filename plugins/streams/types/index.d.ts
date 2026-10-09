@@ -85,6 +85,8 @@ declare module 'claude-code' {
       updating: boolean
       /** The stream open in the phone's accordion; '' with every card closed. */
       mobileOpen: string
+      /** Whether the docked pane is folded away to the bar's side tab. */
+      paneCollapsed: boolean
       /** Whether the status card is up above the prompt. */
       statusOpen: boolean
       /** The card's git rows, read as it opened: branch against upstream and what is uncommitted. */

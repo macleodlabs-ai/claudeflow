@@ -4,7 +4,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
-import { gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
+import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
 const ENGINE = { timeoutMs: 20_000 }
@@ -942,5 +942,101 @@ describe('the phone', () => {
     expect(texts).toEqual(['why is the total off?', 'Rounding is **per line**.'])
     await pane.press({ key: 'm-open:billing' })
     expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
+  })
+})
+
+describe('tickets on the status card', () => {
+  // Working tickets, the person asks "where is TL-260?": the card answers per ticket, not per topic.
+  test('ticket ids are found as trackers write them, and look-alike standards are not tickets', () => {
+    expect(ticketsIn('build TL-260 then TL-262, and re-review TL-260')).toEqual(['TL-260', 'TL-262'])
+    expect(ticketsIn('encode as UTF-8 and hash with SHA-256 per ISO-8601')).toEqual([])
+  })
+
+  test('a ticket with a running agent says what it is doing and how long it has been quiet; a finished one gives its latest news', () => {
+    const lines = ticketLines({
+      rows: [
+        { kind: 'prompt', text: 'build TL-262 and fix TL-260', at: 0, streamId: 'tickets' },
+        { kind: 'reply', text: 'Started both. The TL-262 build is committed (6cbe94f6). Reviews come next.', at: 5_000, streamId: 'tickets' },
+      ],
+      agents: [{ description: 'TL-260 lottie fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
+      streamKind: { tickets: 'done' },
+      now: 10_000 + 7 * 60_000,
+    })
+    expect(lines.map(l => [l.area, l.state, l.detail])).toEqual([
+      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools, 7m with no output)'],
+      ['TL-262', 'DONE', 'The TL-262 build is committed (6cbe94f6).'],
+    ])
+  })
+
+  test('a ticket whose agent failed after the last word on it shows as an error', () => {
+    const [line] = ticketLines({
+      rows: [{ kind: 'prompt', text: 'ship ENG-7', at: 0, streamId: 's' }],
+      agents: [{ description: 'ENG-7 deploy', status: 'error', last: '', tools: 3, lastAt: 9, endedAt: 10, streamId: 's' }],
+      streamKind: { s: 'done' },
+      now: 20,
+    })
+    expect([line?.state, line?.detail]).toEqual(['ERROR', 'ENG-7 deploy failed'])
+  })
+})
+
+describe('folding the pane to a side tab', () => {
+  const DOCK = { title: 'Streams', isFocused: false, bodyColumns: 72, placement: 'dock' } as never
+  // The pane takes room from the transcript; folding it must be one press away and give the same pane back.
+  test('hide closes the docked pane to a tab in the bar, and the tab reopens it at the width it had', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const opened: unknown[] = []
+    const closed: string[] = []
+    on('ui.open', async (_$, e) => {
+      opened.push(e)
+      return { value: { isPlaced: true } } as never
+    })
+    on('ui.close', async (_$, e) => {
+      closed.push(e.id)
+      return { value: undefined } as never
+    })
+    await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: DOCK })
+    await pane.press({ key: 'collapse' })
+    expect(closed).toEqual(['streams'])
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    expect(await bar.find({ key: 'pane' })).toBe(undefined)
+    await bar.press({ key: 'tab' })
+    expect(opened.at(-1)).toMatchObject({ id: 'streams', columns: 72 })
+    expect(await bar.find({ key: 'tab' })).toBe(undefined)
+  })
+})
+
+describe('plan limits on the status card', () => {
+  // Read at a glance: how much is used, how long until it resets, and on which day, since a date alone needs a calendar.
+  test('a limit shows its percent as a bar, the time to reset in two units, and the weekday it resets', () => {
+    const now = Date.parse('2026-10-08T12:00:00Z')
+    const v = limitView({ kind: 'seven_day', percentUsed: 71.4, resetsAt: '2026-10-11T12:00:00Z' }, now)
+    expect([v.label, v.percent, v.bar, v.resetsIn]).toEqual(['week', 71, '▰▰▰▰▰▰▰▱▱▱', '3d 0h'])
+    expect(v.resetsAt.startsWith('Sun')).toBe(true)
+    expect(untilOf(2 * 3600_000 + 14 * 60_000)).toBe('2h 14m')
+    expect(untilOf(9 * 60_000)).toBe('9m')
+  })
+
+  test('the card ends with each limit, and its fixed columns never shrink, so every row lines up', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    on('prompt.submit', async (_$, e) => ({ text: e.text }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    on('session.usage', async () => ({ value: { startedAt: 0, rateLimits: [{ kind: 'five_hour', percentUsed: 38, resetsAt: '2030-01-01T00:00:00Z' }, { kind: 'seven_day', percentUsed: 85 }] } }) as never)
+    await $.prompt.submit({ text: '#billing a very long question that runs on and on so that its detail would squeeze the columns beside it', wait: false, origin: { kind: 'composer' } })
+    await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 80, hasSurvey: false } as never })
+    expect(await bar.find({ key: 'limit:5h' })).toBeDefined()
+    expect(await bar.find({ key: 'limit:week' })).toBeDefined()
+    const fixed = (await bar.findAll({ type: 'Box' })).filter(b => typeof (b.props as { width?: number }).width === 'number')
+    expect(fixed.length).toBeGreaterThan(4)
+    expect(fixed.every(b => (b.props as { flexShrink?: number }).flexShrink === 0)).toBe(true)
   })
 })

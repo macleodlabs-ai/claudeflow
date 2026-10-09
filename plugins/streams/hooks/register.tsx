@@ -30,6 +30,8 @@ import {
   gitStatus,
   sortStatus,
   statusOf,
+  ticketLines,
+  limitView,
   codeOf,
   toolLine,
   tagMatches,
@@ -73,6 +75,7 @@ const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 const updatingA = atom({ plugin: 'streams', key: 'updating' } as const, false)
 const mobileOpenA = atom({ plugin: 'streams', key: 'mobileOpen' } as const, '')
+const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const, false)
 const statusOpenA = atom({ plugin: 'streams', key: 'statusOpen' } as const, false)
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, [])
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
@@ -211,6 +214,26 @@ async function unstick($: $) {
   }
 }
 
+/** The docked pane's width as last drawn: what it reopens at after being folded to the side tab. */
+let dockColumns = 0
+const PANE_KEY = 'streams:pane'
+type PaneSaved = { collapsed: boolean; columns: number }
+
+/** Folds the docked pane away to a tab at the bar's right end, keeping its width for when it comes back. */
+async function collapsePane($: $) {
+  await $.store.set(PANE_KEY, { collapsed: true, columns: dockColumns } satisfies PaneSaved)
+  await update($, paneCollapsedA, () => true)
+  await $.ui.close({ id: PANE })
+}
+
+/** Brings the pane back from the side tab at the width it had (a width the person dragged to wins anyway). */
+async function expandPane($: $, focus = false) {
+  const saved = (await $.store.get(PANE_KEY)) as PaneSaved | undefined
+  await update($, paneCollapsedA, () => false)
+  await $.store.set(PANE_KEY, { collapsed: false, columns: saved?.columns ?? 0 } satisfies PaneSaved)
+  await $.ui.open({ id: PANE, title: 'Streams', ...(saved?.columns ? { columns: saved.columns } : {}), ...(focus ? { focus: true as const } : {}) })
+}
+
 /** The pane's last draw, for the diagnostics file: when, how long, what it drew, or what it threw. */
 let lastPane: Record<string, unknown> = {}
 
@@ -226,6 +249,7 @@ async function timedPane($: $, e: PaneRender, draw: () => Promise<RenderElement>
     const drawn = JSON.stringify(tree)
     // An upper bound on the rows drawn: every Text and Button is at most a row.
     const rows = (drawn.match(/"type":"(Text|Button)"/g) ?? []).length
+    if (e.props.placement === 'dock') dockColumns = e.props.bodyColumns
     lastPane = { at: began, ms: Date.now() - began, view, columns: e.props.bodyColumns, placement: e.props.placement, surface: e.surface, size: drawn.length, rows, scroll: e.props.scroll }
     return tree
   } catch (err) {
@@ -755,6 +779,17 @@ async function focusOn($: $, id: string) {
   await refreshStatus($)
 }
 
+/** Every ticket named in a prompt or an agent's task, with its state and latest news. */
+async function ticketStatus($: $, streamLines: readonly StatusLine[], now: number): Promise<StatusLine[]> {
+  const [rows, agents] = await Promise.all([read($, rowsA), read($, agentsA)])
+  return ticketLines({
+    rows,
+    agents: Object.values(agents),
+    streamKind: Object.fromEntries(streamLines.map(l => [l.id, l.kind ?? 'idle'])),
+    now,
+  })
+}
+
 /** A typed `status` or `status?` is a request for the card, answered here without a model turn. */
 const STATUS_ASK = /^\s*status\s*\??\s*$/i
 
@@ -883,7 +918,9 @@ export const register: Register = (on, options) => {
     }
     const transcript = await read($, transcriptA)
     if (transcript && !(await read($, historyFiledA))) work($, { kind: 'import', path: transcript, isCurrent: true })
-    if (e.isInteractive) void $.ui.open({ id: PANE, title: 'Streams' })
+    const pane = (await $.store.get(PANE_KEY)) as PaneSaved | undefined
+    if (pane?.collapsed) await update($, paneCollapsedA, () => true)
+    else if (e.isInteractive) void $.ui.open({ id: PANE, title: 'Streams' })
     $.clock.every(5000, () => void beat($).catch(() => {}))
     if (e.isInteractive) {
       void checkUpdates($).catch(() => {})
@@ -1109,11 +1146,16 @@ export const register: Register = (on, options) => {
       const { Box, Button, Text } = $.ui.resolve(e)
       await read($, tickA)
       const now = await $.clock.now()
-      const lines: StatusLine[] = [...(await read($, statusGitA)), ...(await streamStatus($, streams, health, now))]
-      const shown = lines.slice(0, STATUS_ROWS)
+      const git: StatusLine[] = await read($, statusGitA)
+      const streamLines = await streamStatus($, streams, health, now)
+      const tickets = (await ticketStatus($, streamLines, now)).slice(0, TICKET_ROWS)
+      const lines = [...git, ...tickets, ...streamLines]
+      const shown = lines.slice(0, STATUS_ROWS + tickets.length)
+      const limits = ((await $.session.usage().catch(() => undefined))?.rateLimits ?? []).map(l => limitView(l, now))
       const width = e.props.bodyColumns
       const areaW = Math.min(24, Math.max(10, ...shown.map(l => l.area.length + 2)))
-      const stateW = Math.min(28, Math.max(8, ...shown.map(l => l.state.length + 2)))
+      // 16: room for a limit's bar and percent (`▰▰▰▰▱▱▱▱▱▱ 38%`).
+      const stateW = Math.min(28, Math.max(limits.length ? 16 : 8, ...shown.map(l => l.state.length + 2)))
       const close = () => update($, statusOpenA, () => false)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="#8b949e" paddingX={1}>
@@ -1125,20 +1167,28 @@ export const register: Register = (on, options) => {
             <Button key="status-close" plain dimColor label="✕ close" onPress={close} />
           </Box>
           <Box>
-            <Box width={areaW}>
+            <Box width={areaW} flexShrink={0}>
               <Text dimColor bold>Area</Text>
             </Box>
-            <Box width={stateW}>
+            <Box width={stateW} flexShrink={0}>
               <Text dimColor bold>State</Text>
             </Box>
             <Text dimColor bold>Detail</Text>
           </Box>
-          {shown.map(l => {
-            const isStream = !l.id.startsWith('git:')
+          {shown.flatMap((l, i) => {
+            // With tickets on the card, tickets and streams each get a heading; without, the card reads as before.
+            const heading =
+              tickets.length && (l.id.startsWith('ticket:') ? i === git.length : i === git.length + tickets.length) ? (
+                <Box key={`st-h:${l.id}`} marginTop={1}>
+                  <Text bold color="#d0bfff">{l.id.startsWith('ticket:') ? 'Tickets' : 'Streams'}</Text>
+                </Box>
+              ) : null
+            const isStream = !l.id.startsWith('git:') && !l.id.startsWith('ticket:')
             const s = isStream ? streams.find(x => x.id === l.id) : undefined
-            return (
+            return [
+              heading,
               <Box key={`st:${l.id}`}>
-                <Box width={areaW}>
+                <Box width={areaW} flexShrink={0}>
                   {s ? (
                     <Button
                       key={`st-open:${l.id}`}
@@ -1154,19 +1204,37 @@ export const register: Register = (on, options) => {
                     <Text wrap="truncate">{l.area}</Text>
                   )}
                 </Box>
-                <Box width={stateW}>
+                <Box width={stateW} flexShrink={0}>
                   <Text wrap="truncate" bold={!!l.kind} color={l.kind ? STATE_COLOR[l.kind] : '#a5d8ff'}>
                     {l.state}
                   </Text>
                 </Box>
                 <Box flexGrow={1} flexShrink={1}>
-                  <Text wrap="wrap">{oneLine(l.detail, Math.max(20, (width - areaW - stateW) * 2))}</Text>
+                  <Text wrap="wrap">{oneLine(l.detail, Math.max(20, (width - areaW - stateW) * (l.id.startsWith('ticket:') ? 3 : 2)))}</Text>
                 </Box>
-              </Box>
-            )
+              </Box>,
+            ]
           })}
           {lines.length > shown.length ? <Text dimColor>+{lines.length - shown.length} more in the streams pane</Text> : null}
           {lines.length === 0 ? <Text dimColor>Nothing yet: streams appear as you prompt.</Text> : null}
+          {limits.length ? (
+            <Box key="limits" flexDirection="column" marginTop={1}>
+              {limits.map(l => (
+                <Box key={`limit:${l.label}`}>
+                  <Box width={areaW} flexShrink={0}>
+                    <Text dimColor>{`Limit ${l.label}`}</Text>
+                  </Box>
+                  <Box width={stateW} flexShrink={0}>
+                    <Text color={limitColor(l.percent)} bold>
+                      {`${l.bar} ${l.percent}%`}
+                    </Text>
+                  </Box>
+                  <Text>{l.resetsIn ? `resets in ${l.resetsIn}` : ''}</Text>
+                  <Text dimColor>{l.resetsAt ? ` · ${l.resetsAt}` : ''}</Text>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -1209,7 +1277,13 @@ export const register: Register = (on, options) => {
         })}
         <Button key="status" plain label="status" hotkey="t" onPress={() => openStatus($)} />
         {updateButton}
-        <Button key="pane" plain label="≡" hotkey="s"onPress={() => $.ui.open({ id: PANE, title: 'Streams', focus: true })} />
+        {(await read($, paneCollapsedA)) ? (
+          <Box key="tab-box" flexGrow={1} justifyContent="flex-end">
+            <Button key="tab" label="◂ streams" hotkey="s" onPress={() => expandPane($, true)} />
+          </Box>
+        ) : (
+          <Button key="pane" plain label="≡" hotkey="s" onPress={() => expandPane($, true)} />
+        )}
         {pills.length === 0 ? <Text dimColor>widen the terminal to see streams</Text> : null}
       </Box>
     )
@@ -1272,6 +1346,8 @@ export const register: Register = (on, options) => {
     const room = Math.max(3, (e.viewport?.rows ?? 30) - 8)
     const shown = streams.find(s => s.id === view)
     const rows = await read($, rowsA)
+    // Docked beside the transcript, the pane folds away to a tab in the bar and comes back at its width.
+    const hideButton = e.props.placement === 'dock' ? <Button key="collapse" plain dimColor label="⇥ hide" hotkey="h" onPress={() => collapsePane($)} /> : null
 
     // Status words as bold coloured text: the pane's rows stay one Text per line, the shape known to paint.
     const badge = (kind: BadgeKind, text: string) => (
@@ -1458,7 +1534,10 @@ export const register: Register = (on, options) => {
       const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
       return (
         <Box flexDirection="column">
-          <Button key="back" plain label="← all streams" onPress={() => openStream($, '')} />
+          <Box gap={2}>
+            <Button key="back" plain label="← all streams" onPress={() => openStream($, '')} />
+            {hideButton}
+          </Box>
           <Box gap={1} marginTop={1}>
             <Text color={HEALTH_TEXT[verdict]}>{HEALTH_GLYPH[verdict]}</Text>
             <Text bold color={colorOf(shown)}>
@@ -1568,6 +1647,7 @@ export const register: Register = (on, options) => {
             {active.length} streams · {focus ? `focused on ${focus}` : 'showing all'}
           </Text>
           {focus ? <Button key="unfocus" plain dimColor label="show all" onPress={() => focusOn($, '')} /> : null}
+          {hideButton}
         </Box>
         <Box gap={1}>
           <Button key="fold-all" plain dimColor label="collapse all" onPress={() => update($, foldA, () => Object.fromEntries(active.map(s => [s.id, 'none' as const])))} />
@@ -1637,6 +1717,10 @@ async function updateControl($: $, e: Parameters<$['ui']['resolve']>[0]): Promis
 const STATE_COLOR: Record<StatusKind, string> = { ...STATUS_WORD, waiting: '#79c0ff' }
 /** Rows the status card shows before pointing to the pane. */
 const STATUS_ROWS = 14
+/** A limit's colour by how much of it is used: green, then yellow from half, red from 80%. */
+const limitColor = (percent: number): string => (percent >= 80 ? '#ff7b72' : percent >= 50 ? '#ffd33d' : '#7ee787')
+/** Tickets the status card shows, on top of its stream rows. */
+const TICKET_ROWS = 8
 const STATUS_TEXT: Record<AgentRun['status'], string> = { running: '#f2cc60', done: '#7ee787', error: '#ff7b72' }
 const STATUS_GLYPH: Record<AgentRun['status'], string> = { running: '●', done: '✓', error: '✗' }
 
