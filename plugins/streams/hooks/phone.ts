@@ -106,3 +106,21 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
 /** Whether a snapshot is worth sending: it changed, or the bridge has not heard from the session for a while. */
 export const isDue = (body: string, last: { body: string; at: number }, now: number): boolean =>
   body !== last.body || now - last.at >= HEARTBEAT_MS
+
+/** The bridge's files as the plugin ships them, copied to `~/.claudeflow/bridge` where launchd runs them: a plugin update moves its own folder. */
+export const BRIDGE_FILES = ['server.ts', 'app.html', 'install.sh'] as const
+export const BRIDGE_LABEL = 'ai.macleodlabs.claudeflow-bridge'
+export const BRIDGE_PORT = 7878
+/** Where Tailscale's command line is: inside the Mac app, or on PATH from Homebrew. */
+export const TAILSCALE_BINS = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', 'tailscale'] as const
+
+/** The tailnet address of this Mac from `tailscale status --json`, or undefined while signed out. */
+export const tailnetHostOf = (statusJson: string): string | undefined => {
+  try {
+    const s = JSON.parse(statusJson) as { BackendState?: string; Self?: { DNSName?: string } }
+    const host = (s.Self?.DNSName ?? '').replace(/\.$/, '')
+    return s.BackendState === 'Running' && host ? host : undefined
+  } catch {
+    return undefined
+  }
+}

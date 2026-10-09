@@ -4,7 +4,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates'
-import { BRIDGE_SOCKET, PHONE_ROWS, RETRY_MS, accountOf, snapshotOf, timeless } from '../hooks/phone'
+import { BRIDGE_SOCKET, PHONE_ROWS, RETRY_MS, accountOf, snapshotOf, tailnetHostOf, timeless } from '../hooks/phone'
 import { limitView, untilOf, ticketLines, ticketsIn, gitStatus, questionOf, sortStatus, statusOf, buildPrompt, FINISHED_MS, toolLine, codeOf, CODE_LIMIT, completeTag, partialTag, tagMatches, BATCH_SYSTEM, MERGE_SYSTEM, NEXT_FOLD, PASTELS, STALL_MS, inParallel, oneLine, parseBatch, parseMerge, rowKey, healthOf, nextPastel, pickReplyStream, readTranscript, isFollowUp, loopKey, parseTag, parseVerdict, slug } from '../hooks/classify'
 
 /** Tests that drive the engine: room to finish on a busy machine, where the default 5 s is not. */
@@ -1185,5 +1185,48 @@ describe('the phone bridge', () => {
     await clock.advance(6000)
     expect(sent).toHaveLength(2)
     expect(sent[1]?.body.streams.map(s => s.name)).toContain('billing')
+  })
+})
+
+describe('setting up the phone', () => {
+  // The phone's address is the Mac's tailnet name; a signed-out Tailscale has none to give.
+  test("the phone's address is this Mac's tailnet name, and only while Tailscale runs", () => {
+    expect(tailnetHostOf(JSON.stringify({ BackendState: 'Running', Self: { DNSName: 'mbp.tail1234.ts.net.' } }))).toBe('mbp.tail1234.ts.net')
+    expect(tailnetHostOf(JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: '' } }))).toBe(undefined)
+    expect(tailnetHostOf('not json')).toBe(undefined)
+  })
+
+  // The plugin keeps the bridge itself: an update to the plugin reaches the bridge launchd runs, with nothing to run by hand.
+  test('/streams phone replaces an older bridge and restarts it, and says how to finish Tailscale', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    watchStatus(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('ui.toast', async () => ({ value: undefined }))
+    const ran: string[] = []
+    on('process.run', async (_$, e) => {
+      ran.push(e.argv.join(' '))
+      const [bin] = e.argv
+      const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '' } }) as never
+      if (bin === '/usr/bin/printenv') return out('/Users/me\n')
+      if (bin === '/usr/bin/id') return out('501\n')
+      if (bin === '/bin/sh' && e.argv[1] === '-c') return out('/usr/local/bin/bun\n')
+      if (bin === '/bin/launchctl') return out('', 0)
+      if (bin?.endsWith('Tailscale')) return out(JSON.stringify({ BackendState: 'NeedsLogin', Self: { DNSName: '' } }))
+      return out('')
+    })
+    on('fs.read', async (_$, e) => ({ value: e.path.startsWith('/Users/me/.claudeflow/bridge/') ? 'old bridge' : 'new bridge' }) as never)
+    const wrote: string[] = []
+    on('fs.write', async (_$, e) => {
+      wrote.push(e.path)
+      return { value: undefined } as never
+    })
+    const r = await $.command.run({ command: 'streams', args: 'phone', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
+    expect(wrote).toEqual(['server.ts', 'app.html', 'install.sh'].map(f => `/Users/me/.claudeflow/bridge/${f}`))
+    expect(ran).toContain('/bin/sh /Users/me/.claudeflow/bridge/install.sh')
+    expect(r.text).toContain('Phone bridge: updated and restarted.')
+    expect(r.text).toContain('signed out')
+    // Nothing is served over Tailscale until it is signed in.
+    expect(ran.some(c => c.includes(' serve '))).toBe(false)
   })
 })

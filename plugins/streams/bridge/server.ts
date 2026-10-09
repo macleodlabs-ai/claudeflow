@@ -1,6 +1,6 @@
 // The claudeflow phone bridge: every Claude Code session's streams mod reports to it over a Unix socket,
-// and it serves your phone a live view of all of them. Run it with `bun bridge/server.ts`;
-// `bun bridge/server.ts pair` prints the link that pairs a phone.
+// and it serves your phone a live view of all of them. The streams plugin installs it to ~/.claudeflow/bridge
+// and runs it at login; `/streams phone` pairs a phone. `bun server.ts pair` prints the pairing link.
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -48,6 +48,34 @@ const cookieOf = (req: Request) => /(?:^|;\s*)cf=([^;]+)/.exec(req.headers.get('
 const isPaired = (req: Request) => isSame(cookieOf(req), TOKEN) || isSame((req.headers.get('authorization') ?? '').replace(/^Bearer /, ''), TOKEN)
 
 const APP = readFileSync(join(import.meta.dir, 'app.html'), 'utf8')
+
+/** This Mac's tailnet name while Tailscale is signed in: the address the phone opens. */
+function tailnetHost(): string | undefined {
+  for (const bin of ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', 'tailscale']) {
+    try {
+      const r = Bun.spawnSync([bin, 'status', '--json'])
+      const s = JSON.parse(r.stdout.toString()) as { BackendState?: string; Self?: { DNSName?: string } }
+      const host = (s.Self?.DNSName ?? '').replace(/\.$/, '')
+      if (s.BackendState === 'Running' && host) return host
+    } catch {}
+  }
+  return undefined
+}
+
+/** The pairing page: the phone's link as a QR code to scan, for a browser on this Mac that is already paired. */
+function pairPage(): string {
+  const host = tailnetHost()
+  const link = host ? `https://${host}/?t=${TOKEN}` : ''
+  const body = host
+    ? `<div id="qr"></div><p>Scan with your phone's camera, then <b>Share → Add to Home Screen</b>.</p><p class="dim">${host}</p>`
+    : `<p>Tailscale is not signed in on this Mac, so your phone cannot reach the bridge yet.</p><p class="dim">Install Tailscale (<code>brew install --cask tailscale-app</code>), sign in here and on your phone, then run <code>/streams phone</code> again.</p>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pair your phone</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d1117;color:#e6edf3;font:16px/1.5 -apple-system,Helvetica,sans-serif;text-align:center;padding:16px}
+#qr{background:#fff;padding:16px;border-radius:16px;display:inline-block}#qr svg{display:block;width:280px;height:280px}.dim{color:#8b949e;font-size:14px}code{color:#ffd33d}</style></head>
+<body><main><h1>Pair your phone</h1>${body}</main>
+${host ? `<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script><script>const q = qrcode(0, 'M'); q.addData(${JSON.stringify(link)}); q.make(); document.getElementById('qr').innerHTML = q.createSvgTag({ scalable: true, margin: 0 })</script>` : ''}
+</body></html>`
+}
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0d1117"/><path d="M14 22h36M14 32h28M14 42h20" stroke-width="7" stroke-linecap="round" stroke="#ffd33d"/><circle cx="50" cy="42" r="5" fill="#2ea043"/></svg>`
 
 // The sessions' side: only processes of this user reach the socket.
@@ -82,9 +110,11 @@ const outbound = Bun.serve<undefined, never>({
     const t = url.searchParams.get('t')
     if (t !== null) {
       if (!isSame(t, TOKEN)) return new Response('That pairing link is not this bridge’s.', { status: 401 })
+      // Only a page of this bridge's own is a place to land after pairing.
+      const next = url.searchParams.get('next') === '/pair' ? '/pair' : '/'
       return new Response(null, {
         status: 302,
-        headers: { location: '/', 'set-cookie': `cf=${TOKEN}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000` },
+        headers: { location: next, 'set-cookie': `cf=${TOKEN}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000` },
       })
     }
     if (url.pathname === '/icon.svg') return new Response(ICON, { headers: { 'content-type': 'image/svg+xml' } })
@@ -103,6 +133,8 @@ const outbound = Bun.serve<undefined, never>({
           theme_color: '#0d1117',
           icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
         })
+      case '/pair':
+        return new Response(pairPage(), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
       case '/api/sessions':
         return Response.json(listOf())
       case '/ws':
