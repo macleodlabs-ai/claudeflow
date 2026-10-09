@@ -1,6 +1,6 @@
 {
   "name": "streams",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {
@@ -20,12 +20,18 @@
     "chatStyle": {
       "type": "string",
       "title": "Stream chat style",
-      "description": "How a stream's own view draws its chat: full (as the session draws it, with markdown, highlighted code and diffs) or compact (one line per row). The \u2261/\u25a4 button in the pane switches it for the session.",
+      "description": "How a stream's own view draws its chat: full (as the session draws it, with markdown, highlighted code and diffs) or compact (one line per row). The ≡/▤ button in the pane switches it for the session.",
       "options": [
         "compact",
         "full"
       ],
       "default": "full"
+    },
+    "relayUrl": {
+      "type": "string",
+      "title": "Relay address",
+      "description": "The Claudeflow relay address your phones and tablets connect through, e.g. https://claudeflow-relay.<you>.workers.dev. Empty: no remote.",
+      "default": ""
     }
   }
 }
