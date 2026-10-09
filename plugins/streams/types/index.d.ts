@@ -83,8 +83,6 @@ declare module 'claude-code' {
       updates: { id: string; from: string; to: string }[]
       /** Whether an update is being installed now. */
       updating: boolean
-      /** The stream open in the phone's accordion; '' with every card closed. */
-      mobileOpen: string
       /** Whether the docked pane is folded away to the bar's side tab. */
       paneCollapsed: boolean
       /** Whether the status card is up above the prompt. */
