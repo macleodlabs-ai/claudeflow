@@ -8,6 +8,24 @@ import type { ChatStyle, Folded, Stream, StreamRow, StreamRowKind } from '../typ
 /** The navigator pane's id. */
 export const PANE = 'streams'
 export const MAX_ROWS = 4000
+/**
+ * The most row text the session keeps, in characters of JSON. The engine refuses a state value over 4,194,304
+ * characters, and then no row is filed again; long replies reach that well before MAX_ROWS.
+ */
+export const ROWS_BUDGET = 3_000_000
+
+/** The newest rows that fit MAX_ROWS and ROWS_BUDGET, oldest first: the oldest go first when either is reached. */
+export function keepRows<T>(rows: readonly T[]): T[] {
+  let size = 2
+  let from = rows.length
+  while (from > 0 && rows.length - from < MAX_ROWS) {
+    const next = JSON.stringify(rows[from - 1]).length + 1
+    if (size + next > ROWS_BUDGET) break
+    size += next
+    from--
+  }
+  return rows.slice(from)
+}
 export const SAVED_ROWS = 400
 /** 2: rows keyed by rowKey (a uuid by its first four groups). Bump when the keys change. */
 export const KEY_VERSION = 2

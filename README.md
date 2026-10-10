@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.1" src="https://img.shields.io/badge/version-1.1.1-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.2" src="https://img.shields.io/badge/version-1.1.2-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
   <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
@@ -98,7 +98,7 @@ Hide finished streams with `✕` and bring them back later; finished streams lef
 
 ### 📋 Status card
 
-Type `status`, or press `status` in the bar, and a card opens above the prompt with every piece of work in the session and where it stands. It is answered locally, so it costs no model call and works while a turn is running.
+Type `status` (the word on its own), or press `status` in the bar, and a card opens above the prompt with every piece of work in the session and where it stands. It is answered locally, so it costs no model call and works while a turn is running. Anything else, `status?` included, goes to Claude.
 
 ![The status card above the prompt: git branch and uncommitted files, then each stream as running, waiting for you, done or idle, with what it is doing](assets/status-card.jpg)
 
@@ -285,7 +285,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 | To | Do |
 | --- | --- |
-| See the status of all work | Press `status` in the bar (<kbd>t</kbd> when the bar has focus), or type `status`. Click a stream's name on the card to open it; `✕ close` or your next prompt hides it |
+| See the status of all work | Press `status` in the bar (<kbd>t</kbd> when the bar has focus), or type `status` on its own. Click a stream's name on the card to open it; `✕ close` or your next prompt hides it |
 | Focus a stream | Click its name in the pane, or press its pill |
 | Show everything | `← all streams`, or the `all` pill |
 | File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` Type `#` and the bar lists matching streams; <kbd>tab</kbd> completes the first |
