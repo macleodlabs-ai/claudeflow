@@ -307,9 +307,9 @@ h2 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .08em; 
 body:has(.dock) { padding-bottom: calc(var(--dock-h, 0px) + 16px) !important; }
 main .dock { background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-top: 1px solid var(--glass-line-strong);
              box-shadow: 0 -12px 32px var(--shade); padding-bottom: env(safe-area-inset-bottom); }
-.slides { display: flex; align-items: flex-start; overflow-x: auto; overflow-y: hidden; transition: height var(--dur) var(--ease); scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.slides { display: flex; align-items: flex-start; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
 .slides::-webkit-scrollbar { display: none; }
-.slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; }
+.slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; }
 main .slide.info > .usage, main .slide.info > .flowsum { background: none; border-top: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; padding-bottom: 10px; }
 .slide-dots { display: flex; justify-content: center; gap: 5px; padding: 0 0 6px; }
 .slide-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-faint); }
