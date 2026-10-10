@@ -573,9 +573,36 @@ describe('/streams phone', () => {
       return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
     })
     const r = await run($, 'phone')
+    // Both ways to set it, since typing the address after the command is what people try first.
+    expect(r.text).toContain('/streams phone relay https://')
     expect(r.text).toContain('relayUrl')
     expect(opened).toBe(0)
     expect(kept.get(STORE.identity)).toBe(undefined)
+  })
+
+  // The address typed after the command must land in the plugin's own relayUrl option, the one /config shows, so
+  // there is one value and no override to forget. A wrong one is refused before it is written: an http or pathed
+  // address would make passkeys fail on the phone with no hint why.
+  test('`phone relay <url>` sets the relayUrl option, `off` clears it, and http or junk is refused', ENGINE, async ($, on) => {
+    mock.clock(on)
+    store(on)
+    const set: unknown[] = []
+    on('config.list', async () => ({ value: [{ key: 'streams.relayUrl', label: 'Relay address', kind: 'text', value: '', provider: { plugin: 'streams', tier: 'user' }, isLocked: false }] }) as never)
+    on('config.set', async (_$, e) => {
+      set.push([e.key, e.value])
+      return { value: e.value } as never
+    })
+    expect((await run($, `phone relay ${RELAY}/`)).text).toContain(`Relay set to ${RELAY}`)
+    expect((await run($, 'phone relay off')).text).toContain('Relay cleared')
+    expect(set).toEqual([
+      ['streams.relayUrl', RELAY],
+      ['streams.relayUrl', ''],
+    ])
+    expect((await run($, 'phone relay http://relay.example.workers.dev')).text).toContain('must be https')
+    expect((await run($, `phone relay ${RELAY}/v1/room`)).text).toContain('no path')
+    expect((await run($, 'phone relay relay.example')).text).toContain('is not a relay address')
+    expect((await run($, 'phone relay https://localhost')).text).toContain('is not a relay address')
+    expect(set).toHaveLength(2)
   })
 
   test('lists the paired devices and forgets one or all', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {

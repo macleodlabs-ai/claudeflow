@@ -859,17 +859,35 @@ describe('the status card', () => {
   // The card exists to answer "what needs me?": a reply that ends on a question is the person's move,
   // so it must read as waiting, never as done.
   test('a stream whose last reply asks a question is waiting for the person, with the question as its detail', () => {
-    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?' } })
+    const line = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Tests pass. Shall I commit it?', at: 5 }, lastPromptAt: 2 })
     expect(line.kind).toBe('waiting')
     expect(line.detail).toBe('Shall I commit it?')
     expect(questionOf('All done.')).toBe(undefined)
+  })
+
+  // Most replies end on an offer ("Should I...?") and the person's answer is often filed into another stream, so a
+  // question the person typed past is answered or dropped: left waiting, it would bury the questions still open.
+  // The terminal card and the phone read the same streamsNow, so both must drop it together.
+  test('a question the person has typed past, in any stream, is no longer waiting; one with nothing after it still is', () => {
+    const streams = [s('auth', 5), s('docs', 9)].map(x => ({ ...x, createdAt: 0, rows: 1, agents: 0, loops: 0 }))
+    const facts = (rows: Facts['rows']): Facts => ({ busy: false, current: 'docs', agents: {}, inflight: {}, outcome: {}, rows, loops: {}, workflows: {}, verdicts: {}, now: 100 })
+    const asked = { id: 'r1', streamId: 'auth', kind: 'reply' as const, text: 'Shall I commit it?', at: 5 }
+    const seen = (rows: Facts['rows']) => {
+      const card = cardOf(streamsNow(facts(rows), streams), { git: [] })
+      const snap = snapshotOf({ session: { id: 's1', account: 'a', project: 'p', busy: false }, lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: [], rows: [], status: [], limits: [], updates: [], now: 100 })
+      return { terminal: card.lines.find(l => l.id === 'auth')?.kind === 'waiting', phone: snap.streams.find(x => x.id === 'auth')?.question }
+    }
+    expect(seen([asked])).toEqual({ terminal: true, phone: 'Shall I commit it?' })
+    // A loop's tick is not the person answering: the question stays open.
+    expect(seen([asked, { id: 'l', streamId: 'docs', kind: 'loop', text: 'check CI', at: 7 }])).toEqual({ terminal: true, phone: 'Shall I commit it?' })
+    expect(seen([asked, { id: 'q', streamId: 'docs', kind: 'prompt', text: 'yes, and update the docs', at: 9 }])).toEqual({ terminal: false, phone: undefined })
   })
 
   test('running work says what it is doing now, and running and waiting rows sort above finished ones', () => {
     const run = statusOf({ stream: s('billing'), health: 'running', running: [{ description: 'trace rounding', last: 'Grep toFixed', tools: 6 }] })
     expect(run.detail).toBe('trace rounding: Grep toFixed (6 tools)')
     const done = statusOf({ stream: s('docs', 9), health: 'done', running: [] })
-    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?' } })
+    const wait = statusOf({ stream: s('auth'), health: 'done', running: [], lastSaid: { kind: 'reply', text: 'Merge it?', at: 0 } })
     expect(sortStatus([done, wait, run], { docs: 9 }).map(l => l.id)).toEqual(['billing', 'auth', 'docs'])
   })
 
@@ -1170,7 +1188,9 @@ describe('what the phone is sent', () => {
       inflight: {},
       outcome: {},
       rows: [],
-      loops: { ci: { kind: 'wakeup', nextAt: at(540), label: '' } },
+      loops: { ci: { kind: 'wakeup', nextAt: at(540), noopStreak: 0 } },
+      workflows: {},
+      verdicts: {},
       now,
     })
     const rateLimits = [{ kind: 'five_hour', percentUsed: 38, resetsAt: new Date(at(3600)).toISOString() }]

@@ -72,6 +72,8 @@ export type State = {
   drafts: Record<string, string>
   /** When Stop was first tapped; a second tap within STOP_MS stops. */
   stopArmed: number
+  /** A Stop workflow or Stop loop tapped once, by its button key, and when: a second tap within STOP_MS sends it. */
+  armed: { key: string; at: number }
   /** Taps by what they act on: `permKey(requestId)`, a stream key (Yes, Reply), `stopKey(session)`. */
   taps: Record<string, Tap>
   /** Permission prompts and questions by request id. */
@@ -122,6 +124,7 @@ export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 
   isUsageOpen: saved.isUsageOpen ?? false,
   drafts: {},
   stopArmed: 0,
+  armed: { key: '', at: 0 },
   taps: {},
   perms: {},
   hidden: saved.hidden ?? [],
@@ -140,6 +143,8 @@ export type Action =
   /** A reply went: its draft is cleared (the tap keeps the text for a retry). */
   | { type: 'sent'; key: string }
   | { type: 'stop-armed'; now: number }
+  /** First tap on a destructive stream button (Stop workflow, Stop loop); `now: 0` disarms. */
+  | { type: 'arm'; key: string; now: number }
   | { type: 'tap'; key: string; tap: Tap }
   | { type: 'ack'; ack: Ack; now: number }
   | { type: 'hide'; requestId: string }
@@ -215,6 +220,8 @@ export function reduce(s: State, a: Action): State {
     }
     case 'stop-armed':
       return { ...s, stopArmed: a.now }
+    case 'arm':
+      return { ...s, armed: { key: a.key, at: a.now } }
     case 'tap':
       return { ...s, taps: { ...s.taps, [a.key]: a.tap } }
     case 'ack': {
@@ -232,6 +239,9 @@ export function reduce(s: State, a: Action): State {
 
 /** Two taps, no dialog: a stray touch does not stop a turn. True when this tap is the second one. */
 export const isStopConfirmed = (s: State, now: number): boolean => now - s.stopArmed < STOP_MS
+
+/** The same two taps for a stream's Stop workflow or Stop loop, each button armed on its own. */
+export const isArmed = (s: State, key: string, now: number): boolean => s.armed.key === key && now - s.armed.at < STOP_MS
 
 export type SessionTab = Held & { key: string; isStale: boolean }
 

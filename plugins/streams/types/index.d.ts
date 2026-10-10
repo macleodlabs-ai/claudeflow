@@ -33,6 +33,11 @@ export type Stream = {
   color?: string
   /** Hidden from the bar and the list until restored; its history stays. */
   archived?: boolean
+  /**
+   * When the person last restored it (epoch ms): a restored stream is not archived on its own again until it has
+   * been active since (`autoArchiveHours`).
+   */
+  restoredAt?: number
 }
 
 /** A tool call's input as the full chat style draws it: highlighted source, or a unified diff. */
@@ -48,7 +53,79 @@ export type StreamRow = {
   code?: RowCode
   /** A tool row's call id: the key its transcript row is filed under. */
   toolId?: string
+  /** On a loop tick's row: the tick changed nothing (its ScheduleWakeup said `noop`), so views fold it away. */
+  quiet?: boolean
 }
+
+/**
+ * A loop armed in a stream: a self-paced wakeup, a cron job, or a Monitor watching a command. Its clocks are times
+ * (`nextAt`, `until`; epoch ms), never text, so it changes only when the loop does; each screen counts as it draws.
+ */
+export type Loop = {
+  kind: 'wakeup' | 'cron' | 'monitor'
+  /** When it fires next: a wakeup's `scheduledFor` (after the runtime's clamp), a cron's next match. */
+  nextAt?: number
+  /** How often, in words: a cron's `humanSchedule`. */
+  every?: string
+  /** Why: a wakeup's reason, a cron's prompt, a monitor's description. */
+  reason?: string
+  /** Ticks in a row that changed nothing (ScheduleWakeup `noop: true`). */
+  noopStreak: number
+  /** The last tick that did change something: when, and what it said. */
+  lastChange?: { at: number; text: string }
+  /** What ends it: a cron's job id, a monitor's task id. */
+  id?: string
+  /** What a tick submits (a wakeup's or a cron's prompt), so the phone can run one now; never sent to the phone. */
+  prompt?: string
+  /** A cron's expression, to find its next match after each fire; `recurring: false` fires once. */
+  cron?: string
+  recurring?: boolean
+  /** When a monitor times out; absent while it runs until stopped. */
+  until?: number
+}
+
+/**
+ * One agent of a Workflow run. Seen live from its tool calls (its id is one `$.agent.list()` never names), labelled
+ * and put in its phase once the run's journal or record names it.
+ */
+export type WorkflowAgent = {
+  id: string
+  status: 'running' | 'done' | 'error'
+  startedAt: number
+  endedAt?: number
+  lastAt: number
+  tools: number
+  label?: string
+  phase?: string
+  /** What a checking agent concluded, when its structured output says (`verdict`, `pass`): `pass`, `fail`, … */
+  verdict?: string
+}
+
+/** A Workflow tool run, filed as a stream named after its `meta.name`. */
+export type Workflow = {
+  taskId: string
+  name: string
+  streamId: string
+  runId?: string
+  /** Where the run writes its agents' transcripts and its journal. */
+  transcriptDir?: string
+  scriptPath?: string
+  status: 'running' | 'completed' | 'failed' | 'killed'
+  startedAt: number
+  endedAt?: number
+  /** `meta.phases[].title`, in order: the skeleton the agents fill. */
+  phases: string[]
+  agents: Record<string, WorkflowAgent>
+  /** True while the counts are only what the plugin saw; false once the run's journal or record confirmed them. */
+  inferred: boolean
+}
+
+/**
+ * What the fast model made of a stream that showed WAITING or stalled (streams/completion.ts): finished, really
+ * waiting on the person, or still working, and why in a few words. `rowId` is the stream's last row when it was
+ * asked: the verdict holds only while that is still the last row, so anything new there asks again.
+ */
+export type Verdict = { rowId: string; state: 'done' | 'waiting' | 'running'; reason: string; at: number }
 
 /** How a stream's own view draws its rows: one line each, or as the session's transcript draws them. */
 export type ChatStyle = 'compact' | 'full'
@@ -73,8 +150,12 @@ declare module 'claude-code' {
       turnStartedAt: number
       /** A clock the pane reads while anything runs, so elapsed times move. */
       tick: number
-      /** Loops waiting to fire, per stream: a self-paced wakeup or a cron job. */
-      loops: Record<string, { kind: 'wakeup' | 'cron'; nextAt: number; label: string }>
+      /** Loops armed, per stream: a self-paced wakeup, a cron job or a monitor. */
+      loops: Record<string, Loop>
+      /** Workflow tool runs this session, by task id. */
+      workflows: Record<string, Workflow>
+      /** The completion check's verdicts, by stream id (`completionCheck`). */
+      verdicts: Record<string, Verdict>
       /** The chat style chosen in the pane this session; '' follows the `chatStyle` setting. */
       chatStyle: ChatStyle | ''
       /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */

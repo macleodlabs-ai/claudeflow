@@ -3,8 +3,9 @@ import type { EngineInterface, On } from 'claude-code'
 
 import { mem } from '../state'
 import { gitStatus } from '../status'
+import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { PAIRING_MS, createLink, devicesOf, identityOf, originOf, pairingOf, type Link } from './link'
+import { PAIRING_MS, createLink, devicesOf, identityOf, originOf, pairingOf, relayArg, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import {
   HEARTBEAT_MS,
@@ -40,6 +41,8 @@ const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
+const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 /** The status card's git rows, shared with the card (ui/bar.tsx): one read serves both while it is fresh. */
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
@@ -74,6 +77,11 @@ let me: Snapshot['session'] | undefined
 let link: Link | undefined
 /** A tick is running: the next one waits, so two posts never race on the same link. */
 let isTicking = false
+
+/** A phone's Run now is taken at most once in this long per loop. */
+const RUN_NOW_GAP_MS = 30_000
+/** When each loop's tick was last run from a phone, by stream id. */
+const ranNowAt = new Map<string, number>()
 
 /** An answer to a held prompt or question: from a phone (its command id) or the Mac (the band, the terminal dialog). */
 type Answer = { by: 'phone' | 'mac'; decision?: 'allow' | 'deny'; label?: string; command?: string }
@@ -160,7 +168,7 @@ async function remoteTick($: $) {
         link.ack(c.device, { t: 'ack', id: c.command.id, ...done })
       }
       // The acks go in this tick, once: a phone waiting on Allow should not wait for the next one.
-      const isAcking = got.commands.length > 0 && !hasAcked
+      const isAcking: boolean = got.commands.length > 0 && !hasAcked
       hasAcked ||= isAcking
       post = got.again || isAcking ? link.next({ devices, pairing, now, snapshot, isHolding: held.size > 0 }) : undefined
     }
@@ -171,7 +179,7 @@ async function remoteTick($: $) {
 
 /** Everything the phone draws for this session now, held permissions included; sealed per device by the link. */
 async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot> {
-  const [streams, busy, agents, inflight, outcome, rows, loops, updates, now] = await Promise.all([
+  const [streams, busy, agents, inflight, outcome, rows, loops, workflows, verdicts, updates, now] = await Promise.all([
     read($, streamsA),
     read($, busyA),
     read($, agentsA),
@@ -179,10 +187,12 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     read($, outcomeA),
     read($, rowsA),
     read($, loopsA),
+    read($, workflowsA),
+    read($, verdictsA),
     read($, updatesA),
     $.clock.now(),
   ])
-  const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, now }
+  const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, workflows, verdicts, now }
   let git = await read($, statusGitA)
   if (now - git.at >= HEARTBEAT_MS) {
     const r = await $.process.run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 }).catch(() => undefined)
@@ -203,6 +213,8 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     permissions: [...held.values()].flatMap(h => (h.ask ? [h.ask] : [])),
     questions: [...held.values()].flatMap(h => (h.question ? [h.question] : [])),
     settled: [...settled.values()].filter(x => now - x.at < SETTLED_MS).slice(-20),
+    loops,
+    workflows,
     now,
   })
 }
@@ -317,8 +329,10 @@ async function holdQuestion<R>($: $, e: { tool: string; tool_use_id?: string; qu
 }
 
 /**
- * One thing a device asked, opened from its sealed box: an answer filed in its stream, a stop, or a permission
- * decided. An `allow` reaches here only after link.ts checked its passkey assertion.
+ * One thing a device asked, opened from its sealed box: an answer filed in its stream, a stop, a permission decided
+ * or a question answered, a workflow run stopped, or a loop ended or ticked now. An `allow` reaches here only after
+ * link.ts checked its passkey assertion. What it returns is acked; `ok: false` with no `why` means it was not done
+ * (the run or loop is no longer there, or a tick is not due).
  */
 async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'>> {
   if (c.kind === 'permission' || c.kind === 'choose') {
@@ -333,20 +347,83 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     if (mem.runningTurn) await $.turn.abort({ turnId: mem.runningTurn })
     return { ok: true }
   }
+  if (c.kind === 'stopTask') {
+    // Only a run this session shows and is still going: the phone cannot stop any task it names.
+    if ((await read($, workflowsA))[c.taskId]?.status !== 'running') return { ok: false }
+    const r = await $.tool.call({ tool: 'TaskStop', task_id: c.taskId })
+    return { ok: r.deny === undefined && r.isError !== true }
+  }
+  if (c.kind === 'stopLoop' || c.kind === 'runTick') {
+    const loop = (await read($, loopsA))[c.streamId]
+    if (!loop) return { ok: false }
+    if (c.kind === 'runTick') {
+      // A tick is its prompt run in its stream: a slash command (a /loop) runs as one, other text is submitted. An
+      // autonomous loop's sentinel is no prompt to send.
+      const text = loop.prompt?.trim() ?? ''
+      if (!text || /^<<[\w-]+>>$/.test(text)) return { ok: false }
+      // Each tick is a model turn the person pays for: none while that stream's turn runs, and repeated taps within
+      // RUN_NOW_GAP_MS run it once.
+      const now = await $.clock.now()
+      const [busy, current] = await Promise.all([read($, busyA), read($, currentA)])
+      if ((busy && current === c.streamId) || now - (ranNowAt.get(c.streamId) ?? 0) < RUN_NOW_GAP_MS) return { ok: false }
+      ranNowAt.set(c.streamId, now)
+      await update($, currentA, () => c.streamId)
+      const slash = /^\/([\w:-]+)\s*([\s\S]*)$/.exec(text)
+      if (slash?.[1]) await $.command.run({ command: slash[1], args: slash[2] ?? '' })
+      else {
+        // Routing (streams/routing.ts) files it as this loop's tick, not as something the person typed.
+        mem.runNow = { streamId: c.streamId, text }
+        await $.prompt.submit({ text, asUser: true })
+      }
+      return { ok: true }
+    }
+    // Ended as the model would end it. A plugin's own call skips its own hooks, so the loop is cleared here too.
+    const input =
+      loop.kind === 'wakeup'
+        ? { tool: 'ScheduleWakeup' as const, stop: true }
+        : loop.kind === 'cron' && loop.id
+          ? { tool: 'CronDelete' as const, id: loop.id }
+          : loop.kind === 'monitor' && loop.id
+            ? { tool: 'TaskStop' as const, task_id: loop.id }
+            : undefined
+    if (!input) return { ok: false }
+    const r = await $.tool.call(input)
+    const now = await $.clock.now()
+    await update($, loopsA, m => afterCall(m, c.streamId, { tool: input.tool, input, result: r.deny === undefined ? r.result : undefined, isError: r.isError === true, now }))
+    return { ok: r.deny === undefined && r.isError !== true }
+  }
   // The stream is made current first, so the answer is filed where it was asked.
   if ((await read($, streamsA)).some(st => st.id === c.streamId)) await update($, currentA, () => c.streamId)
   await $.prompt.submit({ text: c.text, asUser: true })
   return { ok: true }
 }
 
-const NO_RELAY = 'Set the relay address first: /config, streams, relayUrl (e.g. https://relay.<you>.workers.dev).'
+const NO_RELAY =
+  'Set the relay address first: `/streams phone relay https://relay.<you>.workers.dev`, or in /config, streams, relayUrl.'
+
+/**
+ * `/streams phone relay <url|off>`: sets the plugin's own `relayUrl` option through the settings menu's row, so
+ * /config shows the same value and the plugin reloads with it (options are fixed per activation). `relay` alone
+ * says what is set.
+ */
+async function setRelay($: $, arg: string | undefined): Promise<string> {
+  if (!arg) return options.relayUrl ? `The relay is ${options.relayUrl}. \`/streams phone relay off\` clears it.` : NO_RELAY
+  const want = relayArg(arg)
+  if ('error' in want) return want.error
+  const rows = await $.config.list()
+  const key = rows.find(r => r.key.endsWith('.relayUrl') && r.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.relayUrl'
+  const r = await $.config.set({ key, value: want.relayUrl })
+  if (r.deny) return `Could not set the relay: ${r.deny}`
+  return want.relayUrl ? `Relay set to ${want.relayUrl}. \`/streams phone\` pairs a phone or tablet.` : 'Relay cleared: this session no longer talks to a relay.'
+}
 
 /**
  * `/streams phone`: open a pairing (a secret valid ten minutes, for any number of devices) and show the relay's
  * pairing page with its QR code in the Mac's browser. `devices` lists the paired ones; `forget <id|all>` removes
- * them. Says what it did, or what is missing.
+ * them; `relay <url|off>` sets the relay. Says what it did, or what is missing.
  */
 async function remotePair($: $, args: string[]): Promise<string> {
+  if (args[0] === 'relay') return setRelay($, args[1])
   const relay = options.relayUrl.replace(/\/+$/, '')
   if (!originOf(relay)) return NO_RELAY
   const devices = devicesOf(await $.store.get(STORE.devices))

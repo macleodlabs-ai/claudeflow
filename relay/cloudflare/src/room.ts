@@ -1,10 +1,18 @@
 // One Durable Object per room (one per account). Devices hold hibernating WebSockets here (no charge while idle);
 // sessions poll `up`. Device→session frames wait in SQLite for the sessions to collect them; session→device frames
-// go straight to the device's socket. The room holds no keys and never logs what passes through it.
+// go straight to the device's socket. The room holds no session keys and never logs what passes through it. It
+// also keeps each device's Web Push subscription and sends the pushes a session hints at (a kind, never any text).
 import { DurableObject } from 'cloudflare:workers'
+import { mayPush, sendPush, spent, vapidOf, type Budget, type NotifyKind } from './push'
 import { DEVICE_MAX_BYTES, MAX_BYTES, parseDeviceMessage, parseUp } from './shapes'
 
-export type Env = { ROOMS: DurableObjectNamespace<Room> }
+export type Env = {
+  ROOMS: DurableObjectNamespace<Room>
+  /** The VAPID private key (a Worker secret: P-256 JWK or b64u PKCS#8, from vapid.ts). Unset: no pushes. */
+  VAPID_PRIVATE_KEY?: string
+  /** VAPID's `sub` contact (mailto: or https:); the relay's own https origin when unset. */
+  VAPID_SUBJECT?: string
+}
 
 /** Device frames older than this are gone: a session that has not polled for 2 minutes starts fresh. */
 const KEEP_MS = 2 * 60_000
@@ -19,6 +27,13 @@ const KEEP_BYTES = 1 << 20
 const SOCKET_PER_MINUTE = 30
 /** A device is active when it reported itself visible this recently (it pings every 15 s while visible). */
 const ACTIVE_MS = 30_000
+/**
+ * At most this many push subscriptions a room keeps, and none from a device unseen this long. Anyone with the room
+ * id can add rows under made-up device ids, so storage must stay bounded; a paired device sends its subscription
+ * again on every welcome, so one pushed out comes back the next time it opens the app.
+ */
+const PUSH_ROWS = 32
+const PUSH_UNSEEN_MS = 30 * 86_400_000
 
 /** Kept on each device socket, so it survives hibernation: its id, last visible ping, and this minute's messages. */
 type Device = { id: string; here: number; minute: number; sent: number }
@@ -44,6 +59,12 @@ export class Room extends DurableObject<Env> {
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS frames (
       seq INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL,
       sender TEXT NOT NULL, recipient TEXT NOT NULL, data TEXT NOT NULL)`)
+    // One push subscription per device, its push budget (push.ts `mayPush`), shared by every session, and when the
+    // device last sent it (`seen_at`, for PUSH_ROWS and PUSH_UNSEEN_MS).
+    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS push (
+      device TEXT PRIMARY KEY, endpoint TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+      last_at INTEGER NOT NULL DEFAULT 0, day INTEGER NOT NULL DEFAULT 0, count INTEGER NOT NULL DEFAULT 0,
+      seen_at INTEGER NOT NULL DEFAULT 0)`)
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -90,7 +111,49 @@ export class Room extends DurableObject<Env> {
       const device = ws.deserializeAttachment() as Device | null
       return device ? [{ id: device.id, isActive: now - device.here < ACTIVE_MS }] : []
     })
+    if (up.notify) {
+      // A device looking now needs no buzz, whatever the session thought when it posted.
+      const looking = new Set(devices.filter(d => d.isActive).map(d => d.id))
+      const origin = new URL(req.url).origin
+      const subject = this.env.VAPID_SUBJECT || (origin.startsWith('https:') ? origin : 'mailto:relay@claudeflow.invalid')
+      // Not awaited: the session's frames and its tick never wait on push services (each up to 10 s).
+      this.ctx.waitUntil(this.notify(up.notify.to.filter(id => !looking.has(id)), up.notify.kind, subject).catch(() => {}))
+    }
     return json({ frames, devices })
+  }
+
+  /**
+   * Sends `kind` by Web Push to each named device that has a subscription and push budget left, after the session's
+   * post was answered. Each push's budget is taken before it is sent (reading and writing it with no wait between,
+   * so two sessions posting at once cannot both pass `mayPush`) and given back when the push service did not take
+   * it. A subscription the push service says is gone (404, 410) is forgotten.
+   */
+  private async notify(ids: string[], kind: NotifyKind, subject: string): Promise<void> {
+    const vapid = await vapidOf(this.env.VAPID_PRIVATE_KEY, subject)
+    if (!vapid || !ids.length) return
+    const sql = this.ctx.storage.sql
+    const now = Date.now()
+    type Row = { device: string; endpoint: string; p256dh: string; auth: string; last_at: number; day: number; count: number }
+    const rows = sql.exec<Row>(`SELECT * FROM push WHERE device IN (${ids.map(() => '?').join(',')})`, ...ids).toArray()
+    const taken = rows.flatMap(row => {
+      const budget: Budget = { lastAt: row.last_at, day: row.day, count: row.count }
+      if (!mayPush(budget, now, kind)) return []
+      const b = spent(budget, now)
+      sql.exec('UPDATE push SET last_at = ?, day = ?, count = ? WHERE device = ?', b.lastAt, b.day, b.count, row.device)
+      return [{ row, budget, b }]
+    })
+    await Promise.all(
+      taken.map(async ({ row, budget, b }) => {
+        const r = await sendPush(row, kind, vapid, { now })
+        if (r === 'gone') sql.exec('DELETE FROM push WHERE device = ? AND endpoint = ?', row.device, row.endpoint)
+        // Given back only if no later push took the budget meanwhile.
+        else if (r !== 'sent')
+          sql.exec(
+            'UPDATE push SET last_at = ?, day = ?, count = ? WHERE device = ? AND last_at = ? AND count = ?',
+            budget.lastAt, budget.day, budget.count, row.device, b.lastAt, b.count,
+          )
+      }),
+    )
   }
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
@@ -107,6 +170,27 @@ export class Room extends DurableObject<Env> {
     const message = new TextEncoder().encode(text).byteLength > DEVICE_MAX_BYTES ? null : parseDeviceMessage(text)
     ws.serializeAttachment(message && 'here' in message ? { ...device, here: now } : device)
     if (!message || 'here' in message) return
+    if ('push' in message) {
+      // Kept per device, never logged; a new subscription replaces the old one and keeps the day's budget. Rows of
+      // devices unseen for 30 days go, and past PUSH_ROWS the least recently seen go first.
+      const sql = this.ctx.storage.sql
+      const sub = message.push
+      if (!sub) sql.exec('DELETE FROM push WHERE device = ?', device.id)
+      else {
+        sql.exec(
+          `INSERT INTO push (device, endpoint, p256dh, auth, seen_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(device) DO UPDATE SET endpoint = excluded.endpoint, p256dh = excluded.p256dh, auth = excluded.auth, seen_at = excluded.seen_at`,
+          device.id,
+          sub.endpoint,
+          sub.p256dh,
+          sub.auth,
+          now,
+        )
+        sql.exec('DELETE FROM push WHERE seen_at < ?', now - PUSH_UNSEEN_MS)
+        sql.exec('DELETE FROM push WHERE device NOT IN (SELECT device FROM push ORDER BY seen_at DESC LIMIT ?)', PUSH_ROWS)
+      }
+      return
+    }
     this.ctx.storage.sql.exec(
       'INSERT INTO frames (at, sender, recipient, data) VALUES (?, ?, ?, ?)',
       now,

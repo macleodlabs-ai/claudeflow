@@ -43,15 +43,60 @@ async function until<T>(what: string, f: () => Promise<T> | T, ms = 20_000): Pro
   }
 }
 
-// ---- the relay ----
-function startRelay() {
+// ---- the relay, with a VAPID key of this run's as its secret ----
+async function startRelay() {
+  const vapid = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])) as CryptoKeyPair
+  const secret = Buffer.from(await crypto.subtle.exportKey('pkcs8', vapid.privateKey)).toString('base64url')
   const log = openSync(join(TMP, 'wrangler.log'), 'w')
-  const p = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1'], {
+  const p = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `VAPID_PRIVATE_KEY:${secret}`], {
     cwd: join(ROOT, 'relay/cloudflare'), detached: true, stdio: ['ignore', log, log],
   })
   procs.push(p)
   return until('wrangler dev', () => fetch(`${UP}/`).then(r => r.ok, () => false), 60_000)
 }
+
+// ---- a push service on this Mac: headless Chrome has none, so the devices' subscriptions point here ----
+const PUSH_PORT = 8795
+const pushes: { path: string; authorization: string; body: Uint8Array }[] = []
+function startPushService() {
+  return Bun.serve({
+    port: PUSH_PORT, hostname: '127.0.0.1',
+    fetch: async req => (pushes.push({ path: new URL(req.url).pathname, authorization: req.headers.get('authorization') ?? '', body: new Uint8Array(await req.arrayBuffer()) }), new Response(null, { status: 201 })),
+  })
+}
+
+/** A browser's push keys: what PushManager would make, so this run can open what the relay sealed (RFC 8291). */
+async function pushKeys(path: string) {
+  const keys = (await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])) as CryptoKeyPair
+  const pub = new Uint8Array(await crypto.subtle.exportKey('raw', keys.publicKey))
+  const auth = crypto.getRandomValues(new Uint8Array(16))
+  const json = { endpoint: `http://127.0.0.1:${PUSH_PORT}${path}`, expirationTime: null, keys: { p256dh: Buffer.from(pub).toString('base64url'), auth: Buffer.from(auth).toString('base64url') } }
+  const hkdf = async (salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, n: number) =>
+    new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']), n * 8))
+  const text = (s: string) => new TextEncoder().encode(s)
+  /** The push body opened with this browser's private key: what the phone would read. */
+  async function open(body: Uint8Array): Promise<string> {
+    const salt = body.slice(0, 16)
+    const asPublic = body.slice(21, 21 + body[20]!)
+    const peer = await crypto.subtle.importKey('raw', asPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, [])
+    const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: peer }, keys.privateKey, 256))
+    const ikm = await hkdf(auth, ecdh, Buffer.concat([text('WebPush: info\0'), pub, asPublic]), 32)
+    const aes = await crypto.subtle.importKey('raw', await hkdf(salt, ikm, text('Content-Encoding: aes128gcm\0'), 16), 'AES-GCM', false, ['decrypt'])
+    const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: await hkdf(salt, ikm, text('Content-Encoding: nonce\0'), 12) }, aes, body.slice(21 + body[20]!)))
+    return new TextDecoder().decode(plain.slice(0, plain.lastIndexOf(2)))
+  }
+  return { json, open }
+}
+
+/** Makes a page's Push API hand out `sub` (headless Chrome cannot reach a real push service) and allow notifications. */
+const fakePushApi = (sub: unknown) => `(() => {
+  let permission = 'default', current = null
+  Object.defineProperty(Notification, 'permission', { get: () => permission, configurable: true })
+  Notification.requestPermission = async () => (permission = 'granted')
+  PushManager.prototype.getSubscription = async () => current
+  PushManager.prototype.subscribe = async () => (current = { toJSON: () => (${JSON.stringify(sub)}), unsubscribe: async () => ((current = null), true) })
+  return true
+})()`
 
 // ---- a device: one headless Chrome with its own profile and a virtual platform authenticator ----
 type Page = Awaited<ReturnType<typeof openDevice>>
@@ -92,12 +137,21 @@ async function openDevice(name: string, port: number) {
     text: () => js('document.body.innerText') as Promise<string>,
     /** A tap, as a person makes it: with a user gesture, so WebAuthn may run. */
     tap: (sel: string) => until(`${name}: ${sel}`, () => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true })()`)),
-    see: (what: string, ms?: number) => until(`${name} to show "${what}"`, async () => (await js('document.body.innerText') as string).includes(what), ms),
+    see: (what: string, ms?: number) => until(`${name} to show "${what}"`, async () => String((await js('document.body.innerText')) ?? '').includes(what), ms),
+    width: 390,
+    /** Phone (390), tablet (820) or Mac (1280): the app picks its layout from the width, as on the real device. */
+    async resize(width: number, height: number) {
+      this.width = width
+      await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: width > 390 ? 1 : 2, mobile: width <= 390 })
+      await sleep(400)
+    },
     async shot(file: string) {
       const h = (await js('document.documentElement.scrollHeight')) as number
-      const s = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: 390, height: Math.max(844, h), scale: 1 } })
+      const s = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: this.width, height: Math.max(844, h), scale: 1 } })
       writeFileSync(join(SHOTS, file), Buffer.from(s.data, 'base64'))
     },
+    /** The app put away, as a phone in a pocket: the page is frozen, so it stops saying it is looking. */
+    freeze: () => send('Page.setWebLifecycleState', { state: 'frozen' }),
     deviceId: async () => JSON.parse((await js(`localStorage.getItem('cf:device')`)) ?? '{}').id as string,
     /** The passkeys this device's authenticator holds: one per pairing ceremony that ran. */
     passkeys: async () => ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length,
@@ -145,6 +199,18 @@ function startSession() {
     s.settled = [...s.settled, { id, why, at: Date.now(), ...(label ? { label } : {}) }]
   }
   const at = Date.now()
+  // A Workflow run mid-way: one phase done, one running with a failure, one not started. Times, not clocks.
+  const agent = (id: string, label: string, status: 'running' | 'done' | 'error', ago: number, took?: number, verdict?: string) =>
+    ({ id, label, status, tools: 3, startedAt: at - ago, ...(took ? { endedAt: at - ago + took } : {}), ...(verdict ? { verdict } : {}) })
+  const WORKFLOW = {
+    name: 'audit', taskId: 'wf_e2e', status: 'running' as const, startedAt: at - 252_000, agents: { run: 2, done: 3, err: 1 }, inferred: false,
+    phases: [
+      { title: 'Map', done: 2, total: 2, err: 0, agents: [agent('a1', 'map hooks', 'done', 250_000, 60_000), agent('a2', 'map remote', 'done', 250_000, 80_000)] },
+      { title: 'Verify', done: 1, total: 4, err: 1, verdicts: { confirmed: 1 },
+        agents: [agent('a3', 'verify seal replay', 'error', 120_000, 40_000), agent('a4', 'verify passkey origin', 'done', 120_000, 70_000, 'confirmed'), agent('a5', 'verify link backoff', 'running', 110_000), agent('a6', 'verify room limits', 'running', 100_000)] },
+      { title: 'Fix', done: 0, total: 0, err: 0, agents: [] },
+    ],
+  }
   const snapshot = (): Snapshot => ({
     v: 1,
     session: { id, account: 'e2e', project: 'claudeflow', busy: true },
@@ -152,7 +218,11 @@ function startSession() {
     streams: [
       { id: 'st1', name: 'relay deploy', color: '#79c0ff', kind: 'waiting', state: 'WAITING FOR YOU', detail: '', question: 'Deploy the relay now?', agents: [], rows: [{ kind: 'prompt', text: 'ship the relay', at }] },
       { id: 'st2', name: 'phone app', color: '#ffd33d', kind: 'running', state: 'RUNNING', detail: 'building views', agents: [], rows: [] },
+      { id: 'st3', name: 'audit', color: '#d0bfff', kind: 'running', state: 'RUNNING', detail: 'workflow', agents: [], rows: [], workflow: WORKFLOW },
+      { id: 'st4', name: 'CI watch', color: '#99e9f2', kind: 'loop', state: 'LOOP', detail: 'CI still running', nextAt: at + 250_000, agents: [], rows: [{ kind: 'loop', text: '↻ tick: checks still pending', at }],
+        loop: { kind: 'wakeup', nextAt: at + 250_000, reason: 'CI still running', noopStreak: 3, lastChange: { at: at - 600_000, text: 'PR #12 merged' } } },
     ],
+    summary: { workflows: 1, agentsRunning: 2, failures: 1, nextTickAt: at + 250_000 },
     status: [{ id: 'g', area: 'main', state: 'clean', detail: '' }],
     limits: [],
     updates: [],
@@ -177,7 +247,7 @@ function startSession() {
           s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
         }
         s.commands.push(...got.commands)
-        // What index.ts's phoneCommand answers, acked in the same tick.
+        // What index.tsx's phoneCommand answers, acked in the same tick.
         for (const { device, command: c } of got.commands) {
           let done: Omit<Ack, 't' | 'id'> = { ok: true }
           if (c.kind === 'permission' || c.kind === 'choose') {
@@ -224,6 +294,7 @@ try {
       mkdirSync(TMP, { recursive: true })
       mkdirSync(SHOTS, { recursive: true })
       await startRelay()
+      const pushService = startPushService()
       check('relay serves the app at /', (await (await fetch(`${UP}/`)).text()).includes('app.js'))
 
       const s = startSession()
@@ -333,7 +404,67 @@ try {
       check('the denied device is not stored and saw no snapshot', !s.devices.some(d => d.id === id3) && !(await d3.text()).includes('Deploy the relay now?'))
       await d3.shot('e2e-06-stranger-denied.png')
 
+      // Workflows and loops: the cards say where each is, and Stop workflow (two taps) reaches the session as stopTask.
+      s.permissions = []
+      await d1.see('Verify · 3/6 · ✗1')
+      await d1.see('3 quiet')
+      check('the device shows the running workflow (phase, count, failure) and the loop (next tick, quiet streak)', /in \d+:\d\d · 3 quiet/.test(await d1.text()), 'no loop countdown')
+      await d1.tap('[data-toggle$="|st3"]')
+      await d1.see('Stop workflow')
+      await d1.shot('app-390-workflow.png')
+      await d1.tap('[data-stop-task="wf_e2e"]')
+      await d1.see('Tap again to stop')
+      await d1.tap('[data-stop-task="wf_e2e"]')
+      const stopTask = await until('the stopTask command', () => s.commands.find(c => c.command.kind === 'stopTask'), POLL_WAIT_MS)
+      // Acked like any tap: the button settles on the Mac's word, not on a guess.
+      await d1.see('Done ✓', POLL_WAIT_MS)
+      check('tapping Stop workflow twice reaches the session as stopTask for that run, from device 1, and its ack shows "Done ✓"',
+        stopTask.device === id1 && stopTask.command.kind === 'stopTask' && stopTask.command.taskId === 'wf_e2e' && s.acks.some(a => a.ack.id === stopTask.command.id && a.ack.ok), JSON.stringify(stopTask))
+      await d1.tap('[data-toggle$="|st3"]')
+      await d1.tap('[data-toggle$="|st4"]')
+      await d1.see('Run now')
+      await d1.shot('app-390-loop.png')
+      await d1.tap('[data-run-tick]')
+      const tick = await until('the runTick command', () => s.commands.find(c => c.command.kind === 'runTick'), POLL_WAIT_MS)
+      await until('the runTick ack', () => s.acks.some(a => a.ack.id === tick.command.id), POLL_WAIT_MS)
+      check('tapping Run now reaches the session as runTick for the loop\'s stream, and is acked', tick.command.kind === 'runTick' && tick.command.streamId === 'st4', JSON.stringify(tick))
+      for (const [w, h] of [[820, 1180], [1280, 860]] as const) {
+        await d1.resize(w, h)
+        await d1.tap('[data-select$="|st3"]')
+        await d1.see('Stop workflow')
+        await d1.shot(`app-${w}-workflow.png`)
+        await d1.tap('[data-select$="|st4"]')
+        await d1.see('Run now')
+        await d1.shot(`app-${w}-loop.png`)
+      }
+
       check('only the two real devices ever sent commands', s.commands.every(c => c.device === id1 || c.device === id2))
+
+      // Notify me: both devices subscribe (to this run's push service). Device 2 puts the app away; a new permission
+      // then wakes device 2 only, with a push that opens to its kind and nothing else, signed by the relay's key.
+      await d1.resize(390, 844)
+      const [k1, k2] = [await pushKeys('/device1'), await pushKeys('/device2')]
+      for (const [d, k] of [[d1, k1], [d2, k2]] as const) {
+        await d.js(fakePushApi(k.json))
+        await d.tap('[data-notify][aria-checked="false"]')
+        await until(`${d.name} notify on`, () => d.js(`!!document.querySelector('[data-notify][aria-checked="true"]')`))
+      }
+      await d2.shot('app-390-notify.png')
+      await d2.freeze()
+      // Device 2 is looking until its last visible ping is 30 s old; then the session must post once more to learn it.
+      const looking = () => fetch(`${UP}/v1/room/${s.identity.room}/up`, { method: 'POST', body: JSON.stringify({ token: s.identity.token, session: randomId(), since: Number.MAX_SAFE_INTEGER, frames: [] }) })
+        .then(r => r.json() as Promise<{ devices: { id: string; isActive: boolean }[] }>).then(r => r.devices.filter(d => d.isActive).map(d => d.id))
+      await until('device 2 to stop looking', async () => !(await looking()).includes(id2), POLL_WAIT_MS)
+      const posted = s.posts
+      await until('a post after device 2 left', () => s.posts >= posted + 1, POLL_WAIT_MS)
+      s.permissions = [{ id: 'toolu_push', tool: 'Bash', summary: 'Bash: npm publish', at: Date.now() }]
+      const push = await until('the push to device 2', () => pushes.find(p => p.path === '/device2'), POLL_WAIT_MS)
+      const { key } = (await (await fetch(`${UP}/v1/push/key`)).json()) as { key: string }
+      check('device 2, not looking, gets one push that opens to {"kind":"needs-you"} only, VAPID-signed with the relay\'s key',
+        (await k2.open(push.body)) === '{"kind":"needs-you"}' && push.authorization.endsWith(`, k=${key}`), push.authorization.slice(0, 40))
+      await sleep(3000)
+      check('device 1, looking, gets no push, and device 2 no second one', !pushes.some(p => p.path === '/device1') && pushes.filter(p => p.path === '/device2').length === 1, JSON.stringify(pushes.map(p => p.path)))
+      pushService.stop(true)
       s.isRunning = false
       for (const d of [d1, d2, d3]) d.close()
     })(),

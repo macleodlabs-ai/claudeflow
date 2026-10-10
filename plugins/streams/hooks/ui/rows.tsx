@@ -2,7 +2,8 @@ import type { ElementTable, RenderElement } from 'claude-code'
 
 import type { AgentRun, Stream, StreamRow } from '../../types'
 import { clockOf, oneLine, type BadgeKind } from '../classify'
-import type { Loops } from '../streams/model'
+import { loopLines, type Loops } from '../streams/loops'
+import { runOf, workflowLines, workflowView, type Workflows } from '../streams/workflows'
 import { GLYPH, STATUS_GLYPH, STATUS_WORD, markdownOf } from './look'
 
 /** What the pane's rows are drawn from, read once per draw. */
@@ -17,6 +18,7 @@ export type PaneView = {
   agents: Record<string, AgentRun>
   /** Loops still armed: lapsed ones are left out. */
   loops: Loops
+  workflows: Workflows
 }
 
 /** Status words as bold coloured text: the pane's rows stay one Text per line, the shape known to paint. */
@@ -29,10 +31,51 @@ export function badge(v: PaneView, kind: BadgeKind, text: string): RenderElement
   )
 }
 
-export function loopBadge(v: PaneView, s: Stream): RenderElement | null {
+/**
+ * A stream's loop, on lines of its own: when it fires next and why, then how many ticks found nothing and what the
+ * last real change was, so a loop that has been quiet for an hour says so instead of looking busy.
+ */
+export function loopRows(v: PaneView, s: Stream): RenderElement[] {
+  const { Text } = v.ui
   const loop = v.loops[s.id]
-  if (!loop) return null
-  return badge(v, 'loop', loop.kind === 'cron' ? `↻ LOOP ${loop.label}` : `↻ LOOP next ${clockOf(Math.max(0, loop.nextAt - v.now))}`)
+  if (!loop) return []
+  const [head = '', quiet] = loopLines(loop, v.now, v.width)
+  return [
+    <Text key={`loop:${s.id}`} color={STATUS_WORD.loop} bold wrap="truncate">
+      {head}
+    </Text>,
+    ...(quiet
+      ? [
+          <Text key={`loop:${s.id}:quiet`} dimColor wrap="truncate">
+            {quiet}
+          </Text>,
+        ]
+      : []),
+  ]
+}
+
+const RUN_COLOR = { running: STATUS_WORD.running, completed: STATUS_WORD.done, failed: STATUS_WORD.error, killed: STATUS_WORD.stalled } as const
+
+/**
+ * A stream's Workflow run, its parent row and its phases: status, clock, a progress bar and the agents finished,
+ * then each phase with its counts. Failures are red, so a failed agent is seen without opening anything.
+ */
+export function workflowRows(v: PaneView, s: Stream): RenderElement[] {
+  const { Text } = v.ui
+  const run = runOf(v.workflows, s.id)
+  if (!run) return []
+  const view = workflowView(run)
+  const [head = '', ...phases] = workflowLines(view, v.now, v.width)
+  return [
+    <Text key={`run:${s.id}`} color={view.agents.err && view.status === 'running' ? STATUS_WORD.error : RUN_COLOR[view.status]} bold wrap="truncate">
+      {head}
+    </Text>,
+    ...phases.map((line, i) => (
+      <Text key={`run:${s.id}:${i}`} {...(line.includes('✗') ? { color: STATUS_WORD.error } : { dimColor: true })} wrap="truncate">
+        {line}
+      </Text>
+    )),
+  ]
 }
 
 /** The work in a stream, live: its main turn and its subagents, yellow running, green done, red failed. */

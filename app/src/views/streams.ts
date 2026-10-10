@@ -1,6 +1,7 @@
 // The Streams view: a card per stream, a waiting one with its question and Yes / Reply, and a reply box whose
 // draft comes from the state, so a redraw from a new snapshot keeps what was typed.
 import { isInFlight, SENT_MS, SLOW_MS, streamKey, type State } from '../state'
+import { flowDetail, flowSub, progress } from './flows'
 import { clock, color, esc, GLYPH, kindOf, lineText, SLOW_TEXT, STATE_COLOR, stageLine, type Stream } from './util'
 
 const ROW_CLASS: Record<string, string> = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
@@ -43,8 +44,9 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
       <div class="actions"><button class="btn yes" data-answer="${esc(key)}" ${isInFlight(s.taps[key]) ? 'disabled' : ''}>Yes</button>
       <button class="btn ghost" data-reply-open="${esc(key)}">Reply…</button>${sentNote(s, key, now)}</div></div>`
       : ''
-  // A list row shows the question as its line, so what needs you reads without opening it.
-  const line = x.question ? (mode === 'list' ? `<div class="sub">${esc(x.question)}</div>` : '') : `<div class="sub">${esc(lineText(x, now))}</div>`
+  // A list row shows the question as its line, so what needs you reads without opening it. A run or a loop says
+  // where it is instead of the status detail: phase and count, or next tick, quiet streak and last change.
+  const line = x.question ? (mode === 'list' ? `<div class="sub">${esc(x.question)}</div>` : '') : `<div class="sub">${esc(flowSub(x, now) ?? lineText(x, now))}</div>`
   const act =
     mode === 'inline'
       ? `data-toggle="${esc(key)}" role="button" tabindex="0" aria-expanded="${isOpen}"`
@@ -52,15 +54,16 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
         ? `data-select="${esc(key)}" role="button" tabindex="0" aria-current="${isSelected}"`
         : ''
   const chev = mode === 'inline' ? `<span class="chev" aria-hidden="true">▸</span>` : ''
+  const flow = mode === 'list' ? '' : flowDetail(s, key, x, now)
   const body =
     mode === 'list'
       ? ''
-      : `<div class="body">${agents}${rows || '<div class="row reply">Quiet so far.</div>'}${replyBox(s, key)}${x.question ? '' : sentNote(s, key, now)}</div>`
+      : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${replyBox(s, key)}${x.question ? '' : sentNote(s, key, now)}</div>`
   return `<section class="card st-${kind} ${isOpen ? 'open' : ''} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
       <div class="title"><div class="name">${esc(x.name)}</div>${line}</div>
       <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>${chev}</div>
-    ${question}${body}
+    ${x.workflow ? progress(x.workflow) : ''}${question}${body}
   </section>`
 }
 

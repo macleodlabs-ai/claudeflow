@@ -142,3 +142,38 @@ describe('Yes and Reply under lag', () => {
     expect(card(s, SK, waiting, T + 1 + SENT_MS)).not.toContain('Sent ✓')
   })
 })
+
+describe('Stop workflow, Stop loop and Run now under lag', () => {
+  // These act on the Mac like Yes does, so they get the same honesty: one command per tap, disabled while it is on
+  // its way, and a word from the Mac (or plain words when it could not) instead of a button that just goes quiet.
+  const key = streamKey(SK, 'ci')
+  const looping = {
+    id: 'ci', name: 'ci', color: '#a5d8ff', kind: 'loop', state: 'LOOP', detail: '', agents: [], rows: [],
+    loop: { kind: 'wakeup', nextAt: T + 60_000, noopStreak: 0 },
+    workflow: { name: 'audit', taskId: 'wf1', status: 'running', startedAt: T, agents: { run: 1, done: 0, err: 0 }, phases: [], inferred: false },
+  } as unknown as Snapshot['streams'][number]
+  const opened = reduce(initial(), { type: 'toggle', key })
+  const button = (html: string, attr: string) => html.match(new RegExp(`<button[^>]*${attr}[^>]*>`))?.[0] ?? ''
+
+  test('each button is disabled while its own command is in flight, and says Done ✓ once acked', () => {
+    let s = reduce(opened, { type: 'tap', key: `${key}|runTick`, tap: tap({ id: 't1', kind: 'runTick', streamId: 'ci' }, 'sent', T) })
+    let html = card(s, SK, looping, T)
+    expect(button(html, 'data-run-tick')).toContain('disabled')
+    // Only that button: Stop loop and Stop workflow are separate taps.
+    expect(button(html, 'data-stop-loop')).not.toContain('disabled')
+    expect(button(html, 'data-stop-task')).not.toContain('disabled')
+    expect(html).toContain('Sent: waiting for your Mac…')
+    s = reduce(s, { type: 'ack', ack: { t: 'ack', id: 't1', ok: true }, now: T + 1 })
+    html = card(s, SK, looping, T + 1)
+    expect(html).toContain('Done ✓')
+    expect(button(html, 'data-run-tick')).not.toContain('disabled')
+  })
+
+  test('a stop the Mac could not do is told in words; a slow one offers Retry of the same command', () => {
+    let s = reduce(opened, { type: 'tap', key: `${key}|stopTask`, tap: tap({ id: 'k1', kind: 'stopTask', taskId: 'wf1' }, 'sent', T) })
+    expect(card(s, SK, looping, T + SLOW_MS + 1)).toContain(`data-retry="${key}|stopTask"`)
+    s = reduce(s, { type: 'ack', ack: { t: 'ack', id: 'k1', ok: false }, now: T + 2 })
+    expect(card(s, SK, looping, T + 2)).toMatch(/Your Mac couldn(&#39;|&#x27;|')t do that/)
+    expect(button(card(s, SK, looping, T + 2), 'data-stop-task')).not.toContain('disabled')
+  })
+})

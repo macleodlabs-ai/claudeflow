@@ -219,7 +219,9 @@ h2 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .08em; 
 .srow[style] .sdetail { padding-left: 17px; }
 
 /* ---------- Plan usage, pinned to the bottom on glass ---------- */
-.usage { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; }
+.dock:not(:has(.usage)) { padding-bottom: calc(env(safe-area-inset-bottom) + 12px); }
+.usage { background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
          border-top: 1px solid var(--glass-line-strong); padding: 10px 16px calc(env(safe-area-inset-bottom) + 10px); cursor: pointer; box-shadow: 0 -12px 32px rgba(2, 3, 16, .5); }
 .usage:focus-visible { outline-offset: -3px; border-radius: 0; }
 .usage-row { display: flex; align-items: center; gap: 12px; min-height: 28px; font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
@@ -236,11 +238,58 @@ h2 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .08em; 
 .bar { height: 8px; border-radius: 4px; background: var(--night-500); overflow: hidden; }
 body.has-usage { padding-bottom: calc(env(safe-area-inset-bottom) + 72px); }
 body.has-usage.usage-open { padding-bottom: calc(env(safe-area-inset-bottom) + 230px); }
+body.has-summary { padding-bottom: calc(env(safe-area-inset-bottom) + 72px); }
+body.has-summary.has-usage { padding-bottom: calc(env(safe-area-inset-bottom) + 120px); }
+body.has-summary.has-usage.usage-open { padding-bottom: calc(env(safe-area-inset-bottom) + 278px); }
 @media (max-width: 479px) {
   .usage-row > .meta:first-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .usage-row { gap: 10px; }
   .usage-row .mini { width: 30px; }
 }
+
+/* ---------- Workflow runs and loops ---------- */
+/* The run's progress is a line in the stream's colour; failures end it in the error colour. */
+.prog { display: flex; height: 3px; margin: -4px 12px 10px 16px; border-radius: 2px; background: var(--night-500); overflow: hidden; }
+.prog > i { display: block; height: 100%; }
+.prog .ok { background: var(--c); box-shadow: 0 0 8px color-mix(in srgb, var(--c) 60%, transparent); }
+.prog .bad { background: var(--error); }
+.flow { margin: 12px 0 4px; padding: 12px; border-radius: var(--r-sm); background: var(--night-800); border: 1px solid var(--glass-line); }
+.flow + .flow { margin-top: 8px; }
+.flow-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.flow-label { font-weight: 800; color: var(--c); }
+.flow-label.loop { color: var(--running); }
+.flow-label.bad { color: var(--error); font-size: var(--fs-sm); letter-spacing: .06em; text-transform: uppercase; }
+.flow-counts { display: block; margin-top: 6px; white-space: normal; }
+.failed { margin-top: 10px; padding: 8px 10px 10px; border-radius: var(--r-xs); border: 1px solid var(--error); background: color-mix(in srgb, var(--error) 10%, var(--night-800)); }
+.failed .agent:first-of-type { padding-top: 6px; }
+.phases { margin-top: 10px; border-top: 1px solid var(--glass-line); }
+.phase { border-bottom: 1px solid var(--glass-line); }
+.phase:last-child { border-bottom: 0; }
+.ph-head { display: flex; align-items: center; gap: 8px; min-height: 44px; flex-wrap: wrap; padding: 4px 2px; }
+.ph-head[role="button"] { cursor: pointer; }
+.ph-head[role="button"]:focus-visible { outline-offset: -2px; box-shadow: none; }
+.ph-title { font-weight: 700; color: var(--text); }
+.pdot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.pdot.live { box-shadow: 0 0 10px var(--running); }
+.phase.open .ph-head .chev { transform: rotate(90deg); }
+.ph-agents { padding: 0 0 10px 18px; }
+.ph-agents .agent, .failed .agent { align-items: center; padding-top: 8px; }
+.ph-agents .agent .dot, .failed .agent .dot { align-self: flex-start; margin-top: 6px; }
+.agent .badge { margin-left: 2px; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 10px 0 0; font-size: var(--fs-md); }
+.facts dt { color: var(--text-faint); font-weight: 700; }
+.facts dd { margin: 0; color: var(--text-soft); overflow-wrap: anywhere; }
+.flow-actions { margin: 12px 0 4px; }
+/* The sticky runs-and-loops line, Live-Activity style: a glass capsule just above plan usage. */
+.flowsum { display: flex; align-items: center; justify-content: center; gap: 10px; width: fit-content; max-width: calc(100% - 32px); min-height: 36px; margin: 0 auto 8px; padding: 6px 16px;
+           border-radius: var(--r-pill); background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border: 1px solid var(--glass-line-strong);
+           box-shadow: var(--shadow-pop); font-weight: 800; font-size: var(--fs-md); font-variant-numeric: tabular-nums; color: var(--text); }
+.flowsum .ws, .flowsum .lp { color: var(--running); }
+.flowsum .bad { color: var(--error); }
+.flowsum .sep { color: var(--text-faint); font-weight: 400; }
+/* Each part keeps its words together; a narrow chip wraps between parts, never inside one. */
+.flowsum { flex-wrap: wrap; row-gap: 2px; }
+.flowsum > span:not(.sep) { white-space: nowrap; }
 
 /* ---------- Gates, empty states, the motif ---------- */
 .gate { position: relative; overflow: hidden; background: linear-gradient(180deg, var(--glass-strong), var(--night-700)); border: 1px solid var(--glass-line-strong); border-radius: var(--r-lg);
@@ -330,7 +379,12 @@ body.has-usage.usage-open { padding-bottom: calc(env(safe-area-inset-bottom) + 2
   .card.detail .question { margin: 0 20px 16px 24px; }
   .card.detail .body { padding: 8px 24px 22px; }
   /* Usage sits in the sidebar right under the session tabs (main.ts moves it there), as a small glass panel. */
-  #tabs .usage { position: relative; left: auto; right: auto; bottom: auto; width: 100%; margin-top: 18px; border: 1px solid var(--glass-line-strong); border-radius: var(--r-md); padding: 12px 14px; box-shadow: var(--shadow-panel); }
+  #tabs .dock { position: static; width: 100%; margin-top: 18px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  #tabs .flowsum { margin: 0; width: 100%; max-width: none; justify-content: flex-start; border-radius: var(--r-md); padding: 8px 14px; }
+  /* The sidebar is narrow: one part a line reads better than parts broken across lines. */
+  #tabs .flowsum { flex-direction: column; align-items: flex-start; gap: 2px; }
+  #tabs .flowsum .sep { display: none; }
+  #tabs .usage { position: relative; width: 100%; border: 1px solid var(--glass-line-strong); border-radius: var(--r-md); padding: 12px 14px; box-shadow: var(--shadow-panel); }
   .usage:focus-visible { border-radius: var(--r-md); }
   .usage-row { flex-wrap: wrap; gap: 8px 12px; }
   .usage-row > .meta:first-child { flex-basis: calc(100% - 24px); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
@@ -341,7 +395,18 @@ body.has-usage.usage-open { padding-bottom: calc(env(safe-area-inset-bottom) + 2
   .usage .more { display: block; }
   .statusview { max-width: none; }
   .usage .more .limit { grid-template-columns: 3em 1fr 3em; }
-  body.has-usage, body.has-usage.usage-open { padding-bottom: 40px; }
+  body.has-usage, body.has-usage.usage-open, body.has-summary, body.has-summary.has-usage, body.has-summary.has-usage.usage-open { padding-bottom: 40px; }
   .gate { max-width: 560px; }
 }
 .card .icon.spin { border-radius: 50%; }
+/* "Notify me": a switch in brand (it is a setting, not a status), with a note beside it. */
+.notify { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 16px 0 8px; }
+.switch { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 14px 0 8px; font: inherit; font-weight: 700; color: var(--text);
+  background: var(--glass); border: 1px solid var(--glass-line-strong); border-radius: var(--r-pill); cursor: pointer; }
+.switch .knob { position: relative; width: 36px; height: 22px; border-radius: var(--r-pill); background: var(--night-500); transition: background var(--dur) var(--ease); }
+.switch .knob::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-dim); transition: transform var(--dur) var(--ease), background var(--dur) var(--ease); }
+.switch[aria-checked="true"] .knob { background: var(--brand); }
+.switch[aria-checked="true"] .knob::after { transform: translateX(14px); background: var(--ink); }
+.switch:disabled { opacity: .6; cursor: default; }
+.notify-why, .notify-note { color: var(--text-dim); font-size: var(--fs-md); }
+.notify-note { margin: 16px 0 8px; }

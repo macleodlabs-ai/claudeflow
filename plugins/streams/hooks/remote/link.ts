@@ -1,5 +1,6 @@
 import { channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, verifyPasskey } from './seal'
 import { HEARTBEAT_MS, MAX_ALLOW_TRIES, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
+import { createNotifier, type Hint } from './notify'
 
 // One session's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), with no engine in it: it
 // reads what the relay answered and says what to post and when, which devices were paired and which commands to do.
@@ -56,6 +57,24 @@ export const upOf = (text: string): UpResponse | undefined => {
   }
 }
 
+/**
+ * `/streams phone relay <url|off>` read: the relay address to set, '' for off, or why it is refused. Only an https
+ * origin: passkeys need a secure origin, and the relay serves at its root, so a path is a mistake.
+ */
+export function relayArg(arg: string): { relayUrl: string } | { error: string } {
+  if (arg === 'off') return { relayUrl: '' }
+  const bad = { error: `"${arg}" is not a relay address. Give its https origin, e.g. https://relay.<you>.workers.dev, or \`off\`.` }
+  let u: URL
+  try {
+    u = new URL(arg)
+  } catch {
+    return bad
+  }
+  if (u.protocol !== 'https:') return { error: `The relay must be https (passkeys need a secure origin), e.g. https://${u.host || 'relay.<you>.workers.dev'}` }
+  if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) return { error: `The relay address has no path: give ${u.origin}` }
+  return u.hostname.includes('.') ? { relayUrl: u.origin } : bad
+}
+
 /** The origin passkeys are made on: the relay's scheme, host and port. */
 export const originOf = (relayUrl: string): string => /^https?:\/\/[^/?#]+/.exec(relayUrl)?.[0] ?? ''
 
@@ -93,8 +112,8 @@ type Taken = { send: OutFrame[]; paired: Device[]; commands: { device: string; c
 /** What the session knows of its devices on this tick, from $.store: the paired ones, and an open pairing. */
 export type Known = { devices: Device[]; pairing?: Pairing; now: number }
 
-/** The body of `POST /v1/room/{room}/up`. */
-export type UpBody = { token: string; session: string; since: number; frames: OutFrame[] }
+/** The body of `POST /v1/room/{room}/up`, with a push hint (`notify`, `kind`) when there is news for devices not looking. */
+export type UpBody = { token: string; session: string; since: number; frames: OutFrame[] } & Partial<Hint>
 
 export type Answered = {
   /** Devices that paired with this post's hellos: the adapter adds them to $.store for every session. */
@@ -151,7 +170,10 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   /** Welcomes and denials not yet posted. */
   let outbox: OutFrame[] = []
   /** The post on the wire, read back by `answered`. */
-  let sent: { frames: OutFrame[]; acks: typeof acks; body: string; known: Known } | undefined
+  let sent: { frames: OutFrame[]; acks: typeof acks; body: string; known: Known; hint?: Hint } | undefined
+  /** What wakes devices that are not looking (notify.ts); a hint whose post failed goes with the next one. */
+  const notifier = createNotifier()
+  let hintAgain: Hint | undefined
   /** Which post of this tick comes next: 0 is the tick's first, which waits until one is due. */
   let round = 0
 
@@ -289,7 +311,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
 
     /**
      * The post to send now, or none. A tick's first post waits until one is due: every tick while a permission is
-     * held for a looking device (`isHolding`), when there are welcomes to send, or when the snapshot changed; every
+     * held for a looking device (`isHolding`), when there are welcomes or a push hint to send (notify.ts), or when
+     * the snapshot changed; every
      * 6 s while a paired device (any device while a pairing is open) looks or for a minute after a welcome; otherwise
      * every 30 s. An account with
      * nothing paired and no pairing open never posts, and a failed post waits out its backoff.
@@ -299,9 +322,13 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       for (const id of conns.keys()) if (!k.devices.some(d => d.id === id)) conns.delete(id)
       if (isQuiet(k)) return undefined
       const body = snapshotKey(k.snapshot)
+      // Every snapshot is shown to the notifier, due or not, so news is seen once. Paired devices only.
+      const hint =
+        notifier.hint(k.snapshot, k.devices.map(d => d.id), id => connected.get(id) === true, k.now) ?? hintAgain
+      hintAgain = undefined
       const isActive = k.now < poll.warmUntil || [...connected.values()].some(Boolean)
       const isDue =
-        round > 0 || k.isHolding || outbox.length > 0 || acks.length > 0 || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
+        round > 0 || k.isHolding || outbox.length > 0 || acks.length > 0 || !!hint || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
       if (!isDue) return undefined
       // Acks are sealed like snapshots, on the device's current channel; one whose device has gone is dropped.
       const sealed = acks.flatMap(a => {
@@ -309,10 +336,10 @@ export function createLink(o: { identity: Identity; session: string; origin: str
         return c ? [{ to: a.to, data: { t: 'box', b: c.ch.seal(a.ack) } }] : []
       })
       const frames = [...outbox, ...sealed, ...snapshots(k.snapshot, k.now)]
-      sent = { frames, acks, body, known: { devices: k.devices, pairing: k.pairing, now: k.now } }
+      sent = { frames, acks, body, known: { devices: k.devices, pairing: k.pairing, now: k.now }, ...(hint ? { hint } : {}) }
       outbox = []
       acks = []
-      return { token: o.identity.token, session: o.session, since, frames }
+      return { token: o.identity.token, session: o.session, since, frames, ...hint }
     },
 
     /**
@@ -328,6 +355,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
         if (s) {
           outbox = [...s.frames.filter(f => obj(f.data).t !== 'box'), ...outbox]
           acks = [...s.acks, ...acks]
+          hintAgain = s.hint
           for (const c of conns.values()) c.last = { body: '', at: 0 }
           poll.fails++
           poll.retryAt = now + backoffMs(poll.fails)
