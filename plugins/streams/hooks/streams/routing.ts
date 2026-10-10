@@ -51,11 +51,6 @@ async function touch($: $, id: string, patch?: (s: Stream) => Partial<Stream>) {
   await update($, streamsA, touched(id, now, patch))
 }
 
-async function refreshStatus($: $) {
-  const [focus, current] = await Promise.all([read($, focusA), read($, currentA)])
-  $.ui.status(focus ? `◉ stream ${focus}` : current ? `stream ${current}` : undefined)
-}
-
 async function save($: $) {
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
   await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
@@ -107,7 +102,6 @@ async function streamOfNotification($: $, text: string): Promise<string> {
 
 async function focusOn($: $, id: string) {
   await update($, focusA, () => id)
-  await refreshStatus($)
 }
 
 /**
@@ -139,7 +133,6 @@ async function moveLast($: $, name: string): Promise<string> {
   await touch($, from, s => ({ rows: Math.max(0, s.rows - moving.length) }))
   await update($, currentA, () => to)
   await paintStreams($)
-  await refreshStatus($)
   await save($)
   return `Moved the last prompt and ${moving.length - 1} row${moving.length === 2 ? '' : 's'} after it from ${from} to ${to}.`
 }
@@ -216,7 +209,6 @@ export function wireRouting(on: On) {
     } else {
       await update($, currentA, () => id)
       await touch($, id)
-      await refreshStatus($)
     }
     return next(text === e.text ? e : { ...e, text })
   }).catch(($, e, next) => next(e))

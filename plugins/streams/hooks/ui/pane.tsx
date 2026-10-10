@@ -68,8 +68,6 @@ async function collapsePane($: $) {
 
 async function focusOn($: $, id: string) {
   await update($, focusA, () => id)
-  const current = await read($, currentA)
-  $.ui.status(id ? `◉ stream ${id}` : current ? `stream ${current}` : undefined)
 }
 
 /** Opening a stream shows it in the pane and focuses the transcript on it: one act, as the bar's pills do. */
