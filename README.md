@@ -146,12 +146,12 @@ npx wrangler login            # once: signs this Mac in to your Cloudflare accou
 npm ci && ../../app/build.sh && npx wrangler deploy
 ```
 
-`wrangler deploy` prints your relay's address, for example `https://claudeflow-relay.<you>.workers.dev`. Run the last line again after you update the checkout.
+`wrangler deploy` prints your relay's address, for example `https://relay.<you>.workers.dev`. Run the last line again after you update the checkout.
 
 **3. Tell streams where the relay is.** In `/config` → **streams** → **Relay address**, or in `settings.json`:
 
 ```json
-{ "pluginConfigs": { "streams@claudeflow": { "options": { "relayUrl": "https://claudeflow-relay.<you>.workers.dev" } } } }
+{ "pluginConfigs": { "streams@claudeflow": { "options": { "relayUrl": "https://relay.<you>.workers.dev" } } } }
 ```
 
 Then `/reload-plugins` in running sessions.
@@ -320,7 +320,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | --- | :---: | --- |
 | `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `view` switch in a stream's header changes it for the session. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
-| `relayUrl` | empty | The relay your phones and tablets connect through, e.g. `https://claudeflow-relay.<you>.workers.dev`. Empty: no remote, and sessions never call any relay. |
+| `relayUrl` | empty | The relay your phones and tablets connect through, e.g. `https://relay.<you>.workers.dev`. Empty: no remote, and sessions never call any relay. |
 
 ### Model use
 

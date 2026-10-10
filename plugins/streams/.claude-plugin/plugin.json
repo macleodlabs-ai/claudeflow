@@ -30,7 +30,7 @@
     "relayUrl": {
       "type": "string",
       "title": "Relay address",
-      "description": "The Claudeflow relay address your phones and tablets connect through, e.g. https://claudeflow-relay.<you>.workers.dev. Empty: no remote.",
+      "description": "The Claudeflow relay address your phones and tablets connect through, e.g. https://relay.<you>.workers.dev. Empty: no remote.",
       "default": ""
     }
   }
