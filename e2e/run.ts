@@ -137,7 +137,7 @@ async function openDevice(name: string, port: number) {
     text: () => js('document.body.innerText') as Promise<string>,
     /** A tap, as a person makes it: with a user gesture, so WebAuthn may run. */
     tap: (sel: string) => until(`${name}: ${sel}`, () => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true })()`)),
-    see: (what: string, ms?: number) => until(`${name} to show "${what}"`, async () => (await js('document.body.innerText') as string).includes(what), ms),
+    see: (what: string, ms?: number) => until(`${name} to show "${what}"`, async () => String((await js('document.body.innerText')) ?? '').includes(what), ms),
     width: 390,
     /** Phone (390), tablet (820) or Mac (1280): the app picks its layout from the width, as on the real device. */
     async resize(width: number, height: number) {
