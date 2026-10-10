@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PAIRING_MS, createLink, type Device, type Identity, type Pairing } from '../plugins/streams/hooks/remote/link'
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
-import type { PhoneCommand, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
+import type { Ack, PhoneCommand, Settled, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
 
 const ROOT = join(import.meta.dir, '..')
 const SHOTS = process.argv[2] ?? join(ROOT, 'e2e', 'shots')
@@ -79,7 +79,7 @@ async function openDevice(name: string, port: number) {
   await send('Runtime.enable')
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
   await send('WebAuthn.enable')
-  await send('WebAuthn.addVirtualAuthenticator', {
+  const { authenticatorId } = await send('WebAuthn.addVirtualAuthenticator', {
     options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
   })
   const js = async (expression: string) =>
@@ -99,6 +99,13 @@ async function openDevice(name: string, port: number) {
       writeFileSync(join(SHOTS, file), Buffer.from(s.data, 'base64'))
     },
     deviceId: async () => JSON.parse((await js(`localStorage.getItem('cf:device')`)) ?? '{}').id as string,
+    /** The passkeys this device's authenticator holds: one per pairing ceremony that ran. */
+    passkeys: async () => ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length,
+    /** Two taps as fast as a thumb, the second landing before the redraw disables the button (as on a slow phone). */
+    doubleTap: (sel: string) =>
+      js(`(() => { const q = () => document.querySelector(${JSON.stringify(sel)}); q().click(); const b = q(); b.disabled = false; b.click(); return true })()`),
+    /** Whether `sel` is disabled now. */
+    isDisabled: (sel: string) => js(`!!document.querySelector(${JSON.stringify(sel)})?.disabled`) as Promise<boolean>,
     close: () => ws.close(),
   }
 }
@@ -119,8 +126,23 @@ function startSession() {
     commands: [] as { device: string; command: PhoneCommand }[],
     denied: [] as { to: string; why: string }[],
     permissions: [] as Snapshot['permissions'],
+    questions: [] as NonNullable<Snapshot['questions']>,
+    /** What became of prompts no longer held, as index.ts keeps it for late taps and the snapshot. */
+    settled: [] as Settled[],
+    answer: (() => {}) as (id: string, why: Settled["why"], label?: string) => void,
+    acks: [] as { device: string; ack: Ack }[],
+    /** Pairings taken, per device id: a double tap must make one. */
+    pairings: new Map<string, number>(),
+    /** A slow Mac: while set, the session does not post at all. */
+    isLagging: false,
     posts: 0,
     isRunning: true,
+  }
+  /** A held prompt or question ends (on a phone, or on the Mac): it leaves the snapshot, which says how. */
+  s.answer = (id, why, label) => {
+    s.permissions = s.permissions.filter(p => p.id !== id)
+    s.questions = s.questions.filter(q => q.id !== id)
+    s.settled = [...s.settled, { id, why, at: Date.now(), ...(label ? { label } : {}) }]
   }
   const at = Date.now()
   const snapshot = (): Snapshot => ({
@@ -135,21 +157,44 @@ function startSession() {
     limits: [],
     updates: [],
     permissions: s.permissions,
+    questions: s.questions,
+    settled: s.settled,
   }) as Snapshot
   // The same calls as index.ts's tick, on the same 2 s clock: the link decides when to post and what.
   void (async () => {
     while (s.isRunning) {
       const now = Date.now()
       const known = () => ({ devices: s.devices, pairing, now, snapshot: snapshot(), isHolding: s.permissions.length > 0 })
-      let post = link.next(known())
+      let post = s.isLagging ? undefined : link.next(known())
+      let hasAcked = false
       while (post) {
         s.posts++
         for (const f of post.frames) if ((f.data as { t: string }).t === 'denied') s.denied.push({ to: f.to, why: (f.data as { why: string }).why })
         const r = await fetch(`${UP}/v1/room/${identity.room}/up`, { method: 'POST', body: JSON.stringify(post) }).catch(() => undefined)
         const got = link.answered(r?.ok ? await r.text().catch(() => undefined) : undefined, now)
-        for (const d of got.paired) s.devices = [...s.devices.filter(x => x.id !== d.id), d]
+        for (const d of got.paired) {
+          s.devices = [...s.devices.filter(x => x.id !== d.id), d]
+          s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
+        }
         s.commands.push(...got.commands)
-        post = got.again ? link.next(known()) : undefined
+        // What index.ts's phoneCommand answers, acked in the same tick.
+        for (const { device, command: c } of got.commands) {
+          let done: Omit<Ack, 't' | 'id'> = { ok: true }
+          if (c.kind === 'permission' || c.kind === 'choose') {
+            const isHeld = c.kind === 'permission' ? s.permissions.some(p => p.id === c.requestId) : s.questions.some(q => q.id === c.requestId)
+            if (isHeld) {
+              const why = c.kind === 'choose' ? 'chosen' : c.decision === 'allow' ? 'allowed' : 'denied'
+              s.answer(c.requestId, why, c.kind === 'choose' ? c.label : undefined)
+              done = { ok: true, why }
+            } else done = { ok: false, why: s.settled.find(x => x.id === c.requestId)?.why ?? 'unknown request' }
+          }
+          const ack: Ack = { t: 'ack', id: c.id, ...done }
+          link.ack(device, ack)
+          s.acks.push({ device, ack })
+        }
+        const isAcking = got.commands.length > 0 && !hasAcked
+        hasAcked ||= isAcking
+        post = got.again || isAcking ? link.next(known()) : undefined
       }
       await sleep(TICK_MS)
     }
@@ -190,10 +235,20 @@ try {
       await Promise.all([d1, d2].map(d => d.see('Pair this device')))
       await d1.shot('e2e-01-device1-pair.png')
       check('both devices show "Pair this device" for the link', true)
-      await Promise.all([d1, d2].map(d => d.tap('[data-gate="pair"]')))
+      // Device 1 taps Create passkey twice, the second tap landing before the redraw (a slow phone): one ceremony only.
+      await d1.see('Create passkey')
+      await d1.doubleTap('[data-gate="pair"]')
+      await d2.tap('[data-gate="pair"]')
+      // The session polls at its idle pace until a device looks, so "Checking with your Mac…" shows for a while.
+      await d1.see('Checking with your Mac…')
+      check('Create passkey shows its pending state and is disabled while the Mac checks', await d1.isDisabled('[data-gate="pair"]'))
+      await d1.shot('e2e-02a-device1-checking.png')
       await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?', POLL_WAIT_MS)))
       const [id1, id2] = await Promise.all([d1.deviceId(), d2.deviceId()])
       check('both devices paired with a passkey and are stored by the session', s.devices.length === 2 && [id1, id2].every(i => s.devices.some(d => d.id === i)), JSON.stringify(s.devices.map(d => d.id)))
+      const [keys1, pairings1] = [await d1.passkeys(), s.pairings.get(id1)]
+      check('a double tap on Create passkey made one passkey and paired once (one device stored)',
+        keys1 === 1 && pairings1 === 1 && s.devices.filter(d => d.id === id1).length === 1, `passkeys ${keys1}, pairings ${pairings1}`)
       check('each device opened the session\'s sealed snapshot', true)
       await d1.shot('e2e-02-device1-paired.png')
 
@@ -214,14 +269,59 @@ try {
         answer.device === id1 && answer.command.kind === 'answer' && answer.command.text === 'yes' && answer.command.streamId === 'st1', JSON.stringify(answer))
 
       // A held permission reaches both devices; device 2 allows it with its passkey.
-      s.permissions = [{ id: 'toolu_e2e', tool: 'Bash', summary: 'Bash: npx wrangler deploy', at: Date.now() }]
+      s.permissions = [{ id: 'toolu_e2e', tool: 'Bash', summary: 'Bash: npx wrangler deploy', at: Date.now(), since: Date.now() }]
       await Promise.all([d1, d2].map(d => d.see('Claude wants to run Bash')))
       check('the held permission shows on both devices', true)
       await d1.shot('e2e-05-device1-permission.png')
-      await d2.tap('[data-perm="toolu_e2e"][data-decision="allow"]')
+      // The Mac is slow: device 2's Allow shows where it is and takes no second tap until the session answers.
+      s.isLagging = true
+      const ALLOW = '[data-perm="toolu_e2e"][data-decision="allow"]'
+      await d2.tap(ALLOW)
+      const pendingText = await d2.text()
+      const isPending = ['Waiting for Face ID…', 'Sent: waiting for your Mac…'].some(t => pendingText.includes(t))
+      check('right after the tap, Allow and Deny are disabled and the card shows the pending text',
+        isPending && (await d2.isDisabled(ALLOW)) && (await d2.isDisabled('[data-perm="toolu_e2e"][data-decision="deny"]')), pendingText.slice(0, 200))
+      await d2.see('Sent: waiting for your Mac…')
+      await d2.shot('e2e-05a-device2-allow-sent.png')
+      s.isLagging = false
       const allow = await until('the allow command', () => s.commands.find(c => c.command.kind === 'permission'))
       check('device 2 taps Allow (passkey checked) and the session receives allow from device 2',
         allow.device === id2 && allow.command.kind === 'permission' && allow.command.decision === 'allow' && allow.command.requestId === 'toolu_e2e', JSON.stringify(allow.command))
+      await d2.see('Allowed ✓')
+      await d2.shot('e2e-05b-device2-allowed.png')
+      check('the session acks the Allow, sealed, and the card resolves to "Allowed ✓"',
+        s.acks.some(a => a.device === id2 && a.ack.id === allow.command.id && a.ack.ok && a.ack.why === 'allowed'))
+      await until('the settled card to collapse', async () => !(await d2.text()).includes('Claude wants to run Bash'), 10_000)
+      check('the settled card collapses on its own', s.commands.filter(c => c.command.kind === 'permission').length === 1)
+
+      // A prompt answered in the terminal: it leaves the snapshot saying so, and the phone's card collapses.
+      s.permissions = [{ id: 'toolu_mac', tool: 'Bash', summary: 'Bash: rm -rf build', at: Date.now(), since: Date.now() }]
+      await d1.see('Claude wants to run Bash')
+      check('a held permission has no countdown: it says how long it has waited', (await d1.text()).includes('just now') && !(await d1.text()).includes('s left'))
+      s.answer('toolu_mac', 'answered on Mac')
+      await d1.see('Answered on your Mac', POLL_WAIT_MS)
+      await d1.shot('e2e-05c-device1-answered-on-mac.png')
+      await until('the card answered on the Mac to collapse', async () => !(await d1.text()).includes('Answered on your Mac'), 15_000)
+      check('a permission answered on the Mac collapses on the phone', !(await d1.text()).includes('rm -rf build'))
+
+      // A question with options: the recommended one first, and a choice from the phone is acked.
+      s.questions = [{ id: 'toolu_q', question: 'Which store should the relay use?', header: 'Store', since: Date.now(),
+        options: [{ label: 'Postgres', isRecommended: false }, { label: 'SQLite (Recommended)', isRecommended: true }] }]
+      await d1.see('Which store should the relay use?')
+      const labels = await d1.js(`[...document.querySelectorAll('[data-choose]')].map(b => b.dataset.label)`) as string[]
+      await d1.shot('e2e-05d-device1-question.png')
+      check('a question shows its options, the recommended one first', JSON.stringify(labels) === JSON.stringify(['SQLite (Recommended)', 'Postgres']), JSON.stringify(labels))
+      await d1.tap('[data-choose="toolu_q"][data-label="Postgres"]')
+      await d1.see('Chose Postgres ✓', POLL_WAIT_MS)
+      check('the phone\'s choice reaches the session and is acked', s.acks.some(a => a.ack.why === 'chosen') && s.commands.some(c => c.command.kind === 'choose' && c.command.label === 'Postgres'))
+
+      // ✕ hides a card on this phone only: the session still holds the prompt, nothing is answered.
+      s.permissions = [{ id: 'toolu_hide', tool: 'Bash', summary: 'Bash: make release', at: Date.now(), since: Date.now() }]
+      await d1.see('make release')
+      await d1.tap('[data-hide="toolu_hide"]')
+      await sleep(300)
+      check('✕ hides a card without answering it', !(await d1.text()).includes('make release') && s.permissions.length === 1 && !s.commands.some(c => c.command.kind === 'permission' && c.command.requestId === 'toolu_hide'))
+      s.permissions = []
 
       // A stranger with the right room but a made-up secret is turned away and sees nothing.
       await d3.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${randomId(32)}`)

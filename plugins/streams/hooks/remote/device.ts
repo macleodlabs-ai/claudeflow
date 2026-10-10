@@ -1,5 +1,5 @@
 import { channel, connectionKeys, newIdentity, pairingProof, passkeyChallenge, randomId } from './seal'
-import type { PasskeyAssertion, PhoneCommand, Snapshot } from './snapshot'
+import { ackOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 
 // One device's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), shared by the app and the tests
 // like seal.ts: the hello, the welcome or denial, the sealed snapshots and commands. No socket and no WebAuthn in it:
@@ -18,6 +18,8 @@ export type Received =
   | { t: 'welcome'; session: string }
   | { t: 'denied'; why: string; isPairing: boolean }
   | { t: 'snapshot'; snapshot: Snapshot }
+  /** What the session did with one of this device's commands. */
+  | { t: 'ack'; ack: Ack }
 
 type Keys = { eph: { sk: string; pk: string }; nonce: string }
 
@@ -88,6 +90,8 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
       if (!ch) return undefined
       try {
         const x = ch.open(d.b) as { t?: string; snapshot?: Snapshot }
+        const ack = ackOf(x)
+        if (ack) return { t: 'ack', ack }
         // A session speaks only for itself: a snapshot naming another session is dropped.
         return x?.t === 'snapshot' && x.snapshot?.v === 1 && x.snapshot.session?.id === from ? { t: 'snapshot', snapshot: x.snapshot } : undefined
       } catch {
