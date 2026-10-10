@@ -6,6 +6,7 @@ import { b64u, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId }
 import { PAIRING_MS, createLink, type Answered, type Device as Stored, type OutFrame, type Pairing as Open } from '../../plugins/streams/hooks/remote/link'
 import { authenticator } from '../../plugins/streams/tests/authenticator'
 import type { Snapshot } from '../src/state'
+import type { Ack } from '../../plugins/streams/hooks/remote/snapshot'
 import type { Pairing } from '../src/links'
 import { roomLink, type Device } from '../src/transport'
 
@@ -31,6 +32,13 @@ class FakeSocket {
 }
 
 const passkey = authenticator(ORIGIN)
+/** Face ID as the person answers it: at once, cancelled (`refuse`), or held open until `release` (a slow prompt). */
+let refuse: string | undefined
+let release: (() => void) | undefined
+const faceId = async () => {
+  if (release) await new Promise<void>(r => (release = r))
+  if (refuse) throw Object.assign(new Error(refuse), { name: refuse })
+}
 const challenges: string[] = []
 const buf = (s: string) => fromB64u(s).slice().buffer
 const g = globalThis as any
@@ -40,12 +48,14 @@ g.document = { visibilityState: 'visible' }
 g.navigator = {
   credentials: {
     async create(o: { publicKey: { challenge: Uint8Array } }) {
+      await faceId()
       const challenge = b64u(o.publicKey.challenge)
       challenges.push(challenge)
       const reg = passkey.register(challenge)
       return { rawId: buf(reg.credentialId), response: { getPublicKey: () => buf(reg.publicKey), clientDataJSON: buf(reg.clientDataJSON) } }
     },
     async get(o: { publicKey: { challenge: Uint8Array } }) {
+      await faceId()
       const challenge = b64u(o.publicKey.challenge)
       challenges.push(challenge)
       const a = passkey.assert(challenge)
@@ -64,11 +74,12 @@ const PAIRED: Pairing = { room, pk: account.pk, isPaired: true, credentialId: pa
 function start(p: Pairing) {
   const got: Snapshot[] = []
   const saved: Pairing[] = []
-  const link = roomLink(p, device, { save: x => saved.push(x), snapshot: (_, s) => got.push(s), changed() {} })
+  const acks: Ack[] = []
+  const link = roomLink(p, device, { save: x => saved.push(x), snapshot: (_, s) => got.push(s), ack: (_, __, a) => acks.push(a), changed() {} })
   link.start()
   const ws = FakeSocket.last
   ws.onopen?.()
-  return { link, ws, got, saved }
+  return { link, ws, got, saved, acks }
 }
 
 const snap = (id: string, busy = false): Snapshot => ({
@@ -102,10 +113,14 @@ function session(ws: FakeSocket, id: string, o: { sk?: string; devices?: Stored[
       post = got.again ? link.next(known()) : undefined
     }
   }
-  return { ...s, tick, boxes: () => s.posted.filter(f => (f.data as { t: string }).t === 'box').map(f => f.data) }
+  return { ...s, tick, ack: link.ack, boxes: () => s.posted.filter(f => (f.data as { t: string }).t === 'box').map(f => f.data) }
 }
 
-beforeEach(() => (challenges.length = 0))
+beforeEach(() => {
+  challenges.length = 0
+  refuse = undefined
+  release = undefined
+})
 
 describe('unlocking a paired room', () => {
   test('the hello carries one passkey assertion over this room, this connection key and this minute, and a session lets it in', async () => {
@@ -153,7 +168,7 @@ describe('unlocking a paired room', () => {
     const s1 = session(ws, 's1', { devices: [stored] })
     s1.tick()
     challenges.length = 0
-    expect(await link.send('s1', { id: 'c1', kind: 'permission', requestId: 'req1', decision: 'allow' })).toBe(true)
+    expect(await link.send('s1', { id: 'c1', kind: 'permission', requestId: 'req1', decision: 'allow' })).toEqual({ ok: true })
     expect(challenges).toEqual([passkeyChallenge('allow', 'req1', eph)])
     const out = ws.sent.at(-1)
     expect(out.to).toBe('s1')
@@ -168,8 +183,8 @@ describe('unlocking a paired room', () => {
     const s1 = session(ws, 's1', { devices: [stored] })
     s1.tick()
     challenges.length = 0
-    expect(await link.send('s1', { id: 'c2', kind: 'permission', requestId: 'r', decision: 'deny' })).toBe(true)
-    expect(await link.send('s1', { id: 'c3', kind: 'answer', streamId: 'st', text: 'yes' })).toBe(true)
+    expect(await link.send('s1', { id: 'c2', kind: 'permission', requestId: 'r', decision: 'deny' })).toEqual({ ok: true })
+    expect(await link.send('s1', { id: 'c3', kind: 'answer', streamId: 'st', text: 'yes' })).toEqual({ ok: true })
     expect(challenges).toEqual([])
     s1.tick()
     expect(s1.commands.map(c => c.command.id)).toEqual(['c2', 'c3'])
@@ -179,7 +194,7 @@ describe('unlocking a paired room', () => {
     const { link, ws } = start(PAIRED)
     await link.unlock()
     const before = ws.sent.length
-    expect(await link.send('s9', { id: 'c', kind: 'stop' })).toBe(false)
+    expect(await link.send('s9', { id: 'c', kind: 'stop' })).toMatchObject({ ok: false, isOffline: true })
     expect(ws.sent.length).toBe(before)
   })
 })
@@ -210,5 +225,83 @@ describe('pairing', () => {
     session(ws, 's1', { devices: [{ ...stored, id: randomId() }], pairing: { secret, until: Date.now() - 1 } }).tick()
     expect(saved.at(-1)).toMatchObject({ isPaired: false, secret: undefined, spent: secret })
     expect(link.why()).toBe('pairing expired')
+  })
+})
+
+describe('on a slow network', () => {
+  const secret = randomId(32)
+
+  test('a second tap on Create passkey while Face ID is up starts no second ceremony, so the phone pairs once', async () => {
+    // This is how a phone once got paired twice: nothing showed the first tap had worked, so it was tapped again.
+    const { link, ws } = start({ room, pk: account.pk, secret, isPaired: false })
+    release = () => {}
+    const first = link.pair()
+    expect(link.stage()).toMatchObject({ at: 'faceid', kind: 'pair' })
+    await link.pair()
+    await link.unlock()
+    release()
+    await first
+    expect(challenges).toHaveLength(1)
+    expect(ws.sent.filter(m => m.data?.t === 'hello')).toHaveLength(1)
+    // Sent, and no session has answered yet: "Checking with your Mac…", still no second tap.
+    expect(link.stage()).toMatchObject({ at: 'checking', kind: 'pair' })
+    await link.pair()
+    expect(challenges).toHaveLength(1)
+    const s1 = session(ws, 's1', { pairing: { secret, until: Date.now() + PAIRING_MS } })
+    s1.tick()
+    expect(s1.paired).toHaveLength(1)
+    expect(link.stage()).toEqual({ at: 'idle' })
+  })
+
+  test('a cancelled Face ID says so in plain words and lets the person tap again', async () => {
+    const { link, ws } = start(PAIRED)
+    refuse = 'NotAllowedError'
+    await link.unlock()
+    expect(link.stage()).toEqual({ at: 'idle' })
+    expect(link.why()).toBe('Face ID was cancelled or timed out. Tap to try again.')
+    expect(ws.sent.filter(m => m.data?.t === 'hello')).toHaveLength(0)
+    refuse = undefined
+    await link.unlock()
+    expect(link.stage().at).toBe('checking')
+    expect(link.why()).toBe('')
+  })
+
+  test('Retry sends the same hello again without Face ID, and a late welcome still unlocks', async () => {
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    const hello = ws.sent.at(-1)
+    link.retry()
+    expect(ws.sent.at(-1)).toEqual(hello)
+    expect(challenges).toHaveLength(1)
+    session(ws, 's1', { devices: [stored] }).tick()
+    expect(link.isUnlocked()).toBe(true)
+    expect(link.stage()).toEqual({ at: 'idle' })
+  })
+
+  test("the session's ack reaches the app, and resending a command keeps its id and its one Face ID", async () => {
+    // A Retry must be the same command: the session runs it once and acks it again, and the person is not asked twice.
+    const { link, ws, acks } = start(PAIRED)
+    await link.unlock()
+    const s1 = session(ws, 's1', { devices: [stored] })
+    s1.tick()
+    challenges.length = 0
+    const allow = { id: 'c1', kind: 'permission', requestId: 'req1', decision: 'allow' } as const
+    expect(await link.send('s1', allow)).toEqual({ ok: true })
+    expect(await link.send('s1', allow)).toEqual({ ok: true })
+    expect(challenges).toHaveLength(1)
+    s1.tick()
+    expect(s1.commands.map(c => c.command.id)).toEqual(['c1'])
+    s1.ack(device.id, { t: 'ack', id: 'c1', ok: true, why: 'allowed' })
+    s1.tick()
+    expect(acks).toEqual([{ t: 'ack', id: 'c1', ok: true, why: 'allowed' }])
+  })
+
+  test('with the line down a command is not sent but reported offline, so the app can queue it', async () => {
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    session(ws, 's1', { devices: [stored] }).tick()
+    ws.readyState = 3
+    expect(await link.send('s1', { id: 'c', kind: 'stop' })).toMatchObject({ ok: false, isOffline: true })
+    expect(link.canSend('s1')).toBe(false)
   })
 })

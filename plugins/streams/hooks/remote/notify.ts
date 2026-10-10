@@ -14,14 +14,17 @@ export type Hint = { notify: string[]; kind: NotifyKind }
 export const QUIET_STREAK = 3
 /**
  * A question is worth a buzz only once it has waited this long. Most replies that end in "?" are answered at the
- * Mac within a minute, and a phone buzzing for a person typing at the Mac is noise. Held permissions are not
- * delayed: a prompt is held for the phone only while a device is looking, so it buzzes nobody but a second device.
+ * Mac within a minute, and a phone buzzing for a person typing at the Mac is noise. Held permissions and held
+ * AskUserQuestion calls are not delayed: one is held for the phone only while a device is looking, so it buzzes
+ * nobody but a second device. A held one that falls back to the terminal (no device looked for 2 minutes) only
+ * leaves the snapshot, which is never news: it buzzed once, when it was raised.
  */
 export const QUESTION_GRACE_MS = 2 * 60_000
 
 /** What a snapshot shows, as far as waking someone goes. */
 type Seen = {
-  permissions: Set<string>
+  /** Held permission prompts and held AskUserQuestion calls, by call id. */
+  held: Set<string>
   /** `stream id|question`: a new question in the same stream is new. */
   questions: Set<string>
   /** Workflow status by task id. */
@@ -49,7 +52,7 @@ function failuresOf(s: Snapshot): Set<string> {
 }
 
 const seenOf = (s: Snapshot): Seen => ({
-  permissions: new Set(s.permissions.map(p => p.id)),
+  held: new Set([...s.permissions.map(p => p.id), ...(s.questions ?? []).map(q => q.id)]),
   questions: new Set(s.streams.flatMap(st => (st.kind === 'waiting' ? [`${st.id}|${st.question ?? st.detail}`] : []))),
   runs: new Map(s.streams.flatMap(st => (st.workflow ? [[st.workflow.taskId, st.workflow.status] as const] : []))),
   failures: failuresOf(s),
@@ -57,12 +60,12 @@ const seenOf = (s: Snapshot): Seen => ({
 })
 
 /**
- * The news besides questions, the most pressing kind first: a new held permission needs you; a run that failed or
+ * The news besides questions, the most pressing kind first: a new held permission or question needs you; a run that failed or
  * was killed, or a failure never shown before, failed; a run that finished, or a loop's real change after a quiet
  * streak, is done. A loop that stops is no news: it is mostly the person or the model ending it on purpose.
  */
 function newsOf(was: Seen, now: Seen, failed: ReadonlySet<string>): NotifyKind | undefined {
-  if ([...now.permissions].some(id => !was.permissions.has(id))) return 'needs-you'
+  if ([...now.held].some(id => !was.held.has(id))) return 'needs-you'
   const ended = [...now.runs].filter(([id, st]) => st !== 'running' && was.runs.get(id) === 'running').map(([, st]) => st)
   if (ended.some(st => st !== 'completed') || [...now.failures].some(f => !failed.has(f))) return 'failed'
   if (ended.length) return 'done'

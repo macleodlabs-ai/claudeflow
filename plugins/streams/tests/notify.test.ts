@@ -37,6 +37,21 @@ describe('what is worth a push', () => {
     expect(kindOf(snap([waiting('a', 'Deploy now?')]), snap([waiting('a', 'Tag it too?')]))).toBe('needs-you')
   })
 
+  test('a held AskUserQuestion needs you at once, and a held prompt falling back to the terminal never buzzes again', () => {
+    const q = { id: 'toolu_q', question: 'Which branch?', header: 'Branch', options: [{ label: 'main (Recommended)', isRecommended: true }, { label: 'dev', isRecommended: false }], since: T0 }
+    // Held only while a device looks, so it waits for nobody's grace: a second device in a pocket should hear now.
+    expect(kindOf(snap([]), snap([], { questions: [q] }))).toBe('needs-you')
+    // After 2 minutes with nobody looking it moves to the Mac (or takes the recommended option): it leaves the
+    // snapshot and is settled. The person was told once, when it was raised; the fallback is no new news.
+    const perm = { id: 'toolu_1', tool: 'Bash', summary: 'Bash: npm publish', at: T0, since: T0 }
+    const n = createNotifier()
+    n.hint(snap([]), ['d1'], () => false, T0)
+    expect(n.hint(snap([], { permissions: [perm], questions: [q] }), ['d1'], () => false, T0 + 1000)?.kind).toBe('needs-you')
+    const after = snap([], { settled: [{ id: 'toolu_1', why: 'moved to Mac', at: T0 + 121_000 }, { id: 'toolu_q', why: 'chose recommended', label: 'main (Recommended)', at: T0 + 121_000 }] })
+    expect(n.hint(after, ['d1'], () => false, T0 + 121_000)).toBeUndefined()
+    expect(n.hint(after, ['d1'], () => false, T0 + 121_000 + QUESTION_GRACE_MS)).toBeUndefined()
+  })
+
   test('a workflow that finishes is done; one that fails or is killed, or a failure not shown before, failed', () => {
     const agent = (id: string, status: string) => ({ id, description: id, status, tools: 0, startedAt: T0, last: '' }) as PhoneStream['agents'][number]
     const wf = (status: string, agents: PhoneStream['agents'] = []) => snap([stream('a', { workflow: run(status), agents })])

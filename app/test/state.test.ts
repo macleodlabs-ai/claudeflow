@@ -48,13 +48,12 @@ describe('reply drafts', () => {
     expect(replyBox(s, key)).toContain('half a &lt;thought&gt;</textarea>')
   })
 
-  test('sending clears only that stream\'s draft and shows it was sent', () => {
+  test('sending clears only that stream\'s draft', () => {
     const other = streamKey(keyOf('r', 's1'), 'st2')
     let s = reduce(initial(), { type: 'draft', key, text: 'go' })
     s = reduce(s, { type: 'draft', key: other, text: 'keep me' })
-    s = reduce(s, { type: 'sent', key, now: 5 })
+    s = reduce(s, { type: 'sent', key })
     expect(s.drafts).toEqual({ [other]: 'keep me' })
-    expect(s.sentAt[key]).toBe(5)
   })
 })
 

@@ -1,10 +1,10 @@
 // One room's link: a WebSocket to /v1/room/{room}/device, retries, and the passkey prompts. What the frames say
-// (hello, welcome, sealed snapshots and commands) is the plugin's device core, remote/device.ts, shared like seal.ts:
-// the relay sees only ids, sizes and timing.
-import { createDevice, type DeviceKeys } from '../../plugins/streams/hooks/remote/device'
-import type { PhoneCommand, Snapshot } from '../../plugins/streams/hooks/remote/snapshot'
+// (hello, welcome, sealed snapshots, commands and acks) is the plugin's device core, remote/device.ts, shared like
+// seal.ts: the relay sees only ids, sizes and timing.
+import { createDevice, type DeviceFrame, type DeviceKeys } from '../../plugins/streams/hooks/remote/device'
+import type { Ack, PhoneCommand, Snapshot } from '../../plugins/streams/hooks/remote/snapshot'
 import { paired, refused, type Pairing } from './links'
-import { assertPasskey, createPasskey } from './passkey'
+import { assertPasskey, createPasskey, isCeremonyBusy } from './passkey'
 import type { PushSub } from './push'
 
 /** This device: one id and X25519 key pair for every room; each room has its own passkey. */
@@ -14,7 +14,9 @@ export type RoomEvents = {
   /** The pairing changed (paired, refused, passkey made) and should be kept. */
   save(p: Pairing): void
   snapshot(room: string, snapshot: Snapshot): void
-  /** The link's state changed: connected, unlocked, refused. */
+  /** A session told this device what came of one of its commands. */
+  ack(room: string, session: string, ack: Ack): void
+  /** The link's state changed: connected, unlocked, refused, a passkey step began or ended. */
   changed(): void
   /** A session welcomed this device (it is unlocked): the time to tell the room where to push. */
   welcomed?(): void
@@ -24,6 +26,15 @@ export type RoomEvents = {
 export const PING_MS = 15_000
 const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
 
+/**
+ * Where a gate's passkey step is: Face ID up, or the hello sent and no session has answered yet (`checking`, until a
+ * welcome, a denial or a snapshot). `kind` is the button that started it.
+ */
+export type GateStage = { at: 'idle' } | { at: 'faceid' | 'checking'; kind: 'pair' | 'unlock'; since: number }
+
+/** How a command went: posted, or why not. `isOffline`: no line to its session now, so it can wait for one. */
+export type Sent = { ok: true } | { ok: false; why: string; isOffline?: boolean }
+
 export type RoomLink = ReturnType<typeof roomLink>
 
 export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
@@ -32,11 +43,19 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
   const core = createDevice({ device, room: p.room, accountPk: p.pk })
   let retries = 0
   let why = ''
-  let isBusy = false
+  let stage: GateStage = { at: 'idle' }
+  /** This connection's hello, for Retry: sent again as it was, so it needs no new Face ID. */
+  let hello: DeviceFrame | undefined
+  /** Commands as sent on this connection (an Allow with its Face ID), by id: Retry sends the same one again. */
+  const sent = new Map<string, PhoneCommand>()
 
   const set = (next: Pairing) => {
     p = next
     ev.save(p)
+  }
+  const setStage = (s: GateStage) => {
+    stage = s
+    ev.changed()
   }
   const post = (f: { to: string; data: unknown } | undefined): boolean => {
     if (!f || ws?.readyState !== WebSocket.OPEN) return false
@@ -68,6 +87,12 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       // A new connection needs a new hello, and so a new Face ID: nothing from the old one carries over.
       ws = undefined
       core.reset()
+      hello = undefined
+      sent.clear()
+      if (stage.at === 'checking') {
+        why = 'The connection dropped before your Mac answered. Try again once it is back.'
+        stage = { at: 'idle' }
+      }
       ev.changed()
       setTimeout(connect, RETRY_MS[Math.min(retries++, RETRY_MS.length - 1)])
     }
@@ -75,31 +100,42 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
 
   function receive(from: string, d: Record<string, unknown>) {
     const r = core.receive(from, d)
-    if (r?.t === 'welcome') {
+    if (!r) return
+    // Any answer from a session ends "Checking with your Mac…".
+    if (stage.at === 'checking') stage = { at: 'idle' }
+    if (r.t === 'welcome') {
       why = ''
       if (!p.isPaired) set(paired(p))
       ping()
       ev.welcomed?.()
       ev.changed()
-    } else if (r?.t === 'denied') {
+    } else if (r.t === 'denied') {
       why = r.why
       // A refused pairing secret has expired or was turned down: it cannot be tried again.
       if (r.isPairing && !core.isUnlocked()) set(refused(p))
       ev.changed()
-    } else if (r?.t === 'snapshot') ev.snapshot(p.room, r.snapshot)
+    } else if (r.t === 'snapshot') ev.snapshot(p.room, r.snapshot)
+    else ev.ack(p.room, from, r.ack)
   }
 
-  /** Runs one passkey step at a time: a second tap while Face ID is up does nothing. */
-  async function busy(step: () => Promise<void>) {
-    if (isBusy) return
-    isBusy = true
-    ev.changed()
-    try {
-      await step()
-    } finally {
-      isBusy = false
-      ev.changed()
+  /** One passkey step per gate: a tap while one is up (here or in any room) does nothing. */
+  async function gateStep(kind: 'pair' | 'unlock', ceremony: () => Promise<DeviceFrame | string | undefined>) {
+    if (stage.at !== 'idle' || isCeremonyBusy() || !ws) return
+    why = ''
+    setStage({ at: 'faceid', kind, since: Date.now() })
+    const r = await ceremony()
+    if (typeof r === 'string' || !r) {
+      why = r ?? ''
+      return setStage({ at: 'idle' })
     }
+    // A new hello means new connection keys: an Allow signed for the old ones would be refused.
+    hello = r
+    sent.clear()
+    if (!post(r)) {
+      why = 'The connection dropped. Try again once it is back.'
+      return setStage({ at: 'idle' })
+    }
+    setStage({ at: 'checking', kind, since: Date.now() })
   }
 
   return {
@@ -107,8 +143,10 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     pairing: () => p,
     isOpen: () => ws?.readyState === WebSocket.OPEN,
     isUnlocked: () => core.isUnlocked(),
-    isBusy: () => isBusy,
+    stage: () => stage,
     why: () => why,
+    /** Whether a command for `session` can go now: the line is up and that session welcomed this connection. */
+    canSend: (session: string) => ws?.readyState === WebSocket.OPEN && core.hasChannel(session),
     start: connect,
     ping,
     /**
@@ -130,39 +168,48 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     },
     /** First pairing: a new passkey, and proof this device saw the QR code's secret. */
     pair: () =>
-      busy(async () => {
+      gateStep('pair', async () => {
         const secret = p.secret
-        if (!secret || !ws) return
+        if (!secret) return undefined
         const reg = await createPasskey(p.room.slice(0, 6), core.pairChallenge())
-        if (!reg) {
-          why = 'The passkey was not created.'
-          return
-        }
-        set({ ...p, credentialId: reg.credentialId })
-        post(core.pairHello(secret, reg))
+        if (!reg.ok) return reg.why
+        set({ ...p, credentialId: reg.value.credentialId })
+        return core.pairHello(secret, reg.value)
       }),
     /** One Face ID per connection: every session in the room checks the same assertion. */
     unlock: () =>
-      busy(async () => {
-        if (!p.credentialId || !ws) return
+      gateStep('unlock', async () => {
+        if (!p.credentialId) return undefined
         const passkey = await assertPasskey(p.credentialId, core.unlockChallenge(Date.now()))
-        if (!passkey) {
-          why = 'Face ID was cancelled.'
-          return
-        }
-        post(core.unlockHello(passkey))
+        return passkey.ok ? core.unlockHello(passkey.value) : passkey.why
       }),
-    /** Seals a command for one session. An Allow asks for Face ID over that request first. */
-    async send(session: string, command: PhoneCommand): Promise<boolean> {
-      if (!core.hasChannel(session) || !p.credentialId) return false
-      if (command.kind === 'permission' && command.decision === 'allow') {
-        const challenge = core.allowChallenge(command.requestId)
-        const passkey = challenge && (await assertPasskey(p.credentialId, challenge))
-        if (!passkey) return false
-        command = { ...command, passkey }
+    /**
+     * The Mac is slow to answer: send this connection's hello again, as it was (no new Face ID). Sessions take a
+     * repeated hello like the first, so a late welcome to either still unlocks.
+     */
+    retry() {
+      if (stage.at !== 'checking' || !hello || !post(hello)) return
+      setStage({ ...stage, since: Date.now() })
+    },
+    /**
+     * Seals a command for one session. An Allow asks for Face ID over that request first; sending the same command id
+     * again on this connection reuses it, so a Retry needs no second Face ID and the session sees one command.
+     */
+    async send(session: string, command: PhoneCommand): Promise<Sent> {
+      const offline: Sent = { ok: false, why: 'offline', isOffline: true }
+      if (!core.hasChannel(session) || !p.credentialId || ws?.readyState !== WebSocket.OPEN) return offline
+      let c = sent.get(command.id) ?? command
+      if (c.kind === 'permission' && c.decision === 'allow' && !c.passkey) {
+        const challenge = core.allowChallenge(c.requestId)
+        if (!challenge) return offline
+        const passkey = await assertPasskey(p.credentialId, challenge)
+        if (!passkey.ok) return passkey
+        c = { ...c, passkey: passkey.value }
       }
       // The channel may have been replaced while Face ID was up; the command goes on the current one or not at all.
-      return post(core.seal(session, command))
+      if (!post(core.seal(session, c))) return offline
+      sent.set(c.id, c)
+      return { ok: true }
     },
   }
 }

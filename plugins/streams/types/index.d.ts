@@ -154,6 +154,10 @@ declare module 'claude-code' {
       paneCollapsed: boolean
       /** Whether the status card is up above the prompt. */
       statusOpen: boolean
+      /** Permission prompts held for the phone, which the band above the prompt also offers to answer. */
+      asking: { id: string; tool: string; summary: string }[]
+      /** What the session answered for the person (a recommended option nobody chose), shown in the band until `until`. */
+      remoteNote: { text: string; until: number }
       /**
        * The card's git rows (branch against upstream, what is uncommitted) and when they were read: shared by the
        * card, which reads them as it opens, and the phone's snapshot, which reuses them while fresh.

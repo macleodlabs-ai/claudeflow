@@ -1,16 +1,25 @@
 // The Streams view: a card per stream, a waiting one with its question and Yes / Reply, and a reply box whose
 // draft comes from the state, so a redraw from a new snapshot keeps what was typed.
-import { SENT_MS, streamKey, type State } from '../state'
+import { isInFlight, SENT_MS, SLOW_MS, streamKey, type State } from '../state'
 import { flowDetail, flowSub, progress } from './flows'
-import { clock, color, esc, GLYPH, kindOf, lineText, STATE_COLOR, type Stream } from './util'
+import { clock, color, esc, GLYPH, kindOf, lineText, SLOW_TEXT, STATE_COLOR, stageLine, type Stream } from './util'
 
 const ROW_CLASS: Record<string, string> = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
 
-const sentNote = (s: State, key: string, now: number) => (now - (s.sentAt[key] ?? 0) < SENT_MS ? '<span class="sent">Sent ✓</span>' : '')
+/** Where this stream's last Yes or reply is: on its way, slow (with Retry), refused, or "Sent ✓" once the Mac has it. */
+const sentNote = (s: State, key: string, now: number): string => {
+  const t = s.taps[key]
+  if (!t) return ''
+  if (t.stage === 'done') return now - t.at < SENT_MS ? '<span class="sent" role="status">Sent ✓</span>' : ''
+  if (t.stage === 'failed') return stageLine(t.why ?? 'Not sent. Try again.', false)
+  if (t.stage === 'queued') return stageLine('Offline: sends when you reconnect…')
+  if (now - t.at < SLOW_MS) return stageLine('Sent: waiting for your Mac…')
+  return `${stageLine(SLOW_TEXT, false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
+}
 
 export function replyBox(s: State, key: string): string {
   return `<div class="replybox"><textarea rows="2" placeholder="Reply in this stream…" data-draft="${esc(key)}">${esc(s.drafts[key] ?? '')}</textarea>
-    <button class="btn" data-send="${esc(key)}">Send</button></div>`
+    <button class="btn" data-send="${esc(key)}" ${isInFlight(s.taps[key]) ? 'disabled' : ''}>Send</button></div>`
 }
 
 /** How a card is drawn: inline on a phone (tap to open), as a list row or as the detail pane in the wide layout. */
@@ -32,7 +41,7 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
   const question =
     x.question && mode !== 'list'
       ? `<div class="question">${esc(x.question)}
-      <div class="actions"><button class="btn yes" data-answer="${esc(key)}">Yes</button>
+      <div class="actions"><button class="btn yes" data-answer="${esc(key)}" ${isInFlight(s.taps[key]) ? 'disabled' : ''}>Yes</button>
       <button class="btn ghost" data-reply-open="${esc(key)}">Reply…</button>${sentNote(s, key, now)}</div></div>`
       : ''
   // A list row shows the question as its line, so what needs you reads without opening it. A run or a loop says

@@ -4,8 +4,8 @@ import type { Engine } from 'claude-code/testing'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
-import { PAIRING_MS, createLink, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
-import { HEARTBEAT_MS, PHONE_PERMISSION_MS, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
+import { ACTIVE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { HEARTBEAT_MS, NO_DEVICE_MS, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { STORE, TICK_MS } from '../hooks/remote/index'
 import { spkiOf } from './authenticator'
 import { ORIGIN, RELAY, SESSION, T0, account, cycle, phone, room, snapshot, tOf } from './room'
@@ -65,6 +65,21 @@ describe('pairing and unlocking', () => {
     expect(r.frames.map(tOf)).toEqual(['welcome', 'box'])
     expect(r.paired).toEqual([])
     expect(a.isUnlocked()).toBe(true)
+  })
+
+  test('a device that paired twice keeps only its newest passkey, so it still unlocks', () => {
+    // A double tap or a retry on a slow network paired one phone twice: the store held both passkeys, the older first,
+    // and every unlock and Allow was checked against the older one the phone no longer uses.
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const other = phone(me, 'old')
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const stale = { ...a.stored(), credentialId: other.stored().credentialId, credentialKey: other.stored().credentialKey }
+    const devices = devicesOf([stale, a.stored()])
+    expect(devices).toEqual([a.stored()])
+    relay.from(a, a.hello({ now: T0 }))
+    expect(cycle(link, relay, { devices, now: T0 }).frames.map(tOf)).toEqual(['welcome', 'box'])
   })
 
   test('an unpaired device, or a paired id with another key, is denied and gets no channel', () => {
@@ -181,7 +196,10 @@ describe('allowing a tool from a phone', () => {
       for (const b of boxes) relay.from(a, b)
       return cycle(link, relay, { devices: [a.stored()], now: T0 }).commands.map(x => x.command)
     }
-    return { a, relay, link, send: (c: PhoneCommand) => send(a.command(c)), sendBox: send }
+    /** The acks the phone opened on the next post (acks found in one answer go out with the post after it). */
+    const acks = () =>
+      ((cycle(link, relay, { devices: [a.stored()], now: T0 }).read.get(a.id) ?? []) as { t: string; ack: Ack }[]).filter(m => m?.t === 'ack').map(m => m.ack)
+    return { a, relay, link, send: (c: PhoneCommand) => send(a.command(c)), sendBox: send, acks }
   }
 
   test('an Allow without Face ID, or with someone else\'s, is ignored; a Deny needs none', () => {
@@ -194,13 +212,57 @@ describe('allowing a tool from a phone', () => {
     expect(send({ id: 'c4', kind: 'permission', requestId: 'toolu_4', decision: 'deny' })).toEqual([{ id: 'c4', kind: 'permission', requestId: 'toolu_4', decision: 'deny' }])
   })
 
-  test('a replayed Allow is ignored, and a request is checked only once', () => {
-    // Each Face ID is for one request: the same box again, or a second Allow for the same request, does nothing.
-    const { a, send, sendBox } = unlocked()
+  test('a replayed Allow box is ignored', () => {
+    // The relay keeps every box: the same one again must not open, let alone run the tool twice.
+    const { a, sendBox } = unlocked()
     const box = a.command(a.allow('toolu_1'))
     expect(sendBox(box)).toHaveLength(1)
     expect(sendBox(box)).toEqual([])
-    expect(send(a.allow('toolu_1'))).toEqual([])
+  })
+
+  test('a command sent again under the same id runs once, and is told the same ack again', () => {
+    // On a laggy network the phone resends what it never heard back about. Ids make that safe: a resent Deny, answer
+    // or Allow (even freshly sealed, which the channel cannot tell from new) does nothing a second time.
+    const { a, link, send, acks } = unlocked()
+    const allow = a.allow('toolu_1')
+    expect(send(allow)).toEqual([allow])
+    link.ack(a.id, { t: 'ack', id: allow.id, ok: true, why: 'allowed' })
+    expect(acks()).toEqual([{ t: 'ack', id: allow.id, ok: true, why: 'allowed' }])
+    expect(send(allow)).toEqual([])
+    expect(acks()).toEqual([{ t: 'ack', id: allow.id, ok: true, why: 'allowed' }])
+    const answer: PhoneCommand = { id: 'c-answer', kind: 'answer', streamId: 'st', text: 'yes' }
+    expect(send(answer)).toEqual([answer])
+    expect(send(answer)).toEqual([])
+  })
+
+  test('a request takes up to 3 Allow tries, each with its own Face ID; a failed one is acked and a 4th is refused', () => {
+    // A try lost to lag can be made again, but not without limit: every try needs a valid assertion over this
+    // request on this connection, and after three the phone must answer on the Mac.
+    const { a, send, acks } = unlocked()
+    const bad = a.allow('toolu_1', p256.utils.randomSecretKey())
+    expect(send(bad)).toEqual([])
+    expect(acks()).toEqual([{ t: 'ack', id: bad.id, ok: false, why: 'passkey not verified' }])
+    const second = a.allow('toolu_1')
+    expect(send(second)).toEqual([second])
+    const third = a.allow('toolu_1')
+    expect(send(third)).toEqual([third])
+    const fourth = a.allow('toolu_1')
+    expect(send(fourth)).toEqual([])
+    expect(acks()).toEqual([{ t: 'ack', id: fourth.id, ok: false, why: 'passkey not verified' }])
+  })
+
+  test('an ack is sealed: nothing of it travels in plaintext, and a forged plaintext ack is not read', () => {
+    // The relay must not learn which request was allowed or refused, nor tell a phone its Allow went through.
+    const { a, relay, link, send } = unlocked()
+    const allow = a.allow('toolu_secret')
+    send(allow)
+    link.ack(a.id, { t: 'ack', id: allow.id, ok: true, why: 'allowed' })
+    const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
+    expect(r.frames.map(tOf)).toEqual(['box'])
+    const wire = JSON.stringify(r.frames)
+    for (const plain of [allow.id, 'ack', 'allowed', 'toolu_secret']) expect(wire).not.toContain(plain)
+    expect(r.read.get(a.id)).toEqual([{ t: 'ack', ack: { t: 'ack', id: allow.id, ok: true, why: 'allowed' } }])
+    expect(a.receive({ t: 'ack', id: allow.id, ok: true, why: 'allowed' })).toBeUndefined()
   })
 
   test('an Allow made for another connection is ignored', () => {
@@ -288,40 +350,165 @@ describe('the session on the relay', () => {
     expect(posts).toBe(0)
   })
 
-  test('a looking device unlocks, sees a held permission in its snapshot, and its Face ID Allow answers it', OPTIONS, async ($, on) => {
-    // The whole remote in one: hello, welcome, sealed snapshots every tick while looking, and an Allow taken.
+  /**
+   * A session with one paired phone that unlocks at once. The phone reads what it is sent (`seen`, `acked`) and is
+   * looking while `st.isLooking`; the terminal's own AskUserQuestion dialog is `st.dialog`, answered by the test.
+   */
+  async function withPhone($: Engine, on: On) {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
     mock.store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     on('tool.check', async () => ({ decision: 'ask' }) as never)
+    const st = { isLooking: true, dialog: undefined as undefined | ((label: string) => void) }
+    on('tool.call', async (_$, e) => {
+      const q = (e as unknown as { questions: { question: string }[] }).questions[0]!.question
+      const label = await new Promise<string>(r => (st.dialog = r))
+      return { result: { questions: (e as unknown as { questions: unknown }).questions, answers: { [q]: label } } } as never
+    })
     const relay = room([a])
     const seen: Snapshot[] = []
-    const allowed = new Set<string>()
+    const acked: Ack[] = []
     relay.from(a, a.hello({ now: T0 }))
     on('http.fetch', async (_$, e) => {
       const body = JSON.parse(String(e.init?.body)) as Up['body']
       for (const got of relay.deliver(body.frames).values())
-        for (const m of got as { t?: string; snapshot: Snapshot }[]) if (m.t === 'snapshot') seen.push(m.snapshot)
-      // The person taps Allow and passes Face ID for each prompt the phone shows.
-      for (const p of seen.at(-1)?.permissions ?? [])
-        if (!allowed.has(p.id)) {
-          allowed.add(p.id)
-          relay.from(a, a.command(a.allow(p.id)))
+        for (const m of got as { t?: string; snapshot: Snapshot; ack: Ack }[]) {
+          if (m?.t === 'snapshot') seen.push(m.snapshot)
+          if (m?.t === 'ack') acked.push(m.ack)
         }
-      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(relay.answer()) } } as never
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(relay.answer(st.isLooking ? [a] : [])) } } as never
     })
     await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
     await clock.advance(TICK_MS)
     expect(a.isUnlocked()).toBe(true)
-    expect(seen).toHaveLength(1)
-    const asked = $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_1' } as never)
+    /** Settles a promise into a box the test can look at without awaiting it. */
+    const watch = <T,>(p: Promise<T>) => {
+      const box: { value?: T } = {}
+      void p.then(v => (box.value = v))
+      return box
+    }
+    return { a, relay, clock, seen, acked, st, watch }
+  }
+
+  const QUESTION = (options: string[]) => ({
+    tool: 'AskUserQuestion',
+    tool_use_id: 'toolu_q',
+    questions: [{ question: 'Which store?', header: 'Store', options: options.map(label => ({ label, description: '' })), multiSelect: false }],
+  })
+
+  test('a held permission has no deadline: still held after 10 minutes while a device looks, then the phone allows it', OPTIONS, async ($, on) => {
+    // Lag or a slow decision must not turn into a timeout: only an answer, or nobody being there, ends the wait.
+    const { a, relay, clock, seen, acked, watch } = await withPhone($, on)
+    const asked = watch($.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_1' } as never))
     await clock.advance(TICK_MS)
-    expect(seen.at(-1)?.permissions.map(p => p.id)).toEqual(['toolu_1'])
+    const p = seen.at(-1)!.permissions[0]!
+    expect(p).toMatchObject({ id: 'toolu_1', since: T0 + TICK_MS })
+    expect('until' in p).toBe(false)
+    await clock.advance(10 * 60_000)
+    expect(asked.value).toBeUndefined()
+    expect(seen.at(-1)!.permissions.map(x => x.id)).toEqual(['toolu_1'])
+    relay.from(a, a.command(a.allow('toolu_1')))
     await clock.advance(TICK_MS)
-    expect((await asked).decision).toBe('allow')
-    expect(PHONE_PERMISSION_MS).toBe(60_000)
+    expect(asked.value).toMatchObject({ decision: 'allow', reason: 'Allowed on your phone' })
+    // The phone is told in the same tick, sealed, so its card says Allowed instead of guessing.
+    expect(acked).toEqual([expect.objectContaining({ ok: true, why: 'allowed' })])
+  })
+
+  test('with no device looking for 2 minutes straight a permission moves to the terminal: never allowed on its own', OPTIONS, async ($, on) => {
+    // An unattended Allow would run a tool nobody approved; the terminal's own prompt asks instead.
+    const { clock, seen, st, watch } = await withPhone($, on)
+    const asked = watch($.tool.check({ tool: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'toolu_2' } as never))
+    await clock.advance(TICK_MS)
+    // Away for 90 s, back for a moment, away again: the two minutes start over.
+    st.isLooking = false
+    await clock.advance(90_000)
+    st.isLooking = true
+    await clock.advance(2 * TICK_MS)
+    st.isLooking = false
+    await clock.advance(90_000)
+    expect(asked.value).toBeUndefined()
+    await clock.advance(NO_DEVICE_MS)
+    expect(asked.value).toEqual({ decision: 'ask' })
+    await clock.advance(TICK_MS)
+    expect(seen.at(-1)!.permissions).toEqual([])
+    expect(seen.at(-1)!.settled).toEqual([expect.objectContaining({ id: 'toolu_2', why: 'moved to Mac' })])
+  })
+
+  test('the band above the prompt answers a held permission too; the first answer wins and the phone is told', OPTIONS, async ($, on) => {
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    const { a, relay, clock, seen, acked, watch } = await withPhone($, on)
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    const first = watch($.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_3' } as never))
+    await clock.advance(TICK_MS)
+    await bar.redraw({ bodyColumns: 120, hasSurvey: false } as never)
+    expect(await bar.find({ key: 'allow:toolu_3' })).toBeDefined()
+    await bar.press({ key: 'allow:toolu_3' })
+    await clock.advance(TICK_MS)
+    expect(first.value).toMatchObject({ decision: 'allow', reason: 'Allowed in the terminal' })
+    // The phone's card leaves with the reason, and its late Allow is told the Mac answered.
+    expect(seen.at(-1)!.settled).toEqual([expect.objectContaining({ id: 'toolu_3', why: 'answered on Mac' })])
+    relay.from(a, a.command(a.allow('toolu_3')))
+    await clock.advance(3 * TICK_MS)
+    expect(acked.at(-1)).toMatchObject({ ok: false, why: 'answered on Mac' })
+    await bar.redraw({ bodyColumns: 120, hasSurvey: false } as never)
+    expect(await bar.find({ key: 'allow:toolu_3' })).toBeUndefined()
+
+    // The phone first this time: its Deny stands, and the band's later Allow does nothing.
+    const second = watch($.tool.check({ tool: 'Bash', input: { command: 'git push -f' }, tool_use_id: 'toolu_4' } as never))
+    await clock.advance(TICK_MS)
+    await bar.redraw({ bodyColumns: 120, hasSurvey: false } as never)
+    relay.from(a, a.command({ id: 'deny-4', kind: 'permission', requestId: 'toolu_4', decision: 'deny' }))
+    await clock.advance(TICK_MS)
+    await bar.press({ key: 'allow:toolu_4' }).catch(() => undefined)
+    await clock.advance(TICK_MS)
+    expect(second.value).toMatchObject({ decision: 'deny', reason: 'Denied on your phone' })
+    expect(acked.at(-1)).toEqual({ t: 'ack', id: 'deny-4', ok: true, why: 'denied' })
+  })
+
+  test("a question's options reach the phone, and the phone's choice answers it, closing the terminal's dialog", OPTIONS, async ($, on) => {
+    const { a, relay, clock, seen, acked, watch } = await withPhone($, on)
+    const r = watch($.tool.call(QUESTION(['SQLite (Recommended)', 'Postgres']) as never))
+    await clock.advance(TICK_MS)
+    const q = seen.at(-1)!.questions![0]!
+    expect(q.options.map(o => [o.label, o.isRecommended])).toEqual([
+      ['SQLite (Recommended)', true],
+      ['Postgres', false],
+    ])
+    relay.from(a, a.command({ id: 'pick', kind: 'choose', requestId: q.id, label: 'Postgres' }))
+    await clock.advance(TICK_MS)
+    expect((r.value as { result: { answers: Record<string, string> } })?.result.answers).toEqual({ 'Which store?': 'Postgres' })
+    expect(acked.at(-1)).toEqual({ t: 'ack', id: 'pick', ok: true, why: 'chosen' })
+  })
+
+  test('with nobody looking for 2 minutes a question takes its recommended option, and Claude and the phone are told', OPTIONS, async ($, on) => {
+    const { clock, seen, st, watch } = await withPhone($, on)
+    const r = watch($.tool.call(QUESTION(['Postgres', 'SQLite (Recommended)']) as never))
+    await clock.advance(TICK_MS)
+    st.isLooking = false
+    await clock.advance(NO_DEVICE_MS + 2 * TICK_MS)
+    const got = r.value as { result: { answers: Record<string, string> }; context: string[] }
+    expect(got.result.answers).toEqual({ 'Which store?': 'SQLite (Recommended)' })
+    expect(got.context).toEqual(['No answer from the person after 2 minutes; chose the recommended option: SQLite (Recommended)'])
+    await clock.advance(TICK_MS)
+    expect(seen.at(-1)!.settled).toEqual([expect.objectContaining({ why: 'chose recommended', label: 'SQLite (Recommended)' })])
+  })
+
+  test('a question with no recommended option stays with the terminal when nobody looks, and a looking device means no fallback', OPTIONS, async ($, on) => {
+    const { clock, seen, st, watch } = await withPhone($, on)
+    const r = watch($.tool.call(QUESTION(['Postgres', 'SQLite']) as never))
+    await clock.advance(10 * 60_000)
+    expect(r.value).toBeUndefined()
+    expect(seen.at(-1)!.questions!.map(q => q.id)).toEqual(['toolu_q'])
+    st.isLooking = false
+    await clock.advance(NO_DEVICE_MS + 2 * TICK_MS)
+    expect(r.value).toBeUndefined()
+    expect(seen.at(-1)!.questions).toEqual([])
+    expect(seen.at(-1)!.settled).toEqual([expect.objectContaining({ id: 'toolu_q', why: 'moved to Mac' })])
+    st.dialog?.('SQLite')
+    await clock.advance(TICK_MS)
+    expect((r.value as { result: { answers: Record<string, string> } }).result.answers).toEqual({ 'Which store?': 'SQLite' })
   })
 
   test('with no device looking a permission prompt is not held: the Mac asks at once', OPTIONS, async ($, on) => {

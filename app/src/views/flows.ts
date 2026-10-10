@@ -1,8 +1,8 @@
 // Workflow runs and loops on a stream's card: the subline and progress line, the phase list (GitHub Actions style,
 // failures pinned on top), a loop's details, the stream's Stop / Run now buttons, and the sticky summary.
 // The snapshot carries times, never running clocks (the free plan's polling budget): every clock is counted here.
-import { isArmed, type Snapshot, type State } from '../state'
-import { clock, clockOf, esc, STATE_COLOR, timeOfDay, type Stream } from './util'
+import { isArmed, isInFlight, SENT_MS, SLOW_MS, type Snapshot, type State } from '../state'
+import { clock, clockOf, esc, SLOW_TEXT, STATE_COLOR, stageLine, timeOfDay, type Stream } from './util'
 
 type Run = NonNullable<Stream['workflow']>
 type Phase = Run['phases'][number]
@@ -110,21 +110,46 @@ export function loopDetail(l: Loop, now: number): string {
 }
 
 /**
+ * Where a Stop workflow, Stop loop or Run now tap is (the same stages as Yes or Allow): on its way, slow (with Retry),
+ * not done ("Your Mac couldn't do that"), or "Done ✓" for a moment once the session acks it.
+ */
+function tapNote(s: State, key: string, now: number): string {
+  const t = s.taps[key]
+  if (!t) return ''
+  if (t.stage === 'done') return now - t.at < SENT_MS ? '<span class="sent" role="status">Done ✓</span>' : ''
+  if (t.stage === 'failed') return stageLine(t.why ?? 'Not sent. Try again.', false)
+  if (t.stage === 'queued') return stageLine('Offline: sends when you reconnect…')
+  if (now - t.at < SLOW_MS) return stageLine('Sent: waiting for your Mac…')
+  return `${stageLine(SLOW_TEXT, false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
+}
+
+/**
  * Stop workflow and Stop loop take two taps, like Stop; Run now takes one (it only runs the loop's own prompt).
- * Stop loop is left out for a loop the session cannot end (a cron or monitor whose id it never learned).
+ * Stop loop is left out for a loop the session cannot end (a cron or monitor whose id it never learned). Each button
+ * is a tap keyed `${stream key}|${command}`, disabled while it is in flight.
  */
 export function flowActions(s: State, key: string, x: Stream, now: number): string {
   const btns: string[] = []
+  const notes: string[] = []
+  const busy = (k: string) => (isInFlight(s.taps[k]) ? ' disabled' : '')
   if (x.workflow?.status === 'running') {
     const arm = `${key}|stopTask`
-    btns.push(`<button class="btn stop" data-stop-task="${esc(x.workflow.taskId)}" data-arm="${esc(arm)}">${isArmed(s, arm, now) ? 'Tap again to stop' : '■ Stop workflow'}</button>`)
+    btns.push(`<button class="btn stop" data-stop-task="${esc(x.workflow.taskId)}" data-arm="${esc(arm)}"${busy(arm)}>${isArmed(s, arm, now) ? 'Tap again to stop' : '■ Stop workflow'}</button>`)
+    notes.push(tapNote(s, arm, now))
   }
   if (x.loop) {
     const arm = `${key}|stopLoop`
-    if (x.loop.kind !== 'monitor') btns.push(`<button class="btn ghost" data-run-tick="${esc(key)}">↻ Run now</button>`)
-    if (x.loop.canStop !== false) btns.push(`<button class="btn stop" data-stop-loop="${esc(key)}" data-arm="${esc(arm)}">${isArmed(s, arm, now) ? 'Tap again to end' : '■ Stop loop'}</button>`)
+    const tick = `${key}|runTick`
+    if (x.loop.kind !== 'monitor') {
+      btns.push(`<button class="btn ghost" data-run-tick="${esc(key)}"${busy(tick)}>↻ Run now</button>`)
+      notes.push(tapNote(s, tick, now))
+    }
+    if (x.loop.canStop !== false) {
+      btns.push(`<button class="btn stop" data-stop-loop="${esc(key)}" data-arm="${esc(arm)}"${busy(arm)}>${isArmed(s, arm, now) ? 'Tap again to end' : '■ Stop loop'}</button>`)
+      notes.push(tapNote(s, arm, now))
+    }
   }
-  return btns.length ? `<div class="actions flow-actions">${btns.join('')}</div>` : ''
+  return btns.length ? `<div class="actions flow-actions">${btns.join('')}${notes.join('')}</div>` : ''
 }
 
 /** Everything the card's body adds for its run and loop, above its agents and rows. */

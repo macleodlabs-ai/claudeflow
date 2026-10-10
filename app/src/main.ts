@@ -1,29 +1,52 @@
 // The app: keeps this device's identity and paired rooms, runs a link per room, and draws the state on each change.
-// Taps go through one delegated click handler; everything a session receives is sealed by the room's link.
+// Taps go through one delegated click handler; everything a session receives is sealed by the room's link. A tap
+// becomes one command with one id: it is sent once (again only as the same command, on Retry or after a reconnect),
+// and settles when the session acks it or its snapshot shows the outcome.
 import { newIdentity, randomId } from '../../plugins/streams/hooks/remote/seal'
 import type { PhoneCommand } from '../../plugins/streams/hooks/remote/snapshot'
 import { gateOf, parseLink, withLink, type Pairing } from './links'
+import { isCeremonyBusy } from './passkey'
 import { notifyState, subOf, turnOff, turnOn, type PushDeps, type PushSub } from './push'
-import { currentOf, initial, isArmed, isStopConfirmed, reduce, type Action, type State } from './state'
+import {
+  currentOf,
+  initial,
+  isArmed,
+  isInFlight,
+  isStopConfirmed,
+  askCards,
+  isOpenAsk,
+  permKey,
+  reduce,
+  SENT_MS,
+  SLOW_MS,
+  stopKey,
+  type Action,
+  type SessionTab,
+  type State,
+  type Tap,
+} from './state'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
 import { page, tabs } from './views/page'
 
-/** localStorage can throw (private mode, blocked storage): the app then works for this visit only. */
-const keep = {
+/** Web storage can throw (private mode, blocked storage): the app then works for this visit only. */
+const storeOf = (which: () => Storage) => ({
   get<T>(k: string, d: T): T {
     try {
-      return (JSON.parse(localStorage.getItem(k) ?? 'null') as T) ?? d
+      return (JSON.parse(which().getItem(k) ?? 'null') as T) ?? d
     } catch {
       return d
     }
   },
   set(k: string, v: unknown) {
     try {
-      localStorage.setItem(k, JSON.stringify(v))
+      which().setItem(k, JSON.stringify(v))
     } catch {}
   },
-}
+})
+const keep = storeOf(() => localStorage)
+/** Kept for this visit only: cards hidden with ✕. */
+const visit = storeOf(() => sessionStorage)
 
 const device: Device = keep.get<Device | null>('cf:device', null) ?? { id: randomId(), ...newIdentity() }
 keep.set('cf:device', device)
@@ -35,13 +58,16 @@ if (scanned) rooms = withLink(rooms, scanned)
 keep.set('cf:rooms', rooms)
 const labels = keep.get<Record<string, string>>('cf:labels', {})
 
-let state: State = initial(keep.get('cf:ui', {}))
+let state: State = initial({ ...keep.get('cf:ui', {}), hidden: visit.get<string[]>('cf:hidden', []) })
 let pendingRender = false
+/** The line was up once: from then on a drop shows the Reconnecting banner. */
+let wasOnline = false
 
 function dispatch(a: Action) {
   state = reduce(state, a)
   if (a.type === 'choose' || a.type === 'view' || a.type === 'toggle' || a.type === 'reveal' || a.type === 'select' || a.type === 'usage')
     keep.set('cf:ui', { chosen: state.chosen, view: state.view, open: state.open, isUsageOpen: state.isUsageOpen })
+  if (a.type === 'hide') visit.set('cf:hidden', state.hidden)
 }
 
 const links: RoomLink[] = Object.values(rooms).map(p =>
@@ -58,7 +84,14 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
       }
       render()
     },
-    changed: () => render(),
+    ack(_room, _session, ack) {
+      dispatch({ type: 'ack', ack, now: Date.now() })
+      render()
+    },
+    changed() {
+      flush()
+      render()
+    },
     // Each unlock tells the room again where to push: cheap, and it heals a room that forgot (a 410, a new room).
     welcomed() {
       if (pushSub) linkOf(p.room)?.push(pushSub)
@@ -112,18 +145,28 @@ function render() {
   pendingRender = false
   const now = Date.now()
   const isOnline = links.some(l => l.isOpen())
+  wasOnline ||= isOnline
   el('conn').classList.toggle('on', isOnline)
   const connText = isOnline ? 'Connected' : 'Reconnecting…'
   if (el('conn').textContent !== connText) el('conn').textContent = connText
-  const views: GateView[] = links.map(l => ({
-    room: l.room(),
-    gate: gateOf(l.pairing(), l.isUnlocked()),
-    label: labels[l.room()] ?? `Account ${l.room().slice(0, 6)}`,
-    why: l.why(),
-    isBusy: l.isBusy(),
-    isOnline: l.isOpen(),
-    canRepair: !!l.pairing().secret,
-  }))
+  const queued = Object.values(state.taps).filter(t => t.stage === 'queued').length
+  const banner = el('banner')
+  banner.hidden = !(wasOnline && links.some(l => !l.isOpen()))
+  banner.textContent = `Reconnecting…${queued ? ` ${queued === 1 ? 'Your tap sends' : `${queued} taps send`} once you're back.` : ''}`
+  const views: GateView[] = links.map(l => {
+    const stage = l.stage()
+    return {
+      room: l.room(),
+      gate: gateOf(l.pairing(), l.isUnlocked()),
+      label: labels[l.room()] ?? `Account ${l.room().slice(0, 6)}`,
+      why: l.why(),
+      stage,
+      isSlow: stage.at === 'checking' && now - stage.since >= SLOW_MS,
+      isCeremony: isCeremonyBusy(),
+      isOnline: l.isOpen(),
+      canRepair: !!l.pairing().secret,
+    }
+  })
   el('gate').innerHTML = links.length ? gates(views) : unpaired()
   el('tabs').innerHTML = tabs(state, now)
   el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView())
@@ -136,11 +179,61 @@ function render() {
   document.body.classList.toggle('usage-open', hasUsage && state.isUsageOpen)
 }
 
-/** Sends the shown session one command; the page shows it was sent, the stream shows what came of it. */
-async function send(command: PhoneCommand): Promise<boolean> {
-  const t = currentOf(state, Date.now())
-  const link = t && linkOf(t.room)
-  return !!link && (await link.send(t.snapshot.session.id, command))
+/** A new tap on `key` for session `t`, carrying the Allow tries this request has already spent. */
+const tapOf = (key: string, room: string, sessionId: string, command: PhoneCommand): Tap => ({
+  command,
+  room,
+  sessionId,
+  stage: 'queued',
+  at: Date.now(),
+  tries: state.taps[key]?.tries,
+})
+const tapFor = (t: SessionTab, key: string, command: PhoneCommand): Tap => tapOf(key, t.room, t.snapshot.session.id, command)
+
+/**
+ * Sends a tap's command and moves its stage on: Face ID (an Allow), then sent; queued while there is no line to its
+ * session; failed with plain words. Sending the same tap again sends the same command id.
+ */
+async function go(key: string, tap: Tap) {
+  const link = linkOf(tap.room)
+  const c = tap.command
+  if (!link?.canSend(tap.sessionId)) {
+    dispatch({ type: 'tap', key, tap: { ...tap, stage: 'queued', at: Date.now(), why: undefined } })
+    return render()
+  }
+  const isAllow = c.kind === 'permission' && c.decision === 'allow'
+  dispatch({ type: 'tap', key, tap: { ...tap, stage: isAllow ? 'faceid' : 'sent', at: Date.now(), why: undefined } })
+  render()
+  const r = await link.send(tap.sessionId, c)
+  const cur = state.taps[key]
+  // Settled while Face ID was up (an ack, or the request left the snapshot): that outcome stands.
+  if (cur?.command.id !== c.id || cur.stage === 'done') return render()
+  const at = Date.now()
+  dispatch({ type: 'tap', key, tap: r.ok ? { ...cur, stage: 'sent', at } : r.isOffline ? { ...cur, stage: 'queued', at } : { ...cur, stage: 'failed', at, why: r.why } })
+  render()
+}
+
+/** The line is back: send what was tapped offline, if it still means something (the request is still held). */
+function flush() {
+  const now = Date.now()
+  for (const [key, tap] of Object.entries(state.taps)) {
+    if (tap.stage !== 'queued' || !linkOf(tap.room)?.canSend(tap.sessionId)) continue
+    const c = tap.command
+    if ((c.kind === 'permission' || c.kind === 'choose') && !state.perms[c.requestId]) {
+      dispatch({ type: 'tap', key, tap: { ...tap, stage: 'done', at: now, result: 'gone' } })
+      continue
+    }
+    void go(key, tap)
+  }
+}
+
+/** Sends an answer to a held prompt or question, once, while it can still be answered. */
+function answerAsk(requestId: string, command: PhoneCommand) {
+  const key = permKey(requestId)
+  const seen = state.perms[requestId]
+  const held = seen && state.sessions[seen.session]
+  if (!held || !isOpenAsk(state, requestId) || isInFlight(state.taps[key])) return
+  void go(key, tapOf(key, held.room, held.snapshot.session.id, command))
 }
 
 /** A stream key is the session key, then the stream id; the session key is the shown tab's. */
@@ -152,24 +245,23 @@ document.addEventListener('input', e => {
 })
 document.addEventListener('focusout', () => setTimeout(() => pendingRender && render(), 0))
 
-document.addEventListener('click', async e => {
+document.addEventListener('click', e => {
   const at = (sel: string) => (e.target as Element).closest<HTMLElement>(sel)
+  const shown = currentOf(state, Date.now())
   const answer = at('[data-answer]')
   if (answer) {
     const key = answer.dataset.answer!
-    answer.setAttribute('disabled', '')
-    if (await send({ id: randomId(), kind: 'answer', streamId: streamIdOf(key), text: 'yes' })) dispatch({ type: 'sent', key, now: Date.now() })
-    return render()
+    if (!shown || isInFlight(state.taps[key])) return
+    return void go(key, tapFor(shown, key, { id: randomId(), kind: 'answer', streamId: streamIdOf(key), text: 'yes' }))
   }
   const sendBtn = at('[data-send]')
   if (sendBtn) {
     const key = sendBtn.dataset.send!
     const text = (state.drafts[key] ?? '').trim()
-    if (!text) return
-    sendBtn.setAttribute('disabled', '')
-    if (await send({ id: randomId(), kind: 'answer', streamId: streamIdOf(key), text })) dispatch({ type: 'sent', key, now: Date.now() })
+    if (!text || !shown || isInFlight(state.taps[key])) return
+    dispatch({ type: 'sent', key })
     ;(document.activeElement as HTMLElement | null)?.blur?.()
-    return render()
+    return void go(key, tapFor(shown, key, { id: randomId(), kind: 'answer', streamId: streamIdOf(key), text }))
   }
   const replyOpen = at('[data-reply-open]')
   if (replyOpen) {
@@ -181,56 +273,78 @@ document.addEventListener('click', async e => {
   }
   const perm = at('[data-perm]')
   if (perm) {
-    const buttons = [...(perm.parentElement?.querySelectorAll('button') ?? [])]
-    buttons.forEach(b => (b.disabled = true))
+    const requestId = perm.dataset.perm!
     const decision = perm.dataset.decision === 'allow' ? 'allow' : 'deny'
-    const ok = await send({ id: randomId(), kind: 'permission', requestId: perm.dataset.perm!, decision })
-    if (!ok) buttons.forEach(b => (b.disabled = false))
-    return
+    // One tap per request until it settles, and one Face ID at a time.
+    if (decision === 'allow' && isCeremonyBusy()) return
+    return answerAsk(requestId, { id: randomId(), kind: 'permission', requestId, decision })
+  }
+  const choose = at('[data-choose]')
+  if (choose) {
+    const requestId = choose.dataset.choose!
+    return answerAsk(requestId, { id: randomId(), kind: 'choose', requestId, label: choose.dataset.label ?? '' })
+  }
+  const hide = at('[data-hide]')
+  if (hide) return dispatch({ type: 'hide', requestId: hide.dataset.hide! }), render()
+  const retry = at('[data-retry]')
+  if (retry) {
+    // The same command again: the session runs it once, and acks it again if it already had it.
+    const key = retry.dataset.retry!
+    const tap = state.taps[key]
+    return tap?.stage === 'sent' ? void go(key, tap) : undefined
   }
   if (at('[data-notify]')) {
     // turnOn asks for permission before its first await: iOS allows the prompt only inside the tap.
     const turning = pushSub ? turnOff(pushDeps).then(() => ({ sub: null })) : turnOn(pushDeps)
     notifying = { why: '', isBusy: true }
     render()
-    const r = await turning
-    if ('sub' in r) {
-      pushSub = r.sub
-      links.forEach(l => l.push(r.sub))
-    }
-    notifying = { why: 'why' in r ? r.why : '', isBusy: false }
-    return render()
+    return void turning.then(r => {
+      if ('sub' in r) {
+        pushSub = r.sub
+        links.forEach(l => l.push(r.sub))
+      }
+      notifying = { why: 'why' in r ? r.why : '', isBusy: false }
+      render()
+    })
   }
   const gateBtn = at('[data-gate]')
   if (gateBtn) {
     const link = linkOf(gateBtn.dataset.room!)
-    return gateBtn.dataset.gate === 'pair' ? link?.pair() : link?.unlock()
+    const kind = gateBtn.dataset.gate
+    return void (kind === 'pair' ? link?.pair() : kind === 'unlock' ? link?.unlock() : link?.retry())
   }
-  if (at('[data-stop]')) {
+  if (at('[data-stop]') && shown) {
     const now = Date.now()
+    const key = stopKey(shown.key)
+    if (isInFlight(state.taps[key])) return
     if (isStopConfirmed(state, now)) {
       dispatch({ type: 'stop-armed', now: 0 })
-      await send({ id: randomId(), kind: 'stop' })
-    } else dispatch({ type: 'stop-armed', now })
+      return void go(key, tapFor(shown, key, { id: randomId(), kind: 'stop' }))
+    }
+    dispatch({ type: 'stop-armed', now })
     return render()
   }
-  // Stop workflow and Stop loop: the first tap arms that button, the second within STOP_MS sends.
+  // Stop workflow and Stop loop: the first tap arms that button, the second within STOP_MS sends. Each is a tap like
+  // Yes or Allow (keyed by its button), so it goes pending → sent → acked, with Retry when the Mac is slow.
   const armed = at('[data-arm]')
-  if (armed) {
+  if (armed && shown) {
     const now = Date.now()
     const arm = armed.dataset.arm!
+    if (isInFlight(state.taps[arm])) return
     if (!isArmed(state, arm, now)) return dispatch({ type: 'arm', key: arm, now }), render()
     dispatch({ type: 'arm', key: '', now: 0 })
-    armed.setAttribute('disabled', '')
-    if (armed.dataset.stopTask) await send({ id: randomId(), kind: 'stopTask', taskId: armed.dataset.stopTask })
-    else if (armed.dataset.stopLoop) await send({ id: randomId(), kind: 'stopLoop', streamId: streamIdOf(armed.dataset.stopLoop) })
-    return render()
+    const command: PhoneCommand | undefined = armed.dataset.stopTask
+      ? { id: randomId(), kind: 'stopTask', taskId: armed.dataset.stopTask }
+      : armed.dataset.stopLoop
+        ? { id: randomId(), kind: 'stopLoop', streamId: streamIdOf(armed.dataset.stopLoop) }
+        : undefined
+    return command ? void go(arm, tapFor(shown, arm, command)) : render()
   }
   const tick = at('[data-run-tick]')
-  if (tick) {
-    tick.setAttribute('disabled', '')
-    await send({ id: randomId(), kind: 'runTick', streamId: streamIdOf(tick.dataset.runTick!) })
-    return render()
+  if (tick && shown) {
+    const key = `${tick.dataset.runTick!}|runTick`
+    if (isInFlight(state.taps[key])) return
+    return void go(key, tapFor(shown, key, { id: randomId(), kind: 'runTick', streamId: streamIdOf(tick.dataset.runTick!) }))
   }
   const phase = at('[data-phase]')
   if (phase) return dispatch({ type: 'toggle', key: phase.dataset.phase! }), render()
@@ -258,22 +372,31 @@ document.addEventListener('keydown', e => {
   }
 })
 
-// Clocks and countdowns move between snapshots (which carry only times): every second while a prompt, a loop's next
-// tick or a running workflow counts, else every 10 s. Drawing only: no request is made.
+// Clocks, countdowns and pending taps move between snapshots (which carry only times): every second while a tap
+// waits, a settled card is about to collapse, a loop's next tick or a running workflow counts, else every 10 s (a
+// waiting card counts whole minutes). Drawing only: no request is made.
 let ticks = 0
 setInterval(() => {
   if (document.visibilityState !== 'visible') return
-  const x = currentOf(state, Date.now())?.snapshot
-  const isCounting = !!x?.permissions?.length || x?.summary?.nextTickAt !== undefined || !!x?.streams?.some(st => st.workflow?.status === 'running')
-  if (isCounting || ++ticks % 10 === 0) render()
+  const now = Date.now()
+  const shown = currentOf(state, now)
+  const isMoving =
+    (!!shown && askCards(state, shown.key, now).some(c => c.phase !== 'open')) ||
+    Object.values(state.taps).some(t => t.stage !== 'done' || now - t.at < SENT_MS) ||
+    links.some(l => l.stage().at !== 'idle') ||
+    shown?.snapshot.summary?.nextTickAt !== undefined ||
+    !!shown?.snapshot.streams?.some(st => st.workflow?.status === 'running')
+  if (isMoving || ++ticks % 10 === 0) render()
 }, 1_000)
 setInterval(() => links.forEach(l => l.ping()), PING_MS)
-// A phone wakes the page without a reconnect: check the line when it comes back.
-document.addEventListener('visibilitychange', () => {
+// A phone wakes the page, or gets its network back, without a reconnect: check the line when it does.
+const wake = () => {
   if (document.visibilityState !== 'visible') return
   links.forEach(l => l.wake())
   render()
-})
+}
+document.addEventListener('visibilitychange', wake)
+addEventListener('online', wake)
 
 links.forEach(l => l.start())
 render()

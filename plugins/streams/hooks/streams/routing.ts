@@ -184,7 +184,7 @@ export function wireRouting(on: On) {
       await update($, loopsA, m => afterNotification(m, text, now))
       mem.pendingKind = 'notice'
     } else if (e.origin.kind === 'plugin' && e.origin.name === 'streams' && mem.runNow.text && mem.runNow.text === text) {
-      // A tick the phone asked to run now (remote/index.ts): filed as that loop's tick in its own stream, like one
+      // A tick the phone asked to run now (remote/index.tsx): filed as that loop's tick in its own stream, like one
       // the schedule fired, so it is no person's prompt (it answers no question) and Haiku does not route it.
       id = mem.runNow.streamId
       mem.runNow = { streamId: '', text: '' }

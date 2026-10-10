@@ -48,3 +48,10 @@ export const clock = (ms: number): string => {
 }
 
 export const limitColor = (p: number): string => (p >= 80 ? 'var(--error)' : p >= 50 ? 'var(--running)' : 'var(--done)')
+
+/** A tap in progress. It stops turning when motion is reduced; the words beside it carry the state. */
+export const spinner = '<span class="spinner" aria-hidden="true"></span>'
+/** The Mac has been quiet for state.ts SLOW_MS. */
+export const SLOW_TEXT = "Your Mac hasn't answered yet: is Claude Code running?"
+/** Where a tap is, read out as it changes; with a spinner while it waits. */
+export const stageLine = (text: string, isWaiting = true): string => `<p class="stage" role="status">${isWaiting ? spinner : ''}${esc(text)}</p>`

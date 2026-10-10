@@ -305,20 +305,23 @@ async function withPhone($: Engine, on: On) {
     return { text: '' } as never
   })
   on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+  /** Every ack the phone opened, in order: what the app's tap states (pending → sent → acked) are driven by. */
+  const acks: { id: string; ok: boolean; why?: string }[] = []
   on('http.fetch', async (_$, e) => {
-    relay.deliver(JSON.parse(String(e.init?.body)).frames)
+    for (const got of relay.deliver(JSON.parse(String(e.init?.body)).frames).values())
+      for (const m of got as { t?: string; ack?: { id: string; ok: boolean; why?: string } }[]) if (m?.t === 'ack' && m.ack) acks.push({ id: m.ack.id, ok: m.ack.ok, ...(m.ack.why ? { why: m.ack.why } : {}) })
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(relay.answer()) } } as never
   })
   relay.from(a, a.hello({ now: T0 }))
   await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: true } as never)
   await clock.advance(TICK_MS)
   expect(a.isUnlocked()).toBe(true)
-  return { a, relay, clock, calls, submitted, ran }
+  return { a, relay, clock, calls, submitted, ran, acks }
 }
 
 describe('commands from the phone, in the session', () => {
   test('stopTask stops only a run this session shows running; runTick submits the loop prompt; stopLoop ends it as the model would', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
-    const { a, relay, clock, calls, submitted, ran } = await withPhone($, on)
+    const { a, relay, clock, calls, submitted, ran, acks } = await withPhone($, on)
 
     await $.prompt.submit({ text: '#ci watch the PR', wait: false, origin: { kind: 'composer' } })
     await $.tool.call({ tool: 'ScheduleWakeup', tool_use_id: 'w', delaySeconds: 60, reason: 'CI running', prompt: '/loop watch the PR', noop: false } as never)
@@ -340,6 +343,15 @@ describe('commands from the phone, in the session', () => {
     // The tick is the loop's own /loop, run as a command (the engine refuses a plugin's prompt that starts with /).
     expect(ran).toEqual(['/loop watch the PR'])
     expect(submitted).toEqual([])
+    // Each tap is acked like an Allow, so the phone's button settles on what happened instead of spinning: done, or
+    // refused when the session shows no such run or loop.
+    expect(acks).toEqual([
+      { id: 'c1', ok: false },
+      { id: 'c2', ok: true },
+      { id: 'c3', ok: true },
+      { id: 'c4', ok: true },
+      { id: 'c5', ok: false },
+    ])
     // Its own call skips its own hooks, so the session cleared the loop itself: a second stop finds nothing to end.
     relay.from(a, a.command({ id: 'c6', kind: 'stopLoop', streamId: 'ci' }))
     await clock.advance(TICK_MS)
