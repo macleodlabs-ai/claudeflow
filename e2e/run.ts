@@ -324,12 +324,15 @@ try {
       const [d1, d2, d3, d4, d5] = await Promise.all([
         openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343), openDevice('scanner', 9344, camera), openDevice('guest', 9345),
       ])
-      await d4.goto(`${ORIGIN}/`)
-      await d4.see('Not paired')
+      // Like a Home Screen app added from an old pairing link: its start address carries a stale code.
+      await d4.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${randomId(32)}`)
+      await d4.see('Pair this device')
+      await d4.tap('[data-menu]')
       await d4.tap('[data-scan]')
+      await until('the scanned code in the address', () => d4.js(`location.hash === ${JSON.stringify(link.slice(link.indexOf('#')))}`))
       await d4.see('Create passkey')
-      check('an unpaired app scans the pairing code with its camera and goes on to Create passkey, in the same app',
-        (await d4.js('location.pathname + location.hash')) === '/', String(await d4.js('location.href')))
+      check('an app scans the pairing code with its camera from the menu and goes on to Create passkey, in the same app, the new code in its address',
+        (await d4.js('location.pathname + location.hash')) === link.slice(ORIGIN.length), String(await d4.js('location.pathname')))
       await d4.shot('e2e-00-scanner-paired-in-app.png')
 
       // Both devices pair at the same time from the same link.
@@ -465,6 +468,12 @@ try {
       check('an unpaired device with a bogus secret is denied ("bad pairing proof")', s.denied.some(x => x.to === id3 && x.why === 'bad pairing proof'))
       check('the denied device is not stored and saw no snapshot', !s.devices.some(d => d.id === id3) && !(await d3.text()).includes('Deploy the relay now?'))
       await d3.shot('e2e-06-stranger-denied.png')
+
+      // The scanner pairs with the code it scanned, not the stale one it started with (once: bad pairing proof).
+      await d4.tap('[data-gate="pair"]')
+      const id4 = await d4.deviceId()
+      await until('the scanner paired', () => s.devices.some(d => d.id === id4), POLL_WAIT_MS)
+      check('the scanned code pairs, the stale start-address code never coming back over it', !s.denied.some(x => x.to === id4), JSON.stringify(s.denied.filter(x => x.to === id4)))
 
       // Device 1 shares the project from the ☰ menu: an invite to watch, as a link a guest opens and pairs with.
       await d1.tap('[data-menu]')

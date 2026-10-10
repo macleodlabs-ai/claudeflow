@@ -4,7 +4,7 @@
 // and settles when the session acks it or its snapshot shows the outcome.
 import { newIdentity, randomId } from '../../plugins/streams/hooks/remote/seal'
 import type { PhoneCommand } from '../../plugins/streams/hooks/remote/snapshot'
-import { gateOf, parseLink, withLink, type Pairing } from './links'
+import { gateOf, linkFragment, parseLink, withLink, type Pairing } from './links'
 import { isCeremonyBusy } from './passkey'
 import { notifyState, subOf, turnOff, turnOn, type PushDeps, type PushSub } from './push'
 import {
@@ -59,10 +59,16 @@ const visit = storeOf(() => sessionStorage)
 const device: Device = keep.get<Device | null>('cf:device', null) ?? { id: randomId(), ...newIdentity() }
 keep.set('cf:device', device)
 
-// The fragment stays in the address: Add to Home Screen keeps it, so the Home Screen app can pair once too.
+// The fragment stays in the address: Add to Home Screen keeps it, so the Home Screen app can pair once too. Each
+// secret is taken from the address once only: the Home Screen app starts from the address it was added with, so its
+// old code would otherwise come back on every launch and overwrite a newer one scanned since (bad pairing proof).
 let rooms = keep.get<Record<string, Pairing>>('cf:rooms', {})
+const applied = keep.get<string[]>('cf:applied', [])
 const scanned = parseLink(location.hash)
-if (scanned) rooms = withLink(rooms, scanned)
+if (scanned && !(scanned.secret && applied.includes(scanned.secret))) {
+  rooms = withLink(rooms, scanned)
+  if (scanned.secret) keep.set('cf:applied', [...applied, scanned.secret].slice(-20))
+}
 keep.set('cf:rooms', rooms)
 const labels = keep.get<Record<string, string>>('cf:labels', {})
 
@@ -261,6 +267,9 @@ async function scanToPair() {
   }
   rooms = withLink(rooms, r)
   keep.set('cf:rooms', rooms)
+  if (r.secret) keep.set('cf:applied', [...keep.get<string[]>('cf:applied', []), r.secret].slice(-20))
+  // The address takes the new code too, so nothing older in it is read on the way back in.
+  history.replaceState(null, '', `/${linkFragment(r)}`)
   location.reload()
 }
 
