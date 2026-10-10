@@ -1,6 +1,6 @@
 // The dock: a carousel pinned to the bottom. The composer comes first and is always there, for the stream being
-// viewed (or a new prompt); plan usage and the runs-and-loops line sit beside it, a swipe away. While the composer
-// has focus it takes the whole width, with plan usage as thin lines under it.
+// viewed (or a new prompt), with plan usage as thin lines under its input; plan usage in full and the runs-and-loops
+// line sit beside it, a swipe away. The dock is as tall as the slide in view; focused, the composer takes it whole.
 import { isInFlight, streamKey, type State } from '../state'
 import type { Snapshot } from '../state'
 import { esc, limitColor, type Stream } from './util'
@@ -24,7 +24,8 @@ export function targetOf(s: State, sessionKey: string, streams: readonly Stream[
 /** The composer's draft key: the session key, then the target stream id ('' for a new prompt). */
 export const composeKey = (sessionKey: string, target: string): string => streamKey(sessionKey, target)
 
-function composer(s: State, sessionKey: string, streams: readonly Stream[], view: ComposeView): string {
+function composer(s: State, sessionKey: string, x: Snapshot, view: ComposeView): string {
+  const streams = x.streams ?? []
   const target = targetOf(s, sessionKey, streams)
   const key = composeKey(sessionKey, target)
   const name = streams.find(x => x.id === target)?.name
@@ -43,10 +44,10 @@ function composer(s: State, sessionKey: string, streams: readonly Stream[], view
       <label class="icon-btn" aria-label="Attach a photo or file"><input type="file" data-attach multiple hidden>📎</label>
       <textarea rows="1" placeholder="${name ? `Message ${esc(name)}…` : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea>${mic}
       <button class="btn send" data-send="${esc(key)}" ${busy ? 'disabled' : ''} aria-label="Send">${busy ? '…' : '↑'}</button>
-    </div></div>`
+    </div>${limitLines(x)}</div>`
 }
 
-/** Plan usage as thin full-width lines, one per limit: what is left while typing. */
+/** Plan usage as thin full-width lines under the input, one per limit. */
 export function limitLines(x: Snapshot): string {
   const limits = x.limits ?? []
   if (!limits.length) return ''
@@ -56,7 +57,7 @@ export function limitLines(x: Snapshot): string {
 
 /** The dock's slides: the composer, then each of `others` (plan usage, the runs-and-loops line) that has something. */
 export function dock(s: State, sessionKey: string, x: Snapshot, view: ComposeView, others: string[]): string {
-  const slides = [composer(s, sessionKey, x.streams ?? [], view), ...others.filter(Boolean).map(o => `<div class="slide info">${o}</div>`)]
+  const slides = [composer(s, sessionKey, x, view), ...others.filter(Boolean).map(o => `<div class="slide info">${o}</div>`)]
   const dots = slides.length > 1 ? `<div class="slide-dots" aria-hidden="true">${slides.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</div>` : ''
-  return `<div class="dock"><div class="slides" data-slides>${slides.join('')}</div>${dots}${limitLines(x)}</div>`
+  return `<div class="dock"><div class="slides" data-slides>${slides.join('')}</div>${dots}</div>`
 }

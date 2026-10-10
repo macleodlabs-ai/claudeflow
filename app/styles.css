@@ -286,7 +286,7 @@ h2 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .08em; 
 body:has(.dock) { padding-bottom: calc(var(--dock-h, 0px) + 16px) !important; }
 main .dock { background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-top: 1px solid var(--glass-line-strong);
              box-shadow: 0 -12px 32px var(--shade); padding-bottom: env(safe-area-inset-bottom); }
-.slides { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.slides { display: flex; align-items: flex-start; overflow-x: auto; overflow-y: hidden; transition: height var(--dur) var(--ease); scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
 .slides::-webkit-scrollbar { display: none; }
 .slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; }
 main .slide.info > .usage, main .slide.info > .flowsum { background: none; border-top: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; padding-bottom: 10px; }
@@ -309,10 +309,9 @@ main .slide.info > .usage, main .slide.info > .flowsum { background: none; borde
 .attached .fname { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attached .x { border: 0; background: none; color: var(--text-dim); cursor: pointer; padding: 4px; }
 /* Typing, the composer takes the whole dock: the other slides step aside and plan usage shows as thin lines under it. */
-.limit-lines { display: none; }
 body.composing .slides { overflow: hidden; }
 body.composing .slide.info, body.composing .slide-dots { display: none; }
-body.composing .limit-lines { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 6px; }
+.limit-lines { display: flex; flex-direction: column; gap: 2px; padding: 6px 2px 0; }
 .limit-lines > span { display: block; height: 3px; border-radius: 2px; background: var(--night-500); overflow: hidden; }
 .limit-lines > span > i { display: block; height: 100%; }
 .dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; }
@@ -324,11 +323,13 @@ body.composing .limit-lines { display: flex; flex-direction: column; gap: 2px; p
 .usage-row .mini { width: 40px; height: 6px; border-radius: 3px; background: var(--night-500); overflow: hidden; flex: none; }
 .usage-row .mini > i, .bar > i { display: block; height: 100%; border-radius: inherit; }
 .usage .more { padding-top: 8px; }
+.usage-row .model { color: var(--text-soft); font: 12px/1.4 var(--font-mono); }
 .usage-row .chev { transform: rotate(-90deg); }
 .usage[aria-expanded="true"] .usage-row .chev { transform: rotate(90deg); }
 .usage[aria-expanded="true"] .usage-row .u { display: none; }
-.limit { display: grid; grid-template-columns: 3.5em 1fr 3em; gap: 2px 10px; align-items: center; padding: 6px 0; font-size: var(--fs-md); }
+.limit { display: grid; grid-template-columns: 6.5em 1fr 3em; gap: 2px 10px; align-items: center; padding: 6px 0; font-size: var(--fs-md); }
 .limit .pct { text-align: right; font-weight: 800; }
+.limit > .meta:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .limit .reset { grid-column: 2 / -1; }
 .bar { height: 8px; border-radius: 4px; background: var(--night-500); overflow: hidden; }
 body.has-usage { padding-bottom: calc(env(safe-area-inset-bottom) + 72px); }

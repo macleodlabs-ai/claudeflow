@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { CHUNK_B64, commandOf } from '../../plugins/streams/hooks/remote/snapshot'
 import { initial, keyOf, reduce, streamKey, type Snapshot } from '../src/state'
 import { dock, targetOf } from '../src/views/compose'
+import { usageBar } from '../src/views/usage'
 import { b64Of, chunksOf, sendFiles } from '../src/upload'
 
 type Stream = Snapshot['streams'][number]
@@ -37,9 +38,20 @@ describe('the composer in the dock', () => {
     expect(html.match(/class="slide info"/g)).toHaveLength(2)
   })
 
-  test('the thin lines under a focused composer show each limit used', () => {
+  test('the thin lines showing each limit used sit in the composer itself, under the input, always', () => {
+    // Plan usage is a glance while writing: in the composer slide, not a separate row that adds height.
     const s = reduce(initial(), { type: 'snapshot', room: 'r', snapshot: snap([], [{ label: 'Session', percent: 64 } as never]), now: 0 })
-    expect(dock(s, A, s.sessions[A]!.snapshot, NONE, [])).toContain('width:64%')
+    const html = dock(s, A, s.sessions[A]!.snapshot, NONE, [])
+    const compose = html.slice(html.indexOf('slide compose'), html.indexOf('</div></div>', html.indexOf('limit-lines')))
+    expect(compose).toContain('width:64%')
+  })
+
+  test('plan usage is always shown in full, with the model the session runs on', () => {
+    const x = { ...snap([], [{ label: 'Session', percent: 64, resetsAt: '18:00', until: 3_600_000 } as never]), session: { id: 'a', account: 'm', project: 'p', busy: false, model: 'claude-opus-5-5' } }
+    const html = usageBar(x, 0)
+    expect(html).toContain('claude-opus-5-5')
+    expect(html).toContain('resets in')
+    expect(html).not.toContain('aria-expanded')
   })
 })
 

@@ -194,6 +194,16 @@ function render() {
   // The page keeps clear of the dock, however tall the composer has grown.
   document.body.style.setProperty('--dock-h', `${dock?.offsetHeight ?? 0}px`)
   document.querySelectorAll<HTMLTextAreaElement>('[data-compose]').forEach(grow)
+  document.querySelectorAll<HTMLElement>('[data-slides]').forEach(fitDock)
+}
+
+/** The carousel takes the height of the slide in view, so the composer never sits over the usage panel's height. */
+function fitDock(strip: HTMLElement) {
+  const slides = [...strip.children] as HTMLElement[]
+  const i = document.body.classList.contains('composing') ? 0 : Math.min(slides.length - 1, Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth)))
+  const h = slides[i]?.offsetHeight
+  if (h) strip.style.height = `${h}px`
+  document.body.style.setProperty('--dock-h', `${strip.closest<HTMLElement>('.dock')?.offsetHeight ?? 0}px`)
 }
 
 /** Files waiting to go with the next prompt, read and sized on the phone. */
@@ -205,7 +215,8 @@ let composeWhy = ''
 function grow(t: HTMLTextAreaElement) {
   t.style.height = 'auto'
   t.style.height = `${Math.min(t.scrollHeight, Math.round(innerHeight * 0.4))}px`
-  document.body.style.setProperty('--dock-h', `${t.closest<HTMLElement>('.dock')?.offsetHeight ?? 0}px`)
+  const strip = t.closest<HTMLElement>('[data-slides]')
+  if (strip) fitDock(strip)
 }
 
 /** Dictation types into the composer, where the person can edit it before sending. */
@@ -310,6 +321,7 @@ document.addEventListener('scroll', e => {
   if (!strip.matches?.('[data-slides]')) return
   const i = Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth))
   strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === i))
+  fitDock(strip)
 }, true)
 document.addEventListener('focusout', () => setTimeout(() => pendingRender && render(), 0))
 
