@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { mem } from '../state'
+import { SAVED_ROWS, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
@@ -49,6 +49,9 @@ const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
 /** The permissions held now, for the band above the prompt (read while drawn, so it redraws as they change). */
 /** What the session answered for an absent person, shown in the band for a while. */
+const focusA = atom({ plugin: 'streams', key: 'focus' } as const, '')
+const viewA = atom({ plugin: 'streams', key: 'view' } as const, '')
+const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
 /** How long the band says the session chose for the person. */
 const NOTE_MS = 2 * 60_000
@@ -214,6 +217,7 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     loops,
     workflows,
     now,
+    archived: streams.filter(s => s.archived).slice(-30).map(s => ({ id: s.id, name: s.name, color: colorOf(s) })),
   })
 }
 
@@ -425,6 +429,20 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     if (won) return won.command === c.id ? { ok: true, why: whyOf(won) } : { ok: false, why: whyOf(won) }
     // Too late or never held: say what became of it (the Mac answered, it moved there), so the card resolves.
     return { ok: false, why: settled.get(c.requestId)?.why ?? 'unknown request' }
+  }
+  if (c.kind === 'archive' || c.kind === 'restore') {
+    // Only a stream this session has, and only a change: archiving an archived stream is no news.
+    const st = (await read($, streamsA)).find(x => x.id === c.streamId)
+    if (!st || !!st.archived === (c.kind === 'archive')) return { ok: false }
+    // As the pane's ✕ and restore do (ui/pane.tsx setArchived): $ calls stay in this file, at the call site.
+    const archived = c.kind === 'archive'
+    const now = await $.clock.now()
+    await update($, streamsA, list => list.map(s => (s.id === c.streamId ? { ...s, archived, ...(archived ? {} : { restoredAt: now }) } : s)))
+    if (archived && (await read($, focusA)) === c.streamId) await update($, focusA, () => '')
+    if (archived && (await read($, viewA)) === c.streamId) await update($, viewA, () => '')
+    const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
+    await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+    return { ok: true }
   }
   if (c.kind === 'stop') {
     if (mem.runningTurn) await $.turn.abort({ turnId: mem.runningTurn })

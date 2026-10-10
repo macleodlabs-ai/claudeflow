@@ -419,6 +419,32 @@ describe('the session on the relay', () => {
     expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
   })
 
+  test('a swipe on the phone archives a stream, which then shows in its Archived list, and a swipe back restores it', OPTIONS, async ($, on) => {
+    const { a, relay, clock, seen, acked } = await withPhone($, on)
+    await $.prompt.submit({ text: '#docs tidy the readme', wait: false, origin: { kind: 'composer' } } as never)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.streams.map(s => s.id)).toContain('docs')
+    relay.from(a, a.command({ id: 'c1', kind: 'archive', streamId: 'docs' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
+    expect(seen.at(-1)!.streams.map(s => s.id)).not.toContain('docs')
+    expect(seen.at(-1)!.archived?.map(s => s.id)).toEqual(['docs'])
+    relay.from(a, a.command({ id: 'c2', kind: 'restore', streamId: 'docs' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.streams.map(s => s.id)).toContain('docs')
+    expect(seen.at(-1)!.archived ?? []).toEqual([])
+  })
+
+  test('a phone cannot archive a stream the session does not have', OPTIONS, async ($, on) => {
+    const { a, relay, clock, acked } = await withPhone($, on)
+    relay.from(a, a.command({ id: 'c1', kind: 'archive', streamId: 'nope' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: false })
+  })
+
   test('a prompt naming a file that has not fully arrived is not sent, and the phone is told', OPTIONS, async ($, on) => {
     submitted.length = 0
     const { a, relay, clock, acked } = await withPhone($, on)

@@ -54,6 +54,8 @@ export type Snapshot = {
   permissions: PendingPermission[]
   /** The sticky summary: workflows running, agents running, failures shown, and the next loop tick. */
   summary?: Summary
+  /** Archived streams, newest last, for the phone's Archived list (swipe right to restore); absent from older sessions. */
+  archived?: { id: string; name: string; color: string }[]
   /** Claude's questions with options (AskUserQuestion) waiting on an answer; absent from older sessions. */
   questions?: PendingQuestion[]
   /**
@@ -92,6 +94,9 @@ export const CHUNK_B64 = 8_000
 export type PhoneCommand =
   /** A prompt: into `streamId`'s stream, or ('') a new one that routing files. */
   | { id: string; kind: 'answer'; streamId: string; text: string; files?: PhoneFile[] }
+  /** Archive a stream (a swipe left on the phone), or restore an archived one (a swipe right). */
+  | { id: string; kind: 'archive'; streamId: string }
+  | { id: string; kind: 'restore'; streamId: string }
   /** One piece of a file to send with a prompt, as base64. */
   | { id: string; kind: 'chunk'; blob: string; part: number; of: number; data: string }
   | { id: string; kind: 'stop' }
@@ -206,7 +211,7 @@ export const commandOf = (c: unknown): PhoneCommand | undefined => {
   if (k.kind === 'permission') return typeof k.requestId === 'string' && (k.decision === 'allow' || k.decision === 'deny') ? (c as PhoneCommand) : undefined
   // Ids only, each its own field: the session acts only on a task or stream it shows (remote/index.tsx).
   if (k.kind === 'stopTask') return isId(k.taskId) ? { id: k.id, kind: 'stopTask', taskId: k.taskId } : undefined
-  if (k.kind === 'stopLoop' || k.kind === 'runTick') return isId(k.streamId) ? { id: k.id, kind: k.kind, streamId: k.streamId } : undefined
+  if (k.kind === 'stopLoop' || k.kind === 'runTick' || k.kind === 'archive' || k.kind === 'restore') return isId(k.streamId) ? { id: k.id, kind: k.kind, streamId: k.streamId } : undefined
   if (k.kind === 'choose') return typeof k.requestId === 'string' && typeof k.label === 'string' && k.label.length > 0 && k.label.length <= 400 ? (c as PhoneCommand) : undefined
   return undefined
 }
@@ -226,6 +231,7 @@ export type SnapshotInput = {
   loops?: Loops
   /** Workflow runs this session, by task id. */
   workflows?: Workflows
+  archived?: Snapshot['archived']
   questions?: readonly PendingQuestion[]
   settled?: readonly Settled[]
   now: number
@@ -276,7 +282,7 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
     }
     return [card]
   })
-  return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates, permissions: [...(x.permissions ?? [])], questions: [...(x.questions ?? [])], settled: [...(x.settled ?? [])], summary: summaryOf(streams, x.agents) }
+  return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates, permissions: [...(x.permissions ?? [])], questions: [...(x.questions ?? [])], settled: [...(x.settled ?? [])], summary: summaryOf(streams, x.agents), ...(x.archived?.length ? { archived: [...x.archived] } : {}) }
 }
 
 /**
