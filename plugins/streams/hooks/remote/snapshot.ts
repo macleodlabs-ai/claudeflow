@@ -10,6 +10,9 @@ export const HEARTBEAT_MS = 30_000
 /** Rows a stream's card carries to the phone, each cut to a readable length. */
 export const PHONE_ROWS = 12
 const ROW_CHARS = 600
+/** The newest rows of a stream go longer, so the phone's full view shows a whole recent reply. */
+const RECENT_ROWS = 3
+const RECENT_ROW_CHARS = 2_500
 
 /** A subagent's card. Its start and end, not its running time: a running clock would make every snapshot news. */
 export type PhoneAgent = { id: string; description: string; status: AgentRun['status']; tools: number; startedAt: number; endedAt?: number; last: string }
@@ -265,7 +268,10 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
       // Quiet ticks folded first, so a loop that found nothing for an hour leaves room for what did happen.
       rows: foldQuiet(x.rows.filter(r => r.streamId === s.id))
         .slice(-PHONE_ROWS)
-        .map(r => ({ kind: r.kind, text: r.text.length > ROW_CHARS ? `${r.text.slice(0, ROW_CHARS)}…` : r.text, at: r.at })),
+        .map((r, i, all) => {
+          const max = i >= all.length - RECENT_ROWS ? RECENT_ROW_CHARS : ROW_CHARS
+          return { kind: r.kind, text: r.text.length > max ? `${r.text.slice(0, max)}…` : r.text, at: r.at }
+        }),
     }
     return [card]
   })
