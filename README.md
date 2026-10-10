@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
   <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
