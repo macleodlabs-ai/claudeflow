@@ -50,6 +50,37 @@ describe('the polling budget', () => {
     expect(boxes(T0 + 4000 + HEARTBEAT_MS, snapshot(T0 + 6000, busy))).toBe(1)
   })
 
+  test('a device put away or out of focus gets at most one change per heartbeat and no repeats; picked up, the latest at once', () => {
+    // A working session changes its snapshot every tick. Sent to a phone in a pocket or a tab behind other windows,
+    // every one of them is mobile data and battery spent on a screen nobody reads.
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    relay.from(a, a.hello({ now: T0 }))
+    const working = (n: number) => snapshot(T0, { status: [{ id: 'x', area: 'x', state: 'x', detail: `step ${n}` }] })
+    const boxes = (now: number, s: Snapshot, active: Phone[]) =>
+      cycle(link, relay, { devices: [a.stored()], now, snapshot: s, active }).frames.filter(f => tOf(f) === 'box').length
+    // The session learns what a device is doing from the relay's answer to its post, so each switch below takes one
+    // post to land (in a session that is working, the next tick).
+    expect(boxes(T0, working(0), [a])).toBe(1)
+    expect(boxes(T0 + 1000, working(0), [])).toBe(0)
+    // Put away: ten changes in the next 20 s send nothing.
+    let sent = 0
+    for (let i = 1; i <= 10; i++) sent += boxes(T0 + i * 2000, working(i), [])
+    expect(sent).toBe(0)
+    // A heartbeat after the last one sent, the latest goes, once; unchanged, it is never sent again while put away.
+    expect(boxes(T0 + HEARTBEAT_MS, working(11), [])).toBe(1)
+    expect(boxes(T0 + HEARTBEAT_MS + 2000, working(12), [])).toBe(0)
+    expect(boxes(T0 + 2 * HEARTBEAT_MS + 2000, working(12), [])).toBe(1)
+    expect(boxes(T0 + 4 * HEARTBEAT_MS, working(12), [])).toBe(0)
+    // Picked up: the latest at once, then every change.
+    expect(boxes(T0 + 4 * HEARTBEAT_MS + 2000, working(12), [a])).toBe(0)
+    expect(boxes(T0 + 4 * HEARTBEAT_MS + 4000, working(12), [a])).toBe(1)
+    expect(boxes(T0 + 4 * HEARTBEAT_MS + 6000, working(13), [a])).toBe(1)
+    expect(boxes(T0 + 4 * HEARTBEAT_MS + 8000, working(14), [a])).toBe(1)
+  })
+
   test('a session posts every tick only while a permission waits on a device, every 6 s while one looks, otherwise on news or every 30 s', () => {
     // 2 s for every session while a device looks would spend the 100k a day in a few hours. Fast polling is kept
     // for an Allow waiting on Face ID.

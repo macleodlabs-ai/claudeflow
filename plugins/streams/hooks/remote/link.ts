@@ -250,8 +250,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     const isPairing = !!w.pairing && w.now < w.pairing.until
     const mayTalk = r.devices.filter(d => isPairing || w.devices.some(x => x.id === d.id))
     connected = new Map(mayTalk.map(d => [d.id, d.isActive === true]))
-    // A device back after a gap gets the snapshot at once, not at the next heartbeat.
-    for (const [id, c] of conns) if (connected.has(id) && !before.has(id)) c.last = { body: '', at: 0 }
+    // A device back after a gap, or picked up again, gets the latest snapshot at once, not at the next heartbeat.
+    for (const [id, c] of conns) if ((connected.has(id) && !before.has(id)) || (connected.get(id) && !before.get(id))) c.last = { body: '', at: 0 }
     const devices = [...w.devices]
     for (const f of r.frames) {
       if (typeof f.seq === 'number' && f.seq > since) since = f.seq
@@ -279,13 +279,18 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     return out
   }
 
-  /** The snapshot sealed for every unlocked, connected device it is news to (or due again as a heartbeat). */
+  /**
+   * The snapshot sealed for every unlocked, connected device it is news to. A device looking at it gets every change,
+   * and the same snapshot again as a heartbeat; one put away or out of focus gets at most one change per heartbeat
+   * and no repeats, so a phone in a pocket or a tab behind other windows costs almost nothing.
+   */
   function snapshots(s: Snapshot, now: number): OutFrame[] {
     const body = snapshotKey(s)
     const out: OutFrame[] = []
     for (const [id, c] of conns) {
       if (!connected.has(id)) continue
-      if (body === c.last.body && now - c.last.at < HEARTBEAT_MS) continue
+      const isDue = connected.get(id) ? body !== c.last.body || now - c.last.at >= HEARTBEAT_MS : body !== c.last.body && now - c.last.at >= HEARTBEAT_MS
+      if (!isDue) continue
       c.last = { body, at: now }
       out.push({ to: id, data: { t: 'box', b: c.ch.seal({ t: 'snapshot', snapshot: s }) } })
     }
