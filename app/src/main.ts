@@ -19,7 +19,9 @@ import {
   reduce,
   SENT_MS,
   SLOW_MS,
+  stepOf,
   stopKey,
+  tabsOf,
   type Action,
   type SessionTab,
   type State,
@@ -28,7 +30,7 @@ import {
 import { startTheme } from './theme'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
-import { page, tabs } from './views/page'
+import { page, switcher, tabs } from './views/page'
 
 /** Web storage can throw (private mode, blocked storage): the app then works for this visit only. */
 const storeOf = (which: () => Storage) => ({
@@ -171,6 +173,7 @@ function render() {
   })
   el('gate').innerHTML = links.length ? gates(views) : unpaired()
   el('tabs').innerHTML = tabs(state, now)
+  el('page-name').innerHTML = switcher(state, now)
   el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView())
   // On a Mac the sidebar holds the dock (runs-and-loops line, plan usage) right under the session tabs.
   const dock = el('main').querySelector('.dock')
@@ -249,6 +252,11 @@ document.addEventListener('focusout', () => setTimeout(() => pendingRender && re
 
 document.addEventListener('click', e => {
   const at = (sel: string) => (e.target as Element).closest<HTMLElement>(sel)
+  // The click that ends a swipe or a hold on the header is not a tap on it.
+  if (isGesture) return void (isGesture = false)
+  if (at('[data-switch]')) return dispatch({ type: 'switch', open: !state.isSwitchOpen }), render()
+  // A tap anywhere off the open list closes it (a session in it is chosen below, which closes it too).
+  if (state.isSwitchOpen && !at('.switch-menu')) return dispatch({ type: 'switch', open: false }), render()
   const shown = currentOf(state, Date.now())
   const answer = at('[data-answer]')
   if (answer) {
@@ -359,6 +367,49 @@ document.addEventListener('click', e => {
   if (head) return dispatch({ type: 'toggle', key: head.dataset.toggle! }), render()
   const pick = at('[data-select]')
   if (pick) return dispatch({ type: 'select', key: pick.dataset.select! }), render()
+})
+
+// The header switches session: swipe it sideways for the next or previous one, or hold it for the list.
+const SWIPE_PX = 40
+const HOLD_MS = 450
+let isGesture = false
+let press: { x: number; y: number; hold: ReturnType<typeof setTimeout> } | undefined
+const header = document.querySelector('header')!
+header.addEventListener('pointerdown', e => {
+  if (tabsOf(state, Date.now()).length < 2 || (e.target as Element).closest('#theme, .switch-menu')) return
+  const hold = setTimeout(() => {
+    press = undefined
+    isGesture = true
+    navigator.vibrate?.(10)
+    dispatch({ type: 'switch', open: true })
+    render()
+  }, HOLD_MS)
+  press = { x: e.clientX, y: e.clientY, hold }
+})
+header.addEventListener('pointermove', e => {
+  if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) clearTimeout(press.hold)
+})
+// A gesture's own click comes right after its pointerup; past that, clicks are taps again.
+const endGesture = () => setTimeout(() => (isGesture = false), 400)
+header.addEventListener('pointerup', e => {
+  if (isGesture) endGesture()
+  if (!press) return
+  clearTimeout(press.hold)
+  const dx = e.clientX - press.x
+  const dy = e.clientY - press.y
+  press = undefined
+  if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < 2 * Math.abs(dy)) return
+  // Swiping left brings the next session in, as a page turns.
+  const key = stepOf(state, Date.now(), dx < 0 ? 1 : -1)
+  if (!key) return
+  isGesture = true
+  endGesture()
+  dispatch({ type: 'choose', key })
+  render()
+})
+header.addEventListener('pointercancel', () => {
+  if (press) clearTimeout(press.hold)
+  press = undefined
 })
 
 // Card heads and the usage bar are role="button": Enter and Space work them from a keyboard, as on a button.
