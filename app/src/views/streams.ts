@@ -72,7 +72,7 @@ export function chips(streams: Stream[]): string {
   return ['waiting', 'running', 'loop', 'error', 'stalled', 'done']
     .map(k => [k, streams.filter(x => x.kind === k).length] as const)
     .filter(([, n]) => n)
-    .map(([k, n]) => `<span class="chip bg-${k} k-${k}">${GLYPH[k]} ${n} ${k}</span>`)
+    .map(([k, n]) => `<span class="chip bg-${k} k-${k}" title="${n} ${k}">${GLYPH[k]} ${n}<span class="chip-word"> ${k}</span></span>`)
     .join('')
 }
 
