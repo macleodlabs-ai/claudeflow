@@ -916,9 +916,16 @@ describe('the status card', () => {
     const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: BAR_PROPS })
     expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
 
-    const r = await $.prompt.submit({ text: 'status?', wait: false, origin: { kind: 'composer' } })
+    // Only the word alone asks for the card. "status?" or "status of the deploy" is a question for Claude: taking it
+    // would answer the person with the plugin's card instead of Claude's account of its work.
+    for (const text of ['status?', 'Status ?', 'status of the deploy']) {
+      expect((await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })).drop).toBe(undefined)
+      expect(await bar.find({ key: 'st-open:billing' })).toBe(undefined)
+    }
+    expect(sent).toEqual(['why is the invoice total off?', 'status?', 'Status ?', 'status of the deploy'])
+    const r = await $.prompt.submit({ text: ' Status ', wait: false, origin: { kind: 'composer' } })
     expect(r.drop).toBeDefined()
-    expect(sent).toEqual(['why is the invoice total off?'])
+    expect(sent).toHaveLength(4)
     expect(await bar.find({ key: 'st-open:billing' })).toBeDefined()
 
     await bar.press({ key: 'status-close' })
