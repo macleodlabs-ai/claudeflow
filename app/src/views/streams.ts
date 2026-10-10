@@ -66,7 +66,10 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
     mode === 'list'
       ? ''
       : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${x.question ? '' : sentNote(s, key, now)}</div>`
-  return `<section class="card st-${kind} ${isOpen ? 'open' : ''} ${isFull ? 'full' : 'compact'} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
+  // On a phone a finished card swipes left to archive (main.ts); a running, looping or waiting one does not move, so
+  // nothing active is archived by a stray thumb. The wide layout's list and detail pane do not swipe.
+  const swipe = mode === 'inline' && FINISHED.includes(kind) ? ` data-swipe="archive" data-stream="${esc(key)}"` : ''
+  return `<section${swipe} class="card st-${kind} ${isOpen ? 'open' : ''} ${isFull ? 'full' : 'compact'} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
       <div class="title"><div class="name">${esc(x.name)}${mode !== 'detail' && isUnseen(s, sessionKey, x) ? '<span class="new-dot" role="img" aria-label="changed since you looked"></span>' : ''}</div>${line}</div>
       <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>${style}${chev}</div>
@@ -89,6 +92,29 @@ export function selectedOf(s: State, sessionKey: string, streams: Stream[]): str
   const waiting = streams.findIndex(x => x.kind === 'waiting')
   return [...s.open].reverse().find(k => keys.includes(k)) ?? keys[waiting] ?? keys[0]
 }
+
+/**
+ * The archived streams, folded under the list: each swipes right to restore, or ↺ does. Archiving is a swipe left on a
+ * card, so nothing is lost by it.
+ */
+export function archivedList(s: State, sessionKey: string, archived: readonly { id: string; name: string; color: string }[]): string {
+  if (!archived.length) return ''
+  const key = `${sessionKey}|#archived`
+  const isOpen = s.open.includes(key)
+  const rows = isOpen
+    ? archived
+        .map(a => {
+          const k = streamKey(sessionKey, a.id)
+          return `<div class="arow" data-swipe="restore" data-stream="${esc(k)}" style="--c:${color(a.color)}"><span class="dot"></span><span class="aname">${esc(a.name)}</span>
+        <button type="button" class="restore" data-restore="${esc(k)}" aria-label="Restore ${esc(a.name)}">↺</button></div>`
+        })
+        .join('')
+    : ''
+  return `<div class="archived"><div class="archived-head" data-toggle="${esc(key)}" role="button" tabindex="0" aria-expanded="${isOpen}">Archived · ${archived.length}<span class="chev" aria-hidden="true">▸</span></div>${rows}</div>`
+}
+
+/** The states a stream may be archived from by a swipe. */
+const FINISHED: readonly string[] = ['done', 'idle', 'stalled', 'error']
 
 /** Phones get a column of cards that open in place; from 820 px a list on the left and the chosen stream on the right. */
 export function streamsView(s: State, sessionKey: string, streams: Stream[], now: number, isWide = false): string {

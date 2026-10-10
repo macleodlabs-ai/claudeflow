@@ -177,11 +177,14 @@ function render() {
     }
   })
   el('gate').innerHTML = links.length ? gates(views) : unpaired()
-  el('tabs').innerHTML = tabs(state, now)
-  el('page-name').innerHTML = switcher(state, now)
-  el('bell').innerHTML = bell(state, now)
+  // A locked account shows nothing of its sessions, not even what arrived before it locked: only the Unlock above.
+  const open = new Set(views.filter(v => v.gate === 'open').map(v => v.room))
+  shownState = { ...state, sessions: Object.fromEntries(Object.entries(state.sessions).filter(([, h]) => open.has(h.room))) }
+  el('tabs').innerHTML = tabs(shownState, now)
+  el('page-name').innerHTML = switcher(shownState, now)
+  el('bell').innerHTML = bell(shownState, now)
   const compose = { files: attached.map(f => ({ name: f.name, preview: f.preview })), isListening: voice.isListening(), hasMic: voice.isOffered, why: composeWhy }
-  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView(), compose)
+  el('main').innerHTML = page(shownState, now, open.size > 0, wide.matches, notifyView(), compose)
   // On a Mac the sidebar holds plan usage and the runs-and-loops line right under the session tabs; the composer stays.
   const dock = el('main').querySelector<HTMLElement>('.dock')
   if (dock && side.matches) {
@@ -194,13 +197,24 @@ function render() {
   // The page keeps clear of the dock, however tall the composer has grown.
   document.body.style.setProperty('--dock-h', `${dock?.offsetHeight ?? 0}px`)
   document.querySelectorAll<HTMLTextAreaElement>('[data-compose]').forEach(grow)
-  document.querySelectorAll<HTMLElement>('[data-slides]').forEach(fitDock)
+  document.querySelectorAll<HTMLElement>('[data-slides]').forEach(strip => {
+    // Back where the person left it, at once: a redraw is not a swipe.
+    strip.scrollTo({ left: Math.min(dockSlide, strip.childElementCount - 1) * strip.clientWidth, behavior: 'instant' as ScrollBehavior })
+    strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === dockSlide))
+    fitDock(strip)
+  })
 }
+
+/** The state as last drawn: only unlocked accounts' sessions. Taps act on what is shown, never on a hidden session. */
+let shownState: State = state
+
+/** The dock's slide in view, kept across redraws (each snapshot redraws the dock). */
+let dockSlide = 0
 
 /** The carousel takes the height of the slide in view, so the composer never sits over the usage panel's height. */
 function fitDock(strip: HTMLElement) {
   const slides = [...strip.children] as HTMLElement[]
-  const i = document.body.classList.contains('composing') ? 0 : Math.min(slides.length - 1, Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth)))
+  const i = document.body.classList.contains('composing') ? 0 : Math.min(slides.length - 1, dockSlide)
   const h = slides[i]?.offsetHeight
   if (h) strip.style.height = `${h}px`
   document.body.style.setProperty('--dock-h', `${strip.closest<HTMLElement>('.dock')?.offsetHeight ?? 0}px`)
@@ -295,7 +309,7 @@ function answerAsk(requestId: string, command: PhoneCommand) {
 }
 
 /** A stream key is the session key, then the stream id; the session key is the shown tab's. */
-const streamIdOf = (key: string) => key.slice((currentOf(state, Date.now())?.key.length ?? 0) + 1)
+const streamIdOf = (key: string) => key.slice((currentOf(shownState, Date.now())?.key.length ?? 0) + 1)
 
 document.addEventListener('input', e => {
   const d = (e.target as Element).closest?.<HTMLTextAreaElement>('[data-draft]')
@@ -320,6 +334,7 @@ document.addEventListener('scroll', e => {
   const strip = e.target as HTMLElement
   if (!strip.matches?.('[data-slides]')) return
   const i = Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth))
+  if (!document.body.classList.contains('composing')) dockSlide = i
   strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === i))
   fitDock(strip)
 }, true)
@@ -333,7 +348,7 @@ document.addEventListener('click', e => {
   if (at('[data-switch]')) return dispatch({ type: 'switch', open: !state.isSwitchOpen }), render()
   // A tap anywhere off the open list closes it (a session in it is chosen below, which closes it too).
   if (state.isSwitchOpen && !at('.switch-menu')) return dispatch({ type: 'switch', open: false }), render()
-  const shown = currentOf(state, Date.now())
+  const shown = currentOf(shownState, Date.now())
   const answer = at('[data-answer]')
   if (answer) {
     const key = answer.dataset.answer!
@@ -367,6 +382,8 @@ document.addEventListener('click', e => {
   }
   if (at('[data-mic]')) return voice.toggle()
   if (at('[data-chat-style]')) return dispatch({ type: 'chat-style' }), render()
+  const restore = at('[data-restore]')
+  if (restore && shown) return void archiveTap(shown, restore.dataset.restore!, 'restore')
   const unattach = at('[data-unattach]')
   if (unattach) {
     attached.splice(Number(unattach.dataset.unattach), 1)
@@ -510,6 +527,53 @@ header.addEventListener('pointercancel', () => {
   if (press) clearTimeout(press.hold)
   press = undefined
 })
+
+/** Archives or restores a stream from the phone: the card slides out at once, and the next snapshot settles it. */
+function archiveTap(shown: SessionTab, key: string, kind: 'archive' | 'restore') {
+  const tapKey = `${key}|${kind}`
+  if (isInFlight(state.taps[tapKey])) return
+  document.querySelector(`[data-stream="${CSS.escape(key)}"]`)?.classList.add('gone')
+  void go(tapKey, tapFor(shown, tapKey, { id: randomId(), kind, streamId: streamIdOf(key) }))
+}
+
+// A stream card swipes left to archive; an archived row swipes right to restore. Past SWIPE_DONE_PX it goes; short of
+// that it springs back. Mostly-vertical moves stay a scroll.
+const SWIPE_DONE_PX = 96
+let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean } | undefined
+document.addEventListener('pointerdown', e => {
+  const el = (e.target as Element).closest?.<HTMLElement>('[data-swipe]')
+  if (!el || (e.target as Element).closest('button, textarea, input, a')) return
+  drag = { el, kind: el.dataset.swipe!, x: e.clientX, y: e.clientY, dx: 0, isOn: false }
+})
+document.addEventListener('pointermove', e => {
+  if (!drag) return
+  const dx = e.clientX - drag.x
+  const dy = e.clientY - drag.y
+  if (!drag.isOn) {
+    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) return void (drag = undefined)
+    if (Math.abs(dx) < 12) return
+    drag.isOn = true
+  }
+  // Only the way that does something: left for archive, right for restore.
+  drag.dx = drag.kind === 'archive' ? Math.min(0, dx) : Math.max(0, dx)
+  drag.el.style.transform = `translateX(${drag.dx}px)`
+  drag.el.classList.toggle('swipe-ready', Math.abs(drag.dx) >= SWIPE_DONE_PX)
+  drag.el.classList.add('swiping')
+})
+const endDrag = () => {
+  if (!drag) return
+  const { el, kind, dx, isOn } = drag
+  drag = undefined
+  el.classList.remove('swiping', 'swipe-ready')
+  el.style.transform = ''
+  if (!isOn) return
+  isGesture = true
+  setTimeout(() => (isGesture = false), 400)
+  const shown = currentOf(shownState, Date.now())
+  if (Math.abs(dx) >= SWIPE_DONE_PX && shown) archiveTap(shown, el.dataset.stream!, kind === 'archive' ? 'archive' : 'restore')
+}
+document.addEventListener('pointerup', endDrag)
+document.addEventListener('pointercancel', endDrag)
 
 // Card heads and the usage bar are role="button": Enter and Space work them from a keyboard, as on a button.
 document.addEventListener('keydown', e => {

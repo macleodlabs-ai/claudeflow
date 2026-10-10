@@ -1,5 +1,5 @@
 // The dock: a carousel pinned to the bottom. The composer comes first and is always there, for the stream being
-// viewed (or a new prompt), with plan usage as thin lines under its input; plan usage in full and the runs-and-loops
+// viewed (or a new prompt), with plan usage as small marks beside its target; plan usage in full and the runs-and-loops
 // line sit beside it, a swipe away. The dock is as tall as the slide in view; focused, the composer takes it whole.
 import { isInFlight, streamKey, type State } from '../state'
 import type { Snapshot } from '../state'
@@ -39,20 +39,22 @@ function composer(s: State, sessionKey: string, x: Snapshot, view: ComposeView):
     ? `<button type="button" class="icon-btn ${view.isListening ? 'on' : ''}" data-mic aria-pressed="${view.isListening}" aria-label="${view.isListening ? 'Stop dictation' : 'Dictate'}">🎤</button>`
     : ''
   return `<div class="slide compose">
-    <div class="to">→ ${name ? `<b>${esc(name)}</b>` : 'new prompt'}${view.why ? ` · <span class="why">${esc(view.why)}</span>` : ''}</div>${files}
+    <div class="to"><span class="target">→ ${name ? `<b>${esc(name)}</b>` : 'new prompt'}${view.why ? ` · <span class="why">${esc(view.why)}</span>` : ''}</span>${limitMarks(x)}</div>${files}
     <div class="compose-row">
       <label class="icon-btn" aria-label="Attach a photo or file"><input type="file" data-attach multiple hidden>📎</label>
       <textarea rows="1" placeholder="${name ? `Message ${esc(name)}…` : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea>${mic}
       <button class="btn send" data-send="${esc(key)}" ${busy ? 'disabled' : ''} aria-label="Send">${busy ? '…' : '↑'}</button>
-    </div>${limitLines(x)}</div>`
+    </div></div>`
 }
 
-/** Plan usage as thin full-width lines under the input, one per limit. */
-export function limitLines(x: Snapshot): string {
+/** Plan usage as small marks beside the target, one per limit: how much is used, in its colour, and when it resets. */
+export function limitMarks(x: Snapshot): string {
   const limits = x.limits ?? []
   if (!limits.length) return ''
-  const pct = (p: number) => Math.max(0, Math.min(100, Number(p) || 0))
-  return `<div class="limit-lines" aria-hidden="true">${limits.map(l => `<span title="${esc(l.label)} ${pct(l.percent)}% used"><i style="width:${pct(l.percent)}%;background:${limitColor(l.percent)}"></i></span>`).join('')}</div>`
+  const pct = (p: number) => Math.max(0, Math.min(100, Math.round(Number(p) || 0)))
+  return `<span class="limits">${limits
+    .map(l => `<span class="lim" style="color:${limitColor(l.percent)}" title="${esc(l.label)}: ${pct(l.percent)}% used, resets ${esc(l.resetsAt)}">${pct(l.percent)}%${l.resetsAt ? `<small>${esc(l.resetsAt)}</small>` : ''}</span>`)
+    .join('')}</span>`
 }
 
 /** The dock's slides: the composer, then each of `others` (plan usage, the runs-and-loops line) that has something. */
