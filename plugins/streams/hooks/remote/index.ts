@@ -43,7 +43,7 @@ export const STORE = {
 export const TICK_MS = 2000
 
 export type RemoteOptions = {
-  /** The Claudeflow relay's address (the `relayUrl` setting), e.g. https://claudeflow-relay.<you>.workers.dev; '' when unset. */
+  /** The Claudeflow relay's address (the `relayUrl` setting), e.g. https://relay.<you>.workers.dev; '' when unset. */
   relayUrl: string
 }
 
@@ -180,7 +180,7 @@ async function phoneCommand($: $, c: PhoneCommand) {
   await $.prompt.submit({ text: c.text, asUser: true })
 }
 
-const NO_RELAY = 'Set the relay address first: /config, streams, relayUrl (e.g. https://claudeflow-relay.<you>.workers.dev).'
+const NO_RELAY = 'Set the relay address first: /config, streams, relayUrl (e.g. https://relay.<you>.workers.dev).'
 
 /**
  * `/streams phone`: open a pairing (a secret valid ten minutes, for any number of devices) and show the relay's

@@ -2,7 +2,7 @@
   // The Claudeflow relay on Cloudflare's free plan. `app/build.sh` writes the app into ./public (gitignored).
   //   npx wrangler dev        (local, no account needed)
   //   npx wrangler deploy     (needs `npx wrangler login` once)
-  "name": "claudeflow-relay",
+  "name": "relay",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-09",
   "assets": { "directory": "./public" },

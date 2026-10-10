@@ -6,7 +6,7 @@ import type { Answered, Device, Identity, Link, OutFrame, Pairing, UpBody, UpRes
 import type { PhoneCommand, Snapshot } from '../hooks/remote/snapshot'
 import { authenticator } from './authenticator'
 
-export const RELAY = 'https://claudeflow-relay.example.workers.dev'
+export const RELAY = 'https://relay.example.workers.dev'
 export const ORIGIN = RELAY
 export const SESSION = 'sess-1'
 
