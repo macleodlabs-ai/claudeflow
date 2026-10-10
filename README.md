@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.9" src="https://img.shields.io/badge/version-1.1.9-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
   <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
@@ -118,6 +118,7 @@ Claude Code's Remote Control does not draw plugin UI in the phone app, so stream
 
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
 - **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.claudeflow/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
+- **Share a project:** ☰ → Share: *Invite to watch* or *Invite to contribute* makes a link (Share… or Copy) that pairs one device, within 24 hours, to that project only, for 7 days. A watcher sees the project's streams and nothing else, with no controls; the Mac refuses anything it sends. A contributor can reply, prompt and answer permission prompts. Under ☰ you switch each person between Watch and Contribute, give them 7 more days, or remove them; only your own devices can share.
 - **Swipe to archive:** a finished stream (done, idle, stalled or failed) swipes left to archive; archived streams fold under the list, and each swipes right (or taps ↺) to restore. Running, looping and waiting streams do not swipe.
 - **Locked means hidden:** while an account is locked, the app shows only its Unlock, nothing of its sessions. It locks itself after 5 minutes put away or 15 minutes on screen untouched; Face ID opens it again.
 - **Compact or full:** ≡/▤ on an open stream switches every stream between one line a row and whole rows, with replies drawn as markdown (headings, lists, code), as the terminal's pane does.

@@ -2,7 +2,7 @@
 // keys, software passkeys) and a room that numbers their frames, with the link's post cycle as index.ts runs it.
 import { newIdentity, publicKeyOf, randomId } from '../hooks/remote/seal'
 import { createDevice } from '../hooks/remote/device'
-import type { Answered, Device, Identity, Link, OutFrame, Pairing, UpBody, UpResponse } from '../hooks/remote/link'
+import type { Answered, Device, Identity, Invite, Link, OutFrame, Pairing, UpBody, UpResponse } from '../hooks/remote/link'
 import type { PhoneCommand, Snapshot } from '../hooks/remote/snapshot'
 import { authenticator } from './authenticator'
 
@@ -82,16 +82,17 @@ export const tOf = (f: OutFrame) => (f.data as { t: string }).t
  * One tick of the session, as index.ts runs it: post when the link says so, the room answers (or is down), the
  * phones read what came, and again while the link asks. By default a permission is held, so every call posts.
  */
-export function cycle(link: Link, relay: Room, k: { devices: Device[]; pairing?: Pairing; now: number; snapshot?: Snapshot; isHolding?: boolean; active?: Phone[]; isDown?: boolean }) {
-  const out = { posts: [] as UpBody[], paired: [] as Device[], commands: [] as Answered['commands'], read: new Map<string, unknown[]>() }
+export function cycle(link: Link, relay: Room, k: { devices: Device[]; pairing?: Pairing; invites?: Invite[]; now: number; snapshot?: Snapshot; isHolding?: boolean; active?: Phone[]; isDown?: boolean }) {
+  const out = { posts: [] as UpBody[], paired: [] as Device[], used: [] as string[], commands: [] as Answered['commands'], read: new Map<string, unknown[]>() }
   let devices = k.devices
-  const known = () => ({ devices, pairing: k.pairing, now: k.now, snapshot: k.snapshot ?? snapshot(k.now), isHolding: k.isHolding ?? true })
+  const known = () => ({ devices, pairing: k.pairing, invites: k.invites, now: k.now, snapshot: k.snapshot ?? snapshot(k.now), isHolding: k.isHolding ?? true })
   let post = link.next(known())
   while (post) {
     out.posts.push(post)
     if (!k.isDown) for (const [id, got] of relay.deliver(post.frames)) out.read.set(id, [...(out.read.get(id) ?? []), ...got])
     const got = link.answered(k.isDown ? undefined : JSON.stringify(relay.answer(k.active)), k.now)
     out.paired.push(...got.paired)
+    out.used.push(...got.used)
     out.commands.push(...got.commands)
     devices = [...devices.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired]
     post = got.again ? link.next(known()) : undefined

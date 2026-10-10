@@ -31,6 +31,7 @@ import { startTheme } from './theme'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, scanButton, unpaired, type GateView } from './views/gates'
 import { scanPairing } from './scan'
+import { menuView, type InviteView } from './views/menu'
 import { bell, page, switcher, tabs } from './views/page'
 import { attachOf, sendFiles, type Ready } from './upload'
 import { attachedStrip, clip } from './views/compose'
@@ -94,8 +95,13 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
       }
       render()
     },
-    ack(_room, _session, ack) {
+    ack(room, _session, ack) {
       dispatch({ type: 'ack', ack, now: Date.now() })
+      const asked = invitesSent.get(ack.id)
+      if (asked && invite) {
+        invitesSent.delete(ack.id)
+        invite = ack.ok && ack.secret ? { ...invite, isBusy: false, link: `${location.origin}/#r=${asked.room}&k=${asked.pk}&s=${ack.secret}` } : { ...invite, isBusy: false, why: 'The Mac could not make the invite.' }
+      }
       render()
     },
     changed() {
@@ -198,6 +204,10 @@ function render() {
     if (info.childElementCount) el('tabs').append(info)
   }
   document.body.classList.toggle('usage-open', !!dock?.querySelector('.usage') && state.isUsageOpen)
+  // A device the project was shared with to watch shows no controls (the Mac refuses them anyway).
+  const shownTab = currentOf(shownState, now)
+  document.body.classList.toggle('read-only', shownTab?.snapshot.you?.role === 'viewer')
+  el('sheet').innerHTML = menuView(shownState, shownTab, isMenuOpen, now, invite)
   // The page keeps clear of the dock, however tall the composer has grown.
   document.body.style.setProperty('--dock-h', `${dock?.offsetHeight ?? 0}px`)
   document.querySelectorAll<HTMLTextAreaElement>('[data-compose]').forEach(grow)
@@ -222,6 +232,20 @@ function fitDock(strip: HTMLElement) {
   const h = slides[i]?.offsetHeight
   if (h) strip.style.height = `${h}px`
   document.body.style.setProperty('--dock-h', `${strip.closest<HTMLElement>('.dock')?.offsetHeight ?? 0}px`)
+}
+
+/** The ☰ menu, and the invite being made from it (its link once the session answers). */
+let isMenuOpen = false
+let invite: InviteView | undefined
+/** Invite commands on their way, by command id: the session's ack carries the secret the link is made from. */
+const invitesSent = new Map<string, { room: string; pk: string }>()
+
+/** Sends an owner's sharing command for the shown project, acked like any tap. */
+function shareTap(command: PhoneCommand) {
+  const shown = currentOf(shownState, Date.now())
+  if (!shown) return
+  const key = `${shown.key}|share:${command.id}`
+  void go(key, tapFor(shown, key, command))
 }
 
 /** Why the last scan did not pair, shown under the scan button. */
@@ -473,7 +497,43 @@ document.addEventListener('click', e => {
   const at = (sel: string) => (e.target as Element).closest<HTMLElement>(sel)
   // The click that ends a swipe or a hold on the header is not a tap on it.
   if (isGesture) return void (isGesture = false)
-  if (at('[data-scan]')) return void scanToPair()
+  if (at('[data-scan]')) {
+    isMenuOpen = false
+    return void scanToPair()
+  }
+  if (at('[data-menu]')) return void ((isMenuOpen = !isMenuOpen), (invite = undefined), render())
+  if (at('[data-menu-close]')) return void ((isMenuOpen = false), render())
+  if (at('[data-lock]')) return void ((isMenuOpen = false), lockAll())
+  const inviteBtn = at('[data-invite]')
+  const inviteTab = currentOf(shownState, Date.now())
+  if (inviteBtn && inviteTab) {
+    const role = inviteBtn.dataset.invite === 'contributor' ? 'contributor' : 'viewer'
+    const id = randomId()
+    const link = linkOf(inviteTab.room)
+    if (!link) return
+    invitesSent.set(id, { room: inviteTab.room, pk: link.pairing().pk })
+    invite = { role, isBusy: true }
+    render()
+    return shareTap({ id, kind: 'invite', role })
+  }
+  if (at('[data-share-link]') && invite?.link) {
+    const url = invite.link
+    return void (navigator.share ? navigator.share({ title: 'Watch this Claude project', url }).catch(() => {}) : navigator.clipboard?.writeText(url))
+  }
+  if (at('[data-copy-link]') && invite?.link) return void navigator.clipboard?.writeText(invite.link).catch(() => {})
+  const roleBtn = at('[data-people-role]')
+  if (roleBtn) return shareTap({ id: randomId(), kind: 'setRole', deviceId: roleBtn.dataset.peopleRole!, role: roleBtn.dataset.role === 'contributor' ? 'contributor' : 'viewer' })
+  const extendBtn = at('[data-people-extend]')
+  if (extendBtn) return shareTap({ id: randomId(), kind: 'extend', deviceId: extendBtn.dataset.peopleExtend! })
+  const removeBtn = at('[data-arm-remove]')
+  if (removeBtn) {
+    // Two taps, as Stop: a stray touch does not remove someone.
+    const key = `remove:${removeBtn.dataset.armRemove}`
+    const now = Date.now()
+    if (!isArmed(state, key, now)) return dispatch({ type: 'arm', key, now }), render()
+    dispatch({ type: 'arm', key: '', now: 0 })
+    return shareTap({ id: randomId(), kind: 'forgetDevice', deviceId: removeBtn.dataset.armRemove! })
+  }
   if (at('[data-mute]')) return dispatch({ type: 'mute' }), render()
   if (at('[data-switch]')) return dispatch({ type: 'switch', open: !state.isSwitchOpen }), render()
   // A tap anywhere off the open list closes it (a session in it is chosen below, which closes it too).
@@ -678,7 +738,7 @@ const SWIPE_DONE_PX = 96
 let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean } | undefined
 document.addEventListener('pointerdown', e => {
   const el = (e.target as Element).closest?.<HTMLElement>('[data-swipe]')
-  if (!el || (e.target as Element).closest('button, textarea, input, a')) return
+  if (!el || document.body.classList.contains('read-only') || (e.target as Element).closest('button, textarea, input, a')) return
   drag = { el, kind: el.dataset.swipe!, x: e.clientX, y: e.clientY, dx: 0, isOn: false }
 })
 document.addEventListener('pointermove', e => {
