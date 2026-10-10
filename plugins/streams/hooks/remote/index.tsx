@@ -20,6 +20,7 @@ import {
   type PendingPermission,
   type PendingQuestion,
   type PhoneCommand,
+  type PhoneFile,
   type Settled,
   type Snapshot,
 } from './snapshot'
@@ -376,7 +377,46 @@ async function holdQuestion<R>($: $, e: { tool: string; tool_use_id?: string; qu
  * link.ts checked its passkey assertion. What it returns is acked; `ok: false` with no `why` means it was not done
  * (the run or loop is no longer there, or a tick is not due).
  */
+/** Files arriving from a phone, by blob id: their base64 chunks, until a prompt names them. */
+const uploads = new Map<string, { parts: string[]; got: number; at: number }>()
+/** A blob nobody named within this long is dropped. */
+const UPLOAD_MS = 10 * 60_000
+
+/**
+ * Writes the files a prompt names to ~/.claudeflow/uploads/<blob>/<name> and gives their paths, or undefined if one
+ * has not fully arrived. fs.write takes text only, so the base64 is written and decoded by the system's base64.
+ */
+async function saveFiles($: $, files: readonly PhoneFile[]): Promise<string[] | undefined> {
+  const done = files.map(f => uploads.get(f.blob))
+  if (done.some(u => !u || u.got < u.parts.length)) return undefined
+  const home = (await $.env.get('HOME').catch(() => undefined)) || '/tmp'
+  const paths: string[] = []
+  for (const [i, f] of files.entries()) {
+    const dir = `${home}/.claudeflow/uploads/${f.blob}`
+    const path = `${dir}/${f.name}`
+    await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 10_000 })
+    await $.fs.write(`${path}.b64`, done[i]!.parts.join(''))
+    const r = await $.process.run(['/usr/bin/base64', '-D', '-i', `${path}.b64`, '-o', path], { timeoutMs: 20_000 })
+    await $.process.run(['/bin/rm', '-f', `${path}.b64`], { timeoutMs: 10_000 }).catch(() => undefined)
+    if (r.exitCode !== 0) return undefined
+    uploads.delete(f.blob)
+    paths.push(path)
+  }
+  return paths
+}
+
 async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'>> {
+  if (c.kind === 'chunk') {
+    const now = await $.clock.now()
+    for (const [blob, u] of uploads) if (now - u.at > UPLOAD_MS) uploads.delete(blob)
+    const u = uploads.get(c.blob) ?? { parts: Array<string>(c.of).fill(''), got: 0, at: now }
+    if (u.parts.length !== c.of) return { ok: false }
+    if (!u.parts[c.part]) u.got++
+    u.parts[c.part] = c.data
+    u.at = now
+    uploads.set(c.blob, u)
+    return { ok: true }
+  }
   if (c.kind === 'permission' || c.kind === 'choose') {
     const h = held.get(c.requestId)
     const fits = c.kind === 'permission' ? !!h?.ask : !!h?.question?.options.some(o => o.label === c.label)
@@ -434,9 +474,13 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     await update($, loopsA, m => afterCall(m, c.streamId, { tool: input.tool, input, result: r.deny === undefined ? r.result : undefined, isError: r.isError === true, now }))
     return { ok: r.deny === undefined && r.isError !== true }
   }
-  // The stream is made current first, so the answer is filed where it was asked.
+  // Files go first: a prompt is sent only with all of them on disk, for Claude to read by path.
+  const paths = c.files?.length ? await saveFiles($, c.files) : []
+  if (!paths) return { ok: false, why: 'file missing' }
+  const text = paths.length ? `${c.text.trim()}\n\n${paths.map(p => `[Attached from my phone: ${p}]`).join('\n')}`.trim() : c.text
+  // The stream is made current first, so the answer is filed where it was asked; '' is a new prompt routing files.
   if ((await read($, streamsA)).some(st => st.id === c.streamId)) await update($, currentA, () => c.streamId)
-  await $.prompt.submit({ text: c.text, asUser: true })
+  await $.prompt.submit({ text, asUser: true })
   return { ok: true }
 }
 

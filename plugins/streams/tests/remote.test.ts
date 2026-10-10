@@ -5,7 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
 import { ACTIVE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
-import { HEARTBEAT_MS, NO_DEVICE_MS, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
+import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { STORE, TICK_MS } from '../hooks/remote/index'
 import { spkiOf } from './authenticator'
 import { ORIGIN, RELAY, SESSION, T0, account, cycle, phone, room, snapshot, tOf } from './room'
@@ -252,7 +252,7 @@ describe('allowing a tool from a phone', () => {
 /** The engine around a session: what its other modules ask at start, answered quietly. */
 function session(on: On) {
   const clock = mock.clock(on, { now: T0 })
-  mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod' })
+  mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod', HOME: '/Users/me' })
   on('session.cwd', async () => ({ value: '/work/claudeflow' }))
   on('session.id', async () => ({ value: SESSION }))
   on('session.start', async (_$, e) => e as never)
@@ -262,11 +262,33 @@ function session(on: On) {
   on('ui.status', async () => ({ value: undefined }))
   on('command.register', async () => ({ value: undefined }) as never)
   on('fs.read', async () => ({ value: '{}' }) as never)
-  on('prompt.submit', async (_$, e) => ({ text: e.text }))
+  on('prompt.submit', async (_$, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
   return clock
 }
+/** Prompts the session submitted, in order (reset by each test that reads it). */
+const submitted: string[] = []
 
 type Up = { url: string; body: { token: string; session: string; since: number; frames: OutFrame[] } }
+
+describe('what a phone may send', () => {
+  test('a file name is a plain name: no folders, no way up', () => {
+    // The name becomes a path on the Mac, under the uploads folder and nowhere else.
+    const c = commandOf({ id: 'c', kind: 'answer', streamId: '', text: '', files: [{ blob: 'b', name: '../../.ssh/id_rsa', type: 'image/png' }] })
+    expect(c && c.kind === 'answer' ? c.files?.[0]?.name : undefined).toBe('.._.._.ssh_id_rsa')
+    expect(commandOf({ id: 'c', kind: 'answer', streamId: '', text: '', files: [{ blob: 'b', name: '..', type: 'image/png' }] })).toBe(undefined)
+  })
+
+  test('a chunk is base64 of bounded size, numbered within its count; a prompt needs text or a file', () => {
+    expect(commandOf({ id: 'c', kind: 'chunk', blob: 'b', part: 0, of: 1, data: 'QUJD' })).toBeDefined()
+    expect(commandOf({ id: 'c', kind: 'chunk', blob: 'b', part: 1, of: 1, data: 'QUJD' })).toBe(undefined)
+    expect(commandOf({ id: 'c', kind: 'chunk', blob: 'b', part: 0, of: 1, data: '<script>' })).toBe(undefined)
+    expect(commandOf({ id: 'c', kind: 'chunk', blob: 'b', part: 0, of: 1, data: 'A'.repeat(CHUNK_B64 + 1) })).toBe(undefined)
+    expect(commandOf({ id: 'c', kind: 'answer', streamId: '', text: '  ' })).toBe(undefined)
+  })
+})
 
 describe('the session on the relay', () => {
   const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY } }
@@ -333,7 +355,17 @@ describe('the session on the relay', () => {
     const a = phone(me, 'iPhone')
     const clock = session(on)
     mock.store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
-    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const runs: string[][] = []
+    const written: Record<string, string> = {}
+    // Making a folder and decoding a file work; anything else (git, open) fails, as on a machine without them.
+    on('process.run', async (_$, e) => {
+      runs.push([...e.argv])
+      return { value: { exitCode: ['/bin/mkdir', '/usr/bin/base64', '/bin/rm'].includes(e.argv[0]!) ? 0 : 1, stdout: '', stderr: '' } } as never
+    })
+    on('fs.write', async (_$, e) => {
+      written[e.path] = e.text
+      return { value: undefined } as never
+    })
     on('tool.check', async () => ({ decision: 'ask' }) as never)
     const st = { isLooking: true, dialog: undefined as undefined | ((label: string) => void) }
     // The prompt box takes a fill: no dialog holds the keys (the engine refuses one while a dialog does).
@@ -366,8 +398,38 @@ describe('the session on the relay', () => {
       void p.then(v => (box.value = v))
       return box
     }
-    return { a, relay, clock, seen, acked, st, watch }
+    return { a, relay, clock, seen, acked, st, watch, runs, written }
   }
+
+  test('a photo sent in chunks is saved on the Mac and the prompt names its path, for Claude to read', OPTIONS, async ($, on) => {
+    // A plugin's prompt cannot carry an image, so the file goes to disk and the prompt points at it.
+    submitted.length = 0
+    const { a, relay, clock, acked, runs, written } = await withPhone($, on)
+    const b64 = 'A'.repeat(CHUNK_B64 + 10)
+    relay.from(a, a.command({ id: 'k0', kind: 'chunk', blob: 'b1', part: 0, of: 2, data: b64.slice(0, CHUNK_B64) }))
+    relay.from(a, a.command({ id: 'k1', kind: 'chunk', blob: 'b1', part: 1, of: 2, data: b64.slice(CHUNK_B64) }))
+    relay.from(a, a.command({ id: 'c1', kind: 'answer', streamId: '', text: 'what is wrong here?', files: [{ blob: 'b1', name: 'shot.png', type: 'image/png' }] }))
+    // Nothing is held, so the session takes commands on its active poll, then acks on the next post.
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    const path = '/Users/me/.claudeflow/uploads/b1/shot.png'
+    expect(written[`${path}.b64`] === b64).toBe(true)
+    expect(runs.map(r => [...r])).toContainEqual(['/usr/bin/base64', '-D', '-i', `${path}.b64`, '-o', path])
+    expect(submitted.at(-1)).toBe(`what is wrong here?\n\n[Attached from my phone: ${path}]`)
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
+  })
+
+  test('a prompt naming a file that has not fully arrived is not sent, and the phone is told', OPTIONS, async ($, on) => {
+    submitted.length = 0
+    const { a, relay, clock, acked } = await withPhone($, on)
+    relay.from(a, a.command({ id: 'k0', kind: 'chunk', blob: 'b2', part: 0, of: 2, data: 'AAAA' }))
+    relay.from(a, a.command({ id: 'c2', kind: 'answer', streamId: '', text: 'look', files: [{ blob: 'b2', name: 'a.png', type: 'image/png' }] }))
+    // Nothing is held, so the session takes commands on its active poll, then acks on the next post.
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(submitted).toEqual([])
+    expect(acked.find(x => x.id === 'c2')).toMatchObject({ ok: false, why: 'file missing' })
+  })
 
   /** A Bash call the mode's decider passed on to the person: tool.check said `ask`, then PermissionRequest fired. */
   async function manualAsk($: Engine) {
