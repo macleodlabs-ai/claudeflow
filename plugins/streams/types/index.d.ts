@@ -33,6 +33,11 @@ export type Stream = {
   color?: string
   /** Hidden from the bar and the list until restored; its history stays. */
   archived?: boolean
+  /**
+   * When the person last restored it (epoch ms): a restored stream is not archived on its own again until it has
+   * been active since (`autoArchiveHours`).
+   */
+  restoredAt?: number
 }
 
 /** A tool call's input as the full chat style draws it: highlighted source, or a unified diff. */

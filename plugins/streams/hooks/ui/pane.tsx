@@ -80,7 +80,9 @@ async function openStream($: $, id: string) {
 }
 
 async function setArchived($: $, id: string, archived: boolean) {
-  await update($, streamsA, list => list.map(s => (s.id === id ? { ...s, archived } : s)))
+  // Restored by the person: auto-archive leaves it until it has been active again (streams/archive.ts).
+  const now = await $.clock.now()
+  await update($, streamsA, list => list.map(s => (s.id === id ? { ...s, archived, ...(archived ? {} : { restoredAt: now }) } : s)))
   if (archived) {
     if ((await read($, focusA)) === id) await focusOn($, '')
     if ((await read($, viewA)) === id) await update($, viewA, () => '')

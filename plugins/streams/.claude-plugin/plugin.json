@@ -33,6 +33,12 @@
       "description": "Ask Haiku whether streams that show WAITING or stalled are in fact finished (one small call for all of them, again only after something new happens in a stream). A finished one shows DONE, checked ✓.",
       "default": true
     },
+    "autoArchiveHours": {
+      "type": "number",
+      "title": "Auto-archive after (hours)",
+      "description": "A finished stream (by its status or the completion check) with no activity for this many hours archives itself; it stays under \"archived\" in the pane, restorable. Never a running, waiting, looping or failed stream. 0: off.",
+      "default": 24
+    },
     "relayUrl": {
       "type": "string",
       "title": "Relay address",

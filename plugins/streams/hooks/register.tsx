@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 
 import { mem } from './state'
 import { wireSession } from './streams/session'
+import { archiveHoursOf } from './streams/archive'
 import { wireWorker } from './streams/worker'
 import { wireRouting } from './streams/routing'
 import { wireFiling } from './streams/filing'
@@ -25,7 +26,7 @@ export const register: Register = (on, options) => {
   mem.isDiagnosing = options.diagnostics === true
   mem.defaultStyle = options.chatStyle === 'compact' ? 'compact' : 'full'
 
-  wireSession(on)
+  wireSession(on, { autoArchiveHours: archiveHoursOf(options.autoArchiveHours) })
   wireWorker(on)
   wireUpdates(on)
   wireRemote(on, { relayUrl: typeof options.relayUrl === 'string' ? options.relayUrl.trim() : '' })
