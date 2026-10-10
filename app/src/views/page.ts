@@ -6,7 +6,7 @@ import { summaryLine } from './flows'
 import { notifyRow, type NotifyView } from './notify'
 import { permissions } from './permissions'
 import { statusView } from './status'
-import { chips, streamsView } from './streams'
+import { archivedList, chips, streamsView } from './streams'
 import { usageBar } from './usage'
 import { clock, esc, spinner } from './util'
 
@@ -68,7 +68,7 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
   const views = `<div class="views" role="tablist">
     <button data-view="streams" role="tab" aria-selected="${s.view === 'streams'}" class="${s.view === 'streams' ? 'on' : ''}">Streams</button>
     <button data-view="status" role="tab" aria-selected="${s.view === 'status'}" class="${s.view === 'status' ? 'on' : ''}">Status</button></div>`
-  const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide)
+  const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide) + archivedList(s, t.key, x.archived ?? [])
   // The dock: the composer for the stream being viewed, with plan usage and the runs-and-loops line a swipe away (on a
   // Mac, main.ts moves those two into the sidebar).
   const bottom = dock(s, t.key, x, compose ?? { files: [], isListening: false, hasMic: false, why: '' }, [usageBar(x, now), summaryLine(x, now)])

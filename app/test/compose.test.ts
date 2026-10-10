@@ -4,6 +4,7 @@ import { initial, keyOf, reduce, streamKey, type Snapshot } from '../src/state'
 import { dock, targetOf } from '../src/views/compose'
 import { usageBar } from '../src/views/usage'
 import { b64Of, chunksOf, sendFiles } from '../src/upload'
+import { archivedList, card } from '../src/views/streams'
 
 type Stream = Snapshot['streams'][number]
 const stream = (id: string): Stream => ({ id, name: id, color: '#7cc8ff', kind: 'running', state: 'RUNNING', detail: '', agents: [], rows: [] }) as Stream
@@ -38,12 +39,13 @@ describe('the composer in the dock', () => {
     expect(html.match(/class="slide info"/g)).toHaveLength(2)
   })
 
-  test('the thin lines showing each limit used sit in the composer itself, under the input, always', () => {
-    // Plan usage is a glance while writing: in the composer slide, not a separate row that adds height.
-    const s = reduce(initial(), { type: 'snapshot', room: 'r', snapshot: snap([], [{ label: 'Session', percent: 64 } as never]), now: 0 })
+  test('plan usage shows as small marks on the target line above the input: percent, colour and reset', () => {
+    // A glance while writing, on a line that is there anyway: no extra row, no extra height.
+    const s = reduce(initial(), { type: 'snapshot', room: 'r', snapshot: snap([], [{ label: 'Session', percent: 64, resetsAt: '18:00' } as never]), now: 0 })
     const html = dock(s, A, s.sessions[A]!.snapshot, NONE, [])
-    const compose = html.slice(html.indexOf('slide compose'), html.indexOf('</div></div>', html.indexOf('limit-lines')))
-    expect(compose).toContain('width:64%')
+    const to = html.slice(html.indexOf('class="to"'), html.indexOf('compose-row'))
+    expect(to).toContain('64%<small>18:00</small>')
+    expect(to).toContain('color:var(--running-ink)')
   })
 
   test('plan usage is always shown in full, with the model the session runs on', () => {
@@ -52,6 +54,30 @@ describe('the composer in the dock', () => {
     expect(html).toContain('claude-opus-5-5')
     expect(html).toContain('resets in')
     expect(html).not.toContain('aria-expanded')
+  })
+})
+
+describe('archiving by swipe', () => {
+  test('a finished phone card swipes left to archive; an active one, or the wide layout list, does not', () => {
+    // Archiving is only for what is over: a running, looping or waiting stream never moves under a thumb.
+    const s = withStreams('docs')
+    const running = s.sessions[A]!.snapshot.streams[0]!
+    const done = { ...running, kind: 'done', state: 'DONE' } as typeof running
+    expect(card(s, A, done, 0)).toContain('data-swipe="archive"')
+    expect(card(s, A, done, 0, 'list')).not.toContain('data-swipe')
+    for (const kind of ['running', 'loop', 'waiting']) expect(card(s, A, { ...running, kind } as typeof running, 0)).not.toContain('data-swipe')
+  })
+
+  test('archived streams fold under the list; opened, each swipes right or taps ↺ to restore', () => {
+    let s = withStreams('docs')
+    const archived = [{ id: 'old', name: 'old chore', color: '#ff94d1' }]
+    expect(archivedList(s, A, archived)).toContain('Archived · 1')
+    expect(archivedList(s, A, archived)).not.toContain('data-restore')
+    s = reduce(s, { type: 'toggle', key: `${A}|#archived` })
+    const open = archivedList(s, A, archived)
+    expect(open).toContain('data-swipe="restore"')
+    expect(open).toContain(`data-restore="${streamKey(A, 'old')}"`)
+    expect(archivedList(s, A, [])).toBe('')
   })
 })
 
