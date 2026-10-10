@@ -1,35 +1,30 @@
 <div align="center">
 
-![claudeflow — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
+![Streams — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
 
-<h1>claudeflow</h1>
+<h1>Streams</h1>
 
 <p>
-  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-22d3ee?style=for-the-badge"></a>
-  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-d97757?style=for-the-badge&logo=claude&logoColor=white">
-  <img alt="Tests 79 passing" src="https://img.shields.io/badge/tests-79%20passing-2ea043?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.2.0" src="https://img.shields.io/badge/version-2.2.0-5fe4f2?style=for-the-badge"></a>
+  <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
+  <img alt="Tests 307 passing" src="https://img.shields.io/badge/tests-307%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
-  <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-0d1117?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c5cff"></a>
+  <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
 </p>
 <p>
   <a href="#-install"><img alt="Installs" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmacleodlabs-ai%2Fclaudeflow%2Fstats%2Finstalls.json&style=for-the-badge&logo=download&logoColor=white"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=fcc2d7&label=stars"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ffd8a8"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/watchers"><img alt="Watchers" src="https://img.shields.io/github/watchers/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=b2f2bb"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ff94d1&label=stars"></a>
 </p>
 <p>
-  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-a78bfa?style=flat-square">
-  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-34d399?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-b9a2ff?style=flat-square">
+  <img alt="Platform macOS | Linux | Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6ff0c0?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-febc2e?style=flat-square">
-  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffd8a8"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8b90c4"></a>
-  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-12164a?style=flat-square"></a>
-</p>
-<p>
-  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff7b72?style=for-the-badge&labelColor=12164a"></a>
+  <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-f2d6a2?style=flat-square">
+  <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffb88a"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8a90c8"></a>
+  <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-1a2050?style=flat-square"></a>
 </p>
 
 <p>
@@ -38,8 +33,25 @@
   <a href="#-use">Use</a> ·
   <a href="#%EF%B8%8F-configure">Configure</a> ·
   <a href="#-troubleshooting">Troubleshooting</a> ·
-  <a href="#-work-with-macleod-labs"><b>Hire us</b></a>
+  <a href="#-work-with-macleod-labs">Work with us</a>
 </p>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<sub>STREAMS REMOTE</sub><br>
+<b>Every session, on your phone.</b><br>
+Answer Claude, approve prompts and send photos from your phone or tablet. End-to-end encrypted.<br>
+<a href="https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Start the 3-day free trial →</b></a>
+</td>
+<td width="50%" valign="top">
+<sub>MACLEOD LABS</sub><br>
+<b>Built by the people who make Streams.</b><br>
+Claude Code mods, agent workflows and AI tooling, built for your team.<br>
+<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Work with us →</b></a>
+</td>
+</tr>
+</table>
 
 </div>
 
@@ -90,7 +102,7 @@ Existing sessions are filed into streams in the background, with batched, **para
 <td valign="top">
 
 ### 📦 Archive & fold
-Hide finished streams with `✕` and bring them back later. Fold any stream to its last 10 rows, last row, or header. Idle streams fold themselves.
+Hide finished streams with `✕` and bring them back later; finished streams left alone for a day archive themselves, and `✕ idle` clears every stream not running in one go. Fold any stream to its last 10 rows, last row, or header. Idle streams fold themselves.
 
 </td>
 </tr>
@@ -98,49 +110,28 @@ Hide finished streams with `✕` and bring them back later. Fold any stream to i
 
 ### 📋 Status card
 
-Type `status`, or press `status` in the bar, and a card opens above the prompt with every piece of work in the session and where it stands. It is answered locally, so it costs no model call and works while a turn is running.
+Type `status` (the word on its own), or press `status` in the bar, and a card opens above the prompt with every piece of work in the session and where it stands. It is answered locally, so it costs no model call and works while a turn is running. Anything else, `status?` included, goes to Claude.
 
 ![The status card above the prompt: git branch and uncommitted files, then each stream as running, waiting for you, done or idle, with what it is doing](assets/status-card.jpg)
 
-- **What needs you comes first**: running work, then loops, then streams **waiting for you** (their last reply ended on a question, shown as the detail), then failures, then finished work.
+- **What needs you comes first**: running work, then loops, then streams **waiting for you** (their last reply ended on a question you have not typed past, shown as the detail; once you send any prompt, in any stream, earlier questions count as seen), then failures, then finished work.
 - **Git rows on top**: the branch, whether anything is unpushed, and which files are uncommitted.
-- **Tickets**: any ticket id you name in a prompt or an agent's task (`APP-260`, `ENG-1042`) gets its own row: running agents on it say what they are doing and how long they have been quiet; otherwise its latest news, or that its agent failed.
+- **Tickets**: any ticket id you name in a prompt or an agent's task (`APP-260`, `ENG-1042`) gets its own row: running agents on it say what they are doing and how long they have been quiet; otherwise its latest news, or that its agent failed. `▶ continue` picks it up, `✓ close` asks Claude to close it in its tracker, and `✕ hide` takes it off the card until you name it again.
 - **Plan limits at the bottom**: each window (5-hour, week) as a bar and percent, green, then yellow from 50%, red from 80%, with how long until it resets and the weekday and time it does.
 - **Click a stream's name** to open it in the pane. `✕ close` (top right) or your next prompt hides the card.
 - **Scroll a long card** with the wheel, or press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to move focus to it: then <kbd>↑</kbd> <kbd>↓</kbd> scroll and <kbd>q</kbd> closes it, without touching Claude's turn.
-- **On your phone** the card opens at the top of the streams accordion (its `status` button, or type `status`) and scrolls by touch.
 
-### 📱 On your phone
+### 📱 Streams Remote
 
-Claude Code's Remote Control does not draw plugin UI in the phone app yet, so streams brings its own: the **phone bridge**, a small server on your Mac that every session reports to and that serves your phone a live page of all of them.
+Want your sessions on your phone? **Streams Remote** puts every running session on your phone and tablet: answer Claude, approve permission prompts, send prompts and photos, and share a project with a teammate. It is a paid add-on to this free mod, with a 3-day free trial.
 
-<p align="center"><img src="assets/phone-bridge.jpg" width="320" alt="The phone bridge page: a tab per session, colour chips, a waiting question shown on its card, an opened card with its agents' tool counts and times, then git, tickets and plan limits"></p>
+<p align="center"><img src="assets/phone-app.jpg" width="300" alt="Streams Remote on a phone: a session's streams, a permission prompt with Allow and Deny, and a waiting question"></p>
 
-- **Every session, one page:** a tab per running session (`macleod · claudeflow`), the busiest first. A session that stops reporting greys out, then leaves.
-- **What needs you first:** a waiting stream's question shows on its card without opening it.
-- **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
-- **Status underneath:** git, tickets and plan limits with when each resets.
-- It is read-only for now: answering, stopping a turn and approving permissions from the phone come next.
-
-**Set it up** (needs [Bun](https://bun.sh)):
-
-```sh
-bridge/install.sh          # runs the bridge at login and prints your pairing link
-```
-
-The bridge listens on `127.0.0.1:7878`, so reach it from your phone over [Tailscale](https://tailscale.com): `tailscale serve 7878` gives it an HTTPS address only your devices can open. Open the pairing link there once, then **Add to Home Screen**. Sessions reach the bridge over a Unix socket only your user can open, and the phone needs the pairing token (kept in `~/.claudeflow/bridge-token`). Run `bun bridge/server.ts pair` to see the link again.
-
-When a phone client that draws plugin UI attaches, streams also opens there as an accordion made for touch: one colour-bordered card per stream, a summary row of chips, and what needs you first.
-
-<p align="center"><img src="assets/phone.jpg" width="640" alt="The streams accordion on a phone: running, waiting, done and idle cards; a tapped card shows live agents, markdown replies and a coloured diff"></p>
-
-- **A stream waiting on you** shows Claude's question with a **yes** button: one tap answers it, filed in that stream.
-- **Tap a card** to open it: its live agents, then its chat with markdown, highlighted commands and coloured diffs. Tap again to close it.
-- **⬆ update** appears here too, so you can update without going back to the Mac.
+<p align="center"><a href="https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Learn more and start the free trial →</b></a></p>
 
 ### 🔄 Updates without a restart
 
-Once a session starts, and every six hours after, streams checks every plugin you have installed against its marketplace. When one has a newer release, an **⬆ update** button appears in the bar, the pane and on your phone, and a toast says so. Pressing it (or <kbd>u</kbd>, or `/streams update`) installs the updates on your Mac and reloads plugins into the running session: no restart.
+Once a session starts, and every six hours after, streams checks every plugin you have installed against its marketplace. When one has a newer release, an **⬆ update** button appears in the bar and the pane, and a toast says so. Pressing it (or <kbd>u</kbd>, or `/streams update`) installs the updates on your Mac and reloads plugins into the running session: no restart.
 
 ### Status at a glance
 
@@ -148,10 +139,10 @@ Once a session starts, and every six hours after, streams checks every plugin yo
 | :---: | --- | --- |
 | 🟨 | **RUNNING** | A turn, subagent or loop is working now |
 | 🟩 | **DONE** | Finished cleanly |
-| 🟦 | **WAITING FOR YOU** | On the status card: the stream's last reply asked you something |
+| 🟦 | **WAITING FOR YOU** | On the status card: the stream's last reply asked you something, and you have sent nothing since |
 | 🟥 | **ERROR** | A subagent or turn failed |
 | 🟧 | **STALLED** | No activity for longer than expected |
-| ↻ | **LOOP** | A `/loop` or cron is armed, with a countdown to the next tick. A loop that stops, or lapses 10 minutes without re-arming, drops back to its stream's status |
+| ↻ | **LOOP** | A `/loop`, cron or Monitor is armed, with a countdown to the next tick as the runtime clamped it (a cron's from its schedule) and why. Ticks that changed nothing fold into one line, `··· 3 quiet ticks · last change 12:04 "PR merged"`. A loop that stops, is deleted, or lapses 10 minutes without re-arming, drops back to its stream's status |
 
 ---
 
@@ -196,6 +187,8 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 </details>
 
+**Want streams on your phone or tablet?** That is [Streams Remote](https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams), with a 3-day free trial.
+
 ### Update or remove
 
 | Action | Command |
@@ -214,10 +207,14 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
+| `/streams archive idle` | Archive every stream not running a turn (restore from `▸ archived`) |
+| Streams Remote's commands | See [streams.macleodlabs.com](https://streams.macleodlabs.com) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
 | `/stream move <name>` | Refile the last prompt, and everything after it, under another stream (created if new) when it was sorted wrongly |
+| `/stream merge <from> <into>` | Fold a whole stream into another: its rows, transcript lines and agents |
+| `/stream undo` | Put back the last merge exactly |
 | `/stream` | List streams with their summaries |
 | `/streams import` | List this project's past sessions |
 | `/streams import <id>` | File a past session into streams (re-importing replaces, never duplicates) |
@@ -226,15 +223,18 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 | To | Do |
 | --- | --- |
-| See the status of all work | Press `status` in the bar (<kbd>t</kbd> when the bar has focus), or type `status`. Click a stream's name on the card to open it; `✕ close` or your next prompt hides it |
+| See the status of all work | Press `status` in the bar (<kbd>t</kbd> when the bar has focus), or type `status` on its own. Click a stream's name on the card to open it; `✕ close` or your next prompt hides it |
 | Focus a stream | Click its name in the pane, or press its pill |
 | Show everything | `← all streams`, or the `all` pill |
 | File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` Type `#` and the bar lists matching streams; <kbd>tab</kbd> completes the first |
 | Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
+| Archive all idle | `✕ idle (N)` at the top of the pane, or `/streams archive idle`: every stream not running a turn |
+| Merge streams | `⇢` on the stream to merge, then `⇣` on the stream to keep; `↶ undo merge` puts it back |
+| Suggested merges | "these look like one goal: merge a, b → c" at the top of the pane: `merge` folds them (each undoable), `dismiss` puts the offer away for good |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
 | Fold the pane away | `⇥ hide` (<kbd>h</kbd>) folds the docked pane to a `◂ streams` tab at the right of the bar; the tab (<kbd>s</kbd>) brings it back at the width it had. It stays folded in new sessions until you open it |
-| Switch a stream's chat view | The stream header shows `view ◉ full ○ compact`: full draws the chat as the session does, with markdown, syntax-highlighted code and diffs; compact is one line per row. Click either, or press <kbd>v</kbd> in the pane |
+| Switch a stream's chat view | The stream header shows `view ◉ full ○ compact`: full draws the chat as the session does, with markdown, syntax-highlighted code and diffs; compact is one line per row. Every card in the all-streams list has the same `◉ full ○ compact` beside its fold and `✕`, and its recent rows follow it: it is one choice for the whole pane. Click either, or press <kbd>v</kbd> in the pane |
 
 ### Keyboard
 
@@ -257,7 +257,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "chatStyle": "full", "diagnostics": false }
+      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false }
     }
   }
 }
@@ -265,7 +265,11 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Setting | Default | Description |
 | --- | :---: | --- |
-| `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `view` switch in a stream's header changes it for the session. |
+| `autoArchiveHours` | `24` | A finished stream (by its status, or found finished by the completion check) with no activity for this many hours archives itself. It stays under `▸ archived` in the pane, and a restored one stays until it has been active again. Never a running, waiting, looping or failed stream. `0`: off. |
+| `streamGrouping` | `broad` | How readily a prompt starts a new stream. `broad`: one stream per larger goal (a project, a release), taking in its fixes and follow-ups. `balanced`: a goal and closely related work. `fine`: one stream per task. |
+| `mergeSuggestions` | `true` | Every 30 minutes, with 5 or more active streams, ask Haiku (one small call) whether some are one goal, and offer that group to merge. |
+| `chatStyle` | `full` | How the pane draws a stream's chat, in its own view and in each card's recent rows: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `◉ full ○ compact` switch on a stream's header or any card's header changes it for the session. |
+| `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 
 ### Model use
@@ -275,6 +279,14 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | New prompt | 1 |
 | Follow-up (`yes`, `continue`), slash command, `#tag`ged prompt | 0 |
 | Filing history | 1 per 25 prompts, plus 1 merge pass, plus 1 per turn that had a mid-turn prompt |
+
+---
+
+## 🧪 Develop
+
+| Part | Where | Check |
+| --- | --- | --- |
+| The streams mod | `plugins/streams` | `claude plugin test .` (307 tests) and `claude plugin validate --strict .` |
 
 ---
 
@@ -295,9 +307,9 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 <tr>
 <td>
 
-**claudeflow is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
+**Streams is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
 
-<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
+<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=streams"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
 
 </td>
 </tr>
