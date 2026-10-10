@@ -42,7 +42,8 @@ export type PhoneStream = {
 /** What one session sends each device: everything the phone draws for it, and nothing it would not show. */
 export type Snapshot = {
   v: 1
-  session: { id: string; account: string; project: string; busy: boolean }
+  /** `model`: what the session runs on (e.g. claude-opus-5-5); absent from older sessions. */
+  session: { id: string; account: string; project: string; busy: boolean; model?: string }
   at: number
   streams: PhoneStream[]
   /** Git and ticket rows, as the status card shows them. */
