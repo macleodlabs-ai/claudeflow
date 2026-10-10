@@ -10,11 +10,12 @@ const CHROME = { light: '#f6f6f8', dark: '#111113' }
 /** What a stored value means: anything unknown (an old build, a cleared store) is the device's setting. */
 export const themeOf = (v: unknown): Theme => (ORDER.includes(v as Theme) ? (v as Theme) : 'auto')
 
-/** One tap on the switch: auto, then light, then dark, then back to auto. */
-export const nextTheme = (t: Theme): Theme => ORDER[(ORDER.indexOf(t) + 1) % ORDER.length]
+/** One tap on the switch: to the other look from the one showing (auto, until the first tap, follows the device). */
+export const nextTheme = (isDark: boolean): Theme => (isDark ? 'light' : 'dark')
 
-export const THEME_LABEL: Record<Theme, string> = { auto: 'Theme: matches this device', light: 'Theme: light', dark: 'Theme: dark' }
-export const THEME_GLYPH: Record<Theme, string> = { auto: '◐', light: '☀', dark: '☾' }
+/** The switch shows where a tap goes: a sun while it is dark, a moon while it is light. */
+export const switchGlyph = (isDark: boolean): string => (isDark ? '☀' : '☾')
+const switchLabel = (isDark: boolean): string => (isDark ? 'Switch to light' : 'Switch to dark')
 
 const stored = (): Theme => {
   try {
@@ -33,9 +34,9 @@ export function applyTheme(t: Theme = stored()): Theme {
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isDark ? CHROME.dark : CHROME.light)
   const btn = document.getElementById('theme')
   if (btn) {
-    btn.textContent = THEME_GLYPH[t]
-    btn.setAttribute('aria-label', THEME_LABEL[t])
-    btn.title = THEME_LABEL[t]
+    btn.textContent = switchGlyph(isDark)
+    btn.setAttribute('aria-label', switchLabel(isDark))
+    btn.title = switchLabel(isDark)
   }
   return t
 }
@@ -45,7 +46,7 @@ export function startTheme() {
   let t = applyTheme()
   matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme(t))
   document.getElementById('theme')?.addEventListener('click', () => {
-    t = nextTheme(t)
+    t = nextTheme(t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches))
     try {
       localStorage.setItem(KEY, JSON.stringify(t))
     } catch {}

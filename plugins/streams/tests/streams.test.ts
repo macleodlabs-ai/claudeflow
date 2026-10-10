@@ -1184,7 +1184,10 @@ describe('what the phone is sent', () => {
     // The running agent is shown with its start, for the phone to count from; one that ended long ago is not news.
     expect(snap.streams[1]?.agents.map(a => [a.id, a.startedAt, a.endedAt, a.tools])).toEqual([['a1', at(0), undefined, 4]])
     expect(snap.streams[0]?.rows).toHaveLength(PHONE_ROWS)
-    expect(snap.streams[0]?.rows.at(-1)?.text.length).toBeLessThan(700)
+    // The newest rows go long enough for the phone's full view to show a whole reply, still cut well short of 5000;
+    // older rows stay short, so a snapshot stays small.
+    expect(snap.streams[0]?.rows.at(-1)?.text.length).toBe(2501)
+    expect(snap.streams[0]?.rows.slice(0, -3).every(r => r.text.length <= 601)).toBe(true)
   })
 
   // A clock in the text would make every snapshot differ from the last, so a quiet session would post every tick and

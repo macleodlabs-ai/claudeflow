@@ -74,6 +74,8 @@ export type State = {
   seen: Record<string, string>
   /** The bell: muted, the header says nothing of other projects' news. */
   isMuted: boolean
+  /** How an open stream draws its rows: one line each (compact), or whole with markdown (full), as the terminal's ≡/▤. */
+  chatStyle: 'compact' | 'full'
   /** Reply text by stream key, kept until it is sent: a redraw from a new snapshot must not lose it. */
   drafts: Record<string, string>
   /** When Stop was first tapped; a second tap within STOP_MS stops. */
@@ -122,7 +124,7 @@ export const outcomeOf = (why: AckWhy | undefined): Outcome | undefined =>
 /** A tap still on its way: another tap on the same thing does nothing, so nothing is sent twice. */
 export const isInFlight = (t: Tap | undefined): boolean => !!t && (t.stage === 'faceid' || t.stage === 'queued' || t.stage === 'sent')
 
-export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 'isUsageOpen' | 'hidden' | 'seen' | 'isMuted'>> = {}): State => ({
+export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 'isUsageOpen' | 'hidden' | 'seen' | 'isMuted' | 'chatStyle'>> = {}): State => ({
   sessions: {},
   chosen: saved.chosen ?? '',
   view: saved.view === 'status' ? 'status' : 'streams',
@@ -131,6 +133,7 @@ export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 
   isSwitchOpen: false,
   seen: saved.seen ?? {},
   isMuted: saved.isMuted ?? false,
+  chatStyle: saved.chatStyle === 'compact' ? 'compact' : 'full',
   drafts: {},
   stopArmed: 0,
   armed: { key: '', at: 0 },
@@ -150,6 +153,7 @@ export type Action =
   | { type: 'usage' }
   | { type: 'switch'; open: boolean }
   | { type: 'mute' }
+  | { type: 'chat-style' }
   | { type: 'draft'; key: string; text: string }
   /** A reply went: its draft is cleared (the tap keeps the text for a retry). */
   | { type: 'sent'; key: string }
@@ -273,6 +277,8 @@ export function reduce(s: State, a: Action): State {
       return { ...s, isSwitchOpen: a.open }
     case 'mute':
       return { ...s, isMuted: !s.isMuted }
+    case 'chat-style':
+      return { ...s, chatStyle: s.chatStyle === 'full' ? 'compact' : 'full' }
     case 'draft':
       return { ...s, drafts: { ...s.drafts, [a.key]: a.text } }
     case 'sent': {
