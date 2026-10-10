@@ -1,7 +1,8 @@
 # claudeflow brand
 
-One Claude Code session, many threads of work, untangled. The look is the hero image: a deep indigo night where
-luminous strands tangle, meet, and fan out into labelled streams. Bold and joyful, never noisy.
+One Claude Code session, many threads of work, untangled. The look is the hero image: luminous strands tangle, meet,
+and fan out into labelled streams. The ground is neutral, light or dark, so all the colour is in the strands and the
+status signals. Bold and joyful, never noisy.
 
 Tokens live at the top of `app/styles.css`. Use the token, never the hex, in CSS. Views that must write a colour into
 a style attribute use `STATE_COLOR` / `limitColor` / `color()` in `app/src/views/util.ts`, which point at the same tokens.
@@ -13,32 +14,41 @@ asterisk or spark marks. Warm colours appear only as luminous strokes (the peach
 
 ## Palette
 
-### Night (backgrounds)
+### Light and dark
 
-| Token | Hex | Use |
-|---|---|---|
-| `--night-950` | `#05071a` | Page edges, deepest wells |
-| `--night-900` | `#070a1f` | Page background (`--bg`), theme colour |
-| `--night-800` | `#0c1033` | Inputs, sunken areas |
-| `--night-700` | `#11163d` | Cards and panels (`--card`) |
-| `--night-600` | `#1a2050` | Raised, hover, selected segment |
-| `--night-500` | `#262c66` | Strong lines, empty bar tracks (`--line`) |
-| `--nebula` | `#2a1f7a` | The soft violet glow in the top-left corner only |
+Both schemes come from one set of tokens: each colour is `light-dark(light, dark)`. The page follows the device; the
+header switch (`app/src/theme.ts`) cycles device, light, dark and pins the choice with `data-theme` on `<html>`.
 
-Glass panels: `--glass` `rgba(22,27,72,.66)`, `--glass-strong` `rgba(28,34,88,.84)`, borders `--glass-line`
-`rgba(150,160,255,.16)` / `--glass-line-strong` `.32`, top highlight `--glass-hi` `rgba(255,255,255,.06)`. Use glass
-with `backdrop-filter: blur(12px)` only where something sits over content (usage bar, sticky header, sheets).
+### Ground (backgrounds)
+
+Neutral greys with no blue cast. The token names are the old night ramp's.
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `--night-950` | `#f6f6f8` | `#0b0b0d` | Page edges |
+| `--night-900` | `#f6f6f8` | `#111113` | Page background (`--bg`), theme colour |
+| `--night-800` | `#ffffff` | `#17171a` | Inputs, sunken areas |
+| `--night-700` | `#ffffff` | `#1c1c20` | Cards and panels (`--card`) |
+| `--night-600` | `#f1f1f4` | `#25252a` | Raised, hover, selected segment |
+| `--night-500` | `#dcdce2` | `#34343b` | Strong lines, empty bar tracks (`--line`) |
+
+Panels: `--glass` / `--glass-strong` are white on light and charcoal on dark, with hairline `--glass-line` borders. Use
+glass with `backdrop-filter: blur(12px)` only where something sits over content (usage bar, sticky header, sheets).
 
 ### Text
 
-| Token | Hex | On night-900 / 700 / 600 |
+| Token | Light | Dark |
 |---|---|---|
-| `--text` | `#eef0ff` | 17.3 / 15.4 / 13.6 |
-| `--text-soft` | `#d6d9ff` | reply text, 12.6 on 700 |
-| `--text-dim` | `#a9aee0` | 9.2 / 8.1 / 7.2 |
-| `--text-faint` | `#8a90c8` | 6.4 / 5.7 / 5.1 (smallest allowed for text) |
-| `--ink` | `#070a1f` | dark text on every bright fill |
-| `--brand` | `#7c83ff` | focus rings, selection, links: 5.4 on 700, ink on it 6.1 |
+| `--text` | `#17171b` | `#f2f2f4` |
+| `--text-soft` | `#2b2b31` | `#dcdce0` |
+| `--text-dim` | `#55555f` | `#a8a8b2` |
+| `--text-faint` | `#6e6e78` | `#8c8c96` (smallest allowed for text) |
+| `--ink` | `#111113` | dark text on every bright fill, both schemes |
+| `--brand` | `#7c83ff` | focus rings, selection, links; ink on it |
+
+On light, text in a strand colour (stream names, icons) is drawn in a deeper mix of the strand, and status words use
+`--running-ink`, `--waiting-ink`, `--done-ink`, `--error-ink`, `--stalled-ink`: the same signals, dark enough to read
+on white. Fills (pills, buttons) keep the bright signal with ink text in both schemes.
 
 ### Streams (the strands)
 
