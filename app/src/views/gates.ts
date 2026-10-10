@@ -50,4 +50,8 @@ export function gates(views: GateView[]): string {
 }
 
 /** No rooms at all: the app was opened without a pairing link. */
-export const unpaired = (): string => `<div class="gate"><h2>Not paired</h2><p>${NOT_PAIRED}</p></div>`
+/** Scans the Mac's pairing code from inside the app, so a Home Screen app pairs without opening Safari. */
+export const scanButton = (why = ''): string =>
+  `<button type="button" class="btn scan-btn" data-scan>📷 Scan pairing code</button>${why ? `<p class="why">${why}</p>` : ''}`
+
+export const unpaired = (why = ''): string => `<div class="gate"><h2>Not paired</h2><p>${NOT_PAIRED}</p>${scanButton(why)}</div>`

@@ -91,6 +91,13 @@ header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: no
 .switch-item .busy { color: var(--running-ink); }
 .switch-item .n { margin-left: auto; padding-left: 12px; color: var(--text-dim); font-size: var(--fs-xs); font-weight: 800; }
 .switch-item.stale { opacity: .55; }
+/* Pairing by camera: the code is read in the app itself. */
+.scan-btn { margin-top: 12px; }
+.gate .why { color: var(--error-ink); margin-top: 8px; }
+.scanner { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; background: #000; color: #fff; }
+.scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scanner .frame { position: relative; width: min(70vw, 300px); aspect-ratio: 1; border: 3px solid rgba(255, 255, 255, .9); border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .45); }
+.scanner .hint, .scanner .btn { position: relative; text-align: center; }
 /* Phones and small tablets: the header's switcher lists the sessions, so the tab row would only repeat it; the state
    counts and the Streams | Status switch share one line, the counts scrolling sideways if they must. */
 @media (max-width: 819px) {

@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "jsqr": "1.4.0",
     "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
