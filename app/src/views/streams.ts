@@ -1,6 +1,6 @@
 // The Streams view: a card per stream, a waiting one with its question and Yes / Reply, and a reply box whose
 // draft comes from the state, so a redraw from a new snapshot keeps what was typed.
-import { isInFlight, SENT_MS, SLOW_MS, streamKey, type State } from '../state'
+import { isInFlight, SENT_MS, SLOW_MS, streamKey, type State, isUnseen } from '../state'
 import { flowDetail, flowSub, progress } from './flows'
 import { clock, color, esc, GLYPH, kindOf, lineText, SLOW_TEXT, STATE_COLOR, stageLine, type Stream } from './util'
 
@@ -61,7 +61,7 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
       : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${replyBox(s, key)}${x.question ? '' : sentNote(s, key, now)}</div>`
   return `<section class="card st-${kind} ${isOpen ? 'open' : ''} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
-      <div class="title"><div class="name">${esc(x.name)}</div>${line}</div>
+      <div class="title"><div class="name">${esc(x.name)}${mode !== 'detail' && isUnseen(s, sessionKey, x) ? '<span class="new-dot" role="img" aria-label="changed since you looked"></span>' : ''}</div>${line}</div>
       <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>${chev}</div>
     ${x.workflow ? progress(x.workflow) : ''}${question}${body}
   </section>`

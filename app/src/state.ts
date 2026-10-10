@@ -70,6 +70,10 @@ export type State = {
   isUsageOpen: boolean
   /** The header's list of sessions, opened by holding or tapping the project name. */
   isSwitchOpen: boolean
+  /** What each stream was when last viewed (`markOf`), by stream key: a stream that differs has news. */
+  seen: Record<string, string>
+  /** The bell: muted, the header says nothing of other projects' news. */
+  isMuted: boolean
   /** Reply text by stream key, kept until it is sent: a redraw from a new snapshot must not lose it. */
   drafts: Record<string, string>
   /** When Stop was first tapped; a second tap within STOP_MS stops. */
@@ -118,13 +122,15 @@ export const outcomeOf = (why: AckWhy | undefined): Outcome | undefined =>
 /** A tap still on its way: another tap on the same thing does nothing, so nothing is sent twice. */
 export const isInFlight = (t: Tap | undefined): boolean => !!t && (t.stage === 'faceid' || t.stage === 'queued' || t.stage === 'sent')
 
-export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 'isUsageOpen' | 'hidden'>> = {}): State => ({
+export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 'isUsageOpen' | 'hidden' | 'seen' | 'isMuted'>> = {}): State => ({
   sessions: {},
   chosen: saved.chosen ?? '',
   view: saved.view === 'status' ? 'status' : 'streams',
   open: saved.open ?? [],
   isUsageOpen: saved.isUsageOpen ?? false,
   isSwitchOpen: false,
+  seen: saved.seen ?? {},
+  isMuted: saved.isMuted ?? false,
   drafts: {},
   stopArmed: 0,
   armed: { key: '', at: 0 },
@@ -143,6 +149,7 @@ export type Action =
   | { type: 'select'; key: string }
   | { type: 'usage' }
   | { type: 'switch'; open: boolean }
+  | { type: 'mute' }
   | { type: 'draft'; key: string; text: string }
   /** A reply went: its draft is cleared (the tap keeps the text for a retry). */
   | { type: 'sent'; key: string }
@@ -196,28 +203,76 @@ function seenAsks(s: State, sessionKey: string, x: Snapshot, now: number): Pick<
   return { perms, taps }
 }
 
+/**
+ * What a stream is, for news: its state, its last row and its question. Clocks are left out, so a stream that only
+ * ages is no news; running streams with new rows are.
+ */
+export const markOf = (x: Snapshot['streams'][number]): string => `${x.kind}|${x.state}|${x.rows?.at(-1)?.at ?? 0}|${x.question ?? ''}`
+
+/** The session key of a stream key: everything before the stream id. */
+const sessionOfKey = (key: string): string => key.slice(0, key.lastIndexOf('|'))
+
+/** The seen marks with these streams of a session marked as they are now. */
+function marked(s: State, sessionKey: string, only?: string): Record<string, string> {
+  const streams = s.sessions[sessionKey]?.snapshot.streams ?? []
+  const seen = { ...s.seen }
+  for (const x of streams) if (!only || x.id === only) seen[streamKey(sessionKey, x.id)] = markOf(x)
+  return seen
+}
+
+/**
+ * The seen marks after a snapshot: a session met for the first time is taken as seen (nothing it did before this
+ * device knew it is news), and an open card is watched as it changes. Marks of forgotten sessions go.
+ */
+function seenAfter(s: State, sessions: Record<string, Held>, key: string, snapshot: Snapshot): Record<string, string> {
+  const isNew = !Object.keys(s.seen).some(k => sessionOfKey(k) === key)
+  const seen = Object.fromEntries(Object.entries(s.seen).filter(([k]) => sessions[sessionOfKey(k)]))
+  for (const x of snapshot.streams ?? []) {
+    const k = streamKey(key, x.id)
+    if (isNew || (key === s.chosen && s.open.includes(k))) seen[k] = markOf(x)
+  }
+  return seen
+}
+
+/** A stream with news: something changed since it was last viewed. */
+export const isUnseen = (s: State, sessionKey: string, x: Snapshot['streams'][number]): boolean => {
+  const was = s.seen[streamKey(sessionKey, x.id)]
+  return was !== markOf(x)
+}
+
+/** How many of a session's streams have news. */
+export const newsOf = (s: State, sessionKey: string): number =>
+  (s.sessions[sessionKey]?.snapshot.streams ?? []).filter(x => isUnseen(s, sessionKey, x)).length
+
 export function reduce(s: State, a: Action): State {
   switch (a.type) {
     case 'snapshot': {
       const sessions = Object.fromEntries(Object.entries(s.sessions).filter(([, h]) => a.now - h.seen < FORGET_MS))
       const key = keyOf(a.room, a.snapshot.session.id)
       sessions[key] = { room: a.room, snapshot: a.snapshot, seen: a.now }
-      return { ...s, sessions, ...seenAsks(s, key, a.snapshot, a.now) }
+      return { ...s, sessions, seen: seenAfter(s, sessions, key, a.snapshot), ...seenAsks(s, key, a.snapshot, a.now) }
     }
     case 'choose':
-      return { ...s, chosen: a.key, stopArmed: 0, isSwitchOpen: false }
+      // Leaving a session counts as having viewed it.
+      return { ...s, chosen: a.key, stopArmed: 0, isSwitchOpen: false, seen: s.chosen ? marked(s, s.chosen) : s.seen }
     case 'view':
       return { ...s, view: a.view }
     case 'toggle':
-      return { ...s, open: s.open.includes(a.key) ? s.open.filter(k => k !== a.key) : [...s.open, a.key] }
+      return {
+        ...s,
+        open: s.open.includes(a.key) ? s.open.filter(k => k !== a.key) : [...s.open, a.key],
+        seen: marked(s, sessionOfKey(a.key), a.key.slice(a.key.lastIndexOf('|') + 1)),
+      }
     case 'reveal':
       return s.open.includes(a.key) ? s : { ...s, open: [...s.open, a.key] }
     case 'select':
-      return { ...s, open: [...s.open.filter(k => k !== a.key), a.key] }
+      return { ...s, open: [...s.open.filter(k => k !== a.key), a.key], seen: marked(s, sessionOfKey(a.key), a.key.slice(a.key.lastIndexOf('|') + 1)) }
     case 'usage':
       return { ...s, isUsageOpen: !s.isUsageOpen }
     case 'switch':
       return { ...s, isSwitchOpen: a.open }
+    case 'mute':
+      return { ...s, isMuted: !s.isMuted }
     case 'draft':
       return { ...s, drafts: { ...s.drafts, [a.key]: a.text } }
     case 'sent': {

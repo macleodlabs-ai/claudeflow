@@ -1,6 +1,6 @@
 // The session page: one tab per session across every paired room, then the chosen session's Stop, permission
 // prompts, the Streams | Status switch and its view, "Notify me", with plan usage pinned at the bottom.
-import { currentOf, isInFlight, isStopConfirmed, askCards, stopKey, tabsOf, type SessionTab, type State } from '../state'
+import { currentOf, newsOf, isInFlight, isStopConfirmed, askCards, stopKey, tabsOf, type SessionTab, type State } from '../state'
 import { summaryLine } from './flows'
 import { notifyRow, type NotifyView } from './notify'
 import { permissions } from './permissions'
@@ -10,17 +10,27 @@ import { usageBar } from './usage'
 import { clock, esc, spinner } from './util'
 
 /** One session's button: working dot, account · project, and how many of its streams are live. */
-function tab(t: SessionTab, current: SessionTab | undefined, cls: string, role = ''): string {
+function tab(s: State, t: SessionTab, current: SessionTab | undefined, cls: string, role = ''): string {
   const x = t.snapshot
   const live = (x.streams ?? []).filter(st => st.kind === 'running' || st.kind === 'waiting').length
+  const news = hasNews(s, t, current) ? '<span class="news" role="img" aria-label="news"></span>' : ''
   return `<button class="${cls} ${t.key === current?.key ? 'on' : ''} ${t.isStale ? 'stale' : ''}" data-session="${esc(t.key)}" aria-current="${t.key === current?.key}"${role}>
-      ${x.session.busy ? '<span class="busy" aria-label="working">●</span> ' : ''}<span class="who">${esc(x.session.account)}</span> · ${esc(x.session.project)}${live ? `<span class="n">${live}</span>` : ''}</button>`
+      ${x.session.busy ? '<span class="busy" aria-label="working">●</span> ' : ''}<span class="who">${esc(x.session.account)}</span> · ${esc(x.session.project)}${news}${live ? `<span class="n">${live}</span>` : ''}</button>`
+}
+
+/** Another project with streams changed since they were viewed, unless the bell is muted. */
+const hasNews = (s: State, t: SessionTab, current: SessionTab | undefined): boolean => !s.isMuted && t.key !== current?.key && newsOf(s, t.key) > 0
+
+/** The header's bell, with more than one session: mutes and unmutes the news of other projects. */
+export function bell(s: State, now: number): string {
+  if (tabsOf(s, now).length < 2) return ''
+  return `<button class="bell ${s.isMuted ? 'muted' : ''}" type="button" data-mute aria-pressed="${s.isMuted}" aria-label="${s.isMuted ? 'Unmute other projects' : 'Mute other projects'}">${s.isMuted ? '🔕' : '🔔'}</button>`
 }
 
 export function tabs(s: State, now: number): string {
   const current = currentOf(s, now)
   return tabsOf(s, now)
-    .map(t => tab(t, current, 'tab'))
+    .map(t => tab(s, t, current, 'tab'))
     .join('')
 }
 
@@ -34,12 +44,14 @@ export function switcher(s: State, now: number): string {
   if (!current) return 'Streams'
   const name = esc(current.snapshot.session.project)
   if (all.length < 2) return name
-  const dots = all.map(t => `<i class="${t.key === current.key ? 'on' : ''}"></i>`).join('')
+  const dots = all.map(t => `<i class="${t.key === current.key ? 'on' : hasNews(s, t, current) ? 'new' : ''}"></i>`).join('')
+  const news = all.filter(t => hasNews(s, t, current)).length
+  const badge = news ? `<span class="switch-news" aria-label="${news} other ${news === 1 ? 'project has' : 'projects have'} news">${news}</span>` : ''
   const menu = s.isSwitchOpen
-    ? `<div class="switch-menu" role="menu">${all.map(t => tab(t, current, 'switch-item', ' role="menuitem"')).join('')}</div>`
+    ? `<div class="switch-menu" role="menu">${all.map(t => tab(s, t, current, 'switch-item', ' role="menuitem"')).join('')}</div>`
     : ''
   return `<button class="switch" type="button" data-switch aria-haspopup="menu" aria-expanded="${s.isSwitchOpen}">
-    <span class="switch-name">${name}</span><span class="switch-dots" aria-hidden="true">${dots}</span><span class="caret" aria-hidden="true">▾</span></button>${menu}`
+    <span class="switch-name">${name}</span><span class="switch-dots" aria-hidden="true">${dots}</span>${badge}<span class="caret" aria-hidden="true">▾</span></button>${menu}`
 }
 
 function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?: NotifyView): string {

@@ -117,6 +117,7 @@ Claude Code's Remote Control does not draw plugin UI in the phone app, so stream
 <p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Claudeflow app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
 
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
+- **News from other projects:** a red count by the project name says how many other projects have streams that changed since you looked, with red dots on them in the list and the tabs. Within a project, a changed stream wears a red dot until you open it or leave the project. The 🔔 in the header mutes and unmutes the other projects' news.
 - **Switch project from the header:** the header names the shown project. Swipe it sideways for the next or previous session, or hold it for the list of every session, across every account the device is paired with.
 - **What needs you first:** a waiting stream's question shows on its card without opening it.
 - **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
