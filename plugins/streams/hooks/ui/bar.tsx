@@ -31,13 +31,13 @@ const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const tagHintA = atom({ plugin: 'streams', key: 'tagHint' } as const, null)
 const statusOpenA = atom({ plugin: 'streams', key: 'statusOpen' } as const, false)
+/** Only the word `status` on its own asks for the card. `status?` or any other words are a question for Claude. */
+export const STATUS_ASK = /^\s*status\s*$/i
+
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
 const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const, false)
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 const updatingA = atom({ plugin: 'streams', key: 'updating' } as const, false)
-
-/** A typed `status` or `status?` is a request for the card, answered here without a model turn. */
-const STATUS_ASK = /^\s*status\s*\??\s*$/i
 
 /** The facts as of now; the tick is read so a drawing redraws while clocks run. */
 async function factsOf($: $): Promise<Facts> {
@@ -98,7 +98,8 @@ export function wireBar(on: On) {
     return { text: 'Status card shown above the prompt.' }
   })
 
-  // Before the prompt is filed: the tag hint goes, and a typed `status` shows the card instead of asking Claude.
+  // Before the prompt is filed: the tag hint goes, and a typed `status` (that word alone) shows the card instead of
+  // asking Claude. Every other prompt reaches Claude and puts the card away.
   on('prompt.submit', {}, async ($, e, next) => {
     await update($, tagHintA, () => null)
     if (STATUS_ASK.test(e.text) && e.origin.kind === 'composer') {

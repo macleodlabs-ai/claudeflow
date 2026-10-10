@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Folded, Stream } from '../../types'
-import { KEY_VERSION, MAX_ROWS, PANE, SAVED_ROWS, jobs, mem, storeKey, type Job, type Saved } from '../state'
+import { KEY_VERSION, keepRows, PANE, SAVED_ROWS, jobs, mem, storeKey, type Job, type Saved } from '../state'
 import { REPLY_SYSTEM, ago, buildReplyPrompt, pickReplyStream, rowKey, slug, textKey } from '../classify'
 import { inParallel, readTranscript } from '../history'
 import { importPlan } from './importPlan'
@@ -164,12 +164,12 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
     // Rows of the same messages already kept, under today's ids or the import's older `h:` ones, are replaced.
     const imported = new Set(rows.map(uuidOf))
     await update($, rowsA, list =>
-      [
-        ...list.filter(row => !imported.has(uuidOf(row)) && (!isCurrent || row.at < startedAt || row.at >= began)),
-        ...rows,
-      ]
-        .sort((a, b) => a.at - b.at)
-        .slice(-MAX_ROWS),
+      keepRows(
+        [
+          ...list.filter(row => !imported.has(uuidOf(row)) && (!isCurrent || row.at < startedAt || row.at >= began)),
+          ...rows,
+        ].sort((a, b) => a.at - b.at),
+      ),
     )
     const counts: Record<string, number> = {}
     for (const row of await read($, rowsA)) counts[row.streamId] = (counts[row.streamId] ?? 0) + 1

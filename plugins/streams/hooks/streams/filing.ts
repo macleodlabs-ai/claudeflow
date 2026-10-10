@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { AgentRun, Folded, Stream, StreamRow } from '../../types'
-import { MAX_ROWS, SAVED_ROWS, jobs, mem, storeKey, type Saved } from '../state'
+import { keepRows, SAVED_ROWS, jobs, mem, storeKey, type Saved } from '../state'
 import { oneLine, rowKey, textKey } from '../classify'
 import { itemsOf, rowOf } from '../history'
 import { touched } from './model'
@@ -106,7 +106,7 @@ async function record($: $, e: AppendedRow, uuid: string) {
       m[agentId] ? { ...m, [agentId]: { ...m[agentId], lastAt: now, last: oneLine(latest.text, 120), tools: m[agentId].tools + tools } } : m,
     )
   }
-  await update($, rowsA, list => [...list, ...rows].slice(-MAX_ROWS))
+  await update($, rowsA, list => keepRows([...list, ...rows]))
   await touch($, sid, s => ({ rows: s.rows + rows.length }))
 }
 

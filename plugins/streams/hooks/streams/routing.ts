@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Stream } from '../../types'
-import { MAX_ROWS, SAVED_ROWS, mem, storeKey, type Saved } from '../state'
+import { keepRows, SAVED_ROWS, mem, storeKey, type Saved } from '../state'
 import { SYSTEM, buildPrompt, fallbackName, isFollowUp, loopKey, oneLine, parseTag, parseVerdict, rowKey, slug, textKey } from '../classify'
 import { colorOf, streamsNow, touched, uuidOf, withStream, type Facts } from './model'
 import { afterNotification, loopsAt } from './loops'
@@ -78,6 +78,9 @@ async function factsOf($: $): Promise<Facts> {
 }
 
 /** Hybrid routing: follow-ups stay put, everything else asks Haiku which stream it continues. */
+/** The longest a prompt waits for Haiku to pick its stream before it goes on to Claude. */
+export const CLASSIFY_WAIT_MS = 1500
+
 async function classify($: $, text: string): Promise<string> {
   const [streams, current] = await Promise.all([read($, streamsA), read($, currentA)])
   if (current && isFollowUp(text)) return current
@@ -193,7 +196,9 @@ export function wireRouting(on: On) {
       await touch($, id, s => ({ loops: s.loops + 1 }))
       mem.pendingKind = 'loop'
     } else {
-      id = await classify($, text)
+      // Claude is never kept waiting on Haiku: past CLASSIFY_WAIT_MS the prompt is filed in the current stream.
+      const pick = classify($, text).catch(() => '')
+      id = (await Promise.race([pick, $.clock.sleep(CLASSIFY_WAIT_MS).then(() => undefined)])) ?? (await read($, currentA))
     }
     if (!id) return next(text === e.text ? e : { ...e, text })
     if ((await read($, streamsA)).find(s => s.id === id)?.archived) {
@@ -206,7 +211,7 @@ export function wireRouting(on: On) {
       // and the running turn keeps its stream; replies are split between them as they come.
       const now = await $.clock.now()
       await update($, foldedA, list => [...list, { streamId: id, text }])
-      await update($, rowsA, list => [...list, { id: `q:${now}`, streamId: id, kind: 'prompt' as const, text, at: now }].slice(-MAX_ROWS))
+      await update($, rowsA, list => keepRows([...list, { id: `q:${now}`, streamId: id, kind: 'prompt' as const, text, at: now }]))
       await touch($, id, s => ({ rows: s.rows + 1 }))
     } else {
       await update($, currentA, () => id)
