@@ -30,7 +30,7 @@ import {
 import { startTheme } from './theme'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
-import { page, switcher, tabs } from './views/page'
+import { bell, page, switcher, tabs } from './views/page'
 
 /** Web storage can throw (private mode, blocked storage): the app then works for this visit only. */
 const storeOf = (which: () => Storage) => ({
@@ -61,16 +61,19 @@ if (scanned) rooms = withLink(rooms, scanned)
 keep.set('cf:rooms', rooms)
 const labels = keep.get<Record<string, string>>('cf:labels', {})
 
-let state: State = initial({ ...keep.get('cf:ui', {}), hidden: visit.get<string[]>('cf:hidden', []) })
+let state: State = initial({ ...keep.get('cf:ui', {}), hidden: visit.get<string[]>('cf:hidden', []), seen: keep.get('cf:seen', {}), isMuted: keep.get('cf:muted', false) })
 let pendingRender = false
 /** The line was up once: from then on a drop shows the Reconnecting banner. */
 let wasOnline = false
 
 function dispatch(a: Action) {
+  const before = state
   state = reduce(state, a)
   if (a.type === 'choose' || a.type === 'view' || a.type === 'toggle' || a.type === 'reveal' || a.type === 'select' || a.type === 'usage')
     keep.set('cf:ui', { chosen: state.chosen, view: state.view, open: state.open, isUsageOpen: state.isUsageOpen })
   if (a.type === 'hide') visit.set('cf:hidden', state.hidden)
+  if (a.type === 'mute') keep.set('cf:muted', state.isMuted)
+  if (state.seen !== before.seen) keep.set('cf:seen', state.seen)
 }
 
 const links: RoomLink[] = Object.values(rooms).map(p =>
@@ -174,6 +177,7 @@ function render() {
   el('gate').innerHTML = links.length ? gates(views) : unpaired()
   el('tabs').innerHTML = tabs(state, now)
   el('page-name').innerHTML = switcher(state, now)
+  el('bell').innerHTML = bell(state, now)
   el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView())
   // On a Mac the sidebar holds the dock (runs-and-loops line, plan usage) right under the session tabs.
   const dock = el('main').querySelector('.dock')
@@ -253,6 +257,7 @@ document.addEventListener('click', e => {
   const at = (sel: string) => (e.target as Element).closest<HTMLElement>(sel)
   // The click that ends a swipe or a hold on the header is not a tap on it.
   if (isGesture) return void (isGesture = false)
+  if (at('[data-mute]')) return dispatch({ type: 'mute' }), render()
   if (at('[data-switch]')) return dispatch({ type: 'switch', open: !state.isSwitchOpen }), render()
   // A tap anywhere off the open list closes it (a session in it is chosen below, which closes it too).
   if (state.isSwitchOpen && !at('.switch-menu')) return dispatch({ type: 'switch', open: false }), render()
@@ -375,7 +380,7 @@ let isGesture = false
 let press: { x: number; y: number; hold: ReturnType<typeof setTimeout> } | undefined
 const header = document.querySelector('header')!
 header.addEventListener('pointerdown', e => {
-  if (tabsOf(state, Date.now()).length < 2 || (e.target as Element).closest('#theme, .switch-menu')) return
+  if (tabsOf(state, Date.now()).length < 2 || (e.target as Element).closest('#theme, #bell, .switch-menu')) return
   const hold = setTimeout(() => {
     press = undefined
     isGesture = true

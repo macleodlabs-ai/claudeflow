@@ -91,6 +91,13 @@ header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: no
 .switch-item .busy { color: var(--running-ink); }
 .switch-item .n { margin-left: auto; padding-left: 12px; color: var(--text-dim); font-size: var(--fs-xs); font-weight: 800; }
 .switch-item.stale { opacity: .55; }
+/* News: a red dot on a stream changed since it was viewed, and on other projects that have such streams. */
+.new-dot, .news { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--error); vertical-align: middle; flex: none; }
+.switch-dots i.new { background: var(--error); }
+.switch-news { min-width: 18px; padding: 1px 5px; border-radius: var(--r-pill); background: var(--error); color: #fff; font-size: var(--fs-xs); font-weight: 800; text-align: center; }
+.bell { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--glass-line); background: var(--glass); font-size: 15px; cursor: pointer; }
+.bell.muted { opacity: .6; }
+#bell:empty { display: none; }
 /* On a phone the project is the title: the wordmark gives way so the theme button and the line status stay on screen. */
 @media (max-width: 519px) {
   header:has(.switch) .wordmark { display: none; }
