@@ -161,15 +161,14 @@ describe('unlocking a paired room', () => {
     expect(got).toEqual([])
   })
 
-  test('an Allow asks Face ID over that request and this connection, goes sealed, and the session takes it', async () => {
+  test('an Allow goes sealed without a second Face ID, and the session takes it: the passkey is for unlocking', async () => {
     const { link, ws } = start(PAIRED)
     await link.unlock()
-    const eph = ws.sent.at(-1).data.eph
     const s1 = session(ws, 's1', { devices: [stored] })
     s1.tick()
     challenges.length = 0
     expect(await link.send('s1', { id: 'c1', kind: 'permission', requestId: 'req1', decision: 'allow' })).toEqual({ ok: true })
-    expect(challenges).toEqual([passkeyChallenge('allow', 'req1', eph)])
+    expect(challenges).toEqual([])
     const out = ws.sent.at(-1)
     expect(out.to).toBe('s1')
     expect(JSON.stringify(out)).not.toContain('req1')
@@ -278,7 +277,7 @@ describe('on a slow network', () => {
     expect(link.stage()).toEqual({ at: 'idle' })
   })
 
-  test("the session's ack reaches the app, and resending a command keeps its id and its one Face ID", async () => {
+  test("the session's ack reaches the app, and resending a command keeps its id", async () => {
     // A Retry must be the same command: the session runs it once and acks it again, and the person is not asked twice.
     const { link, ws, acks } = start(PAIRED)
     await link.unlock()
@@ -288,7 +287,6 @@ describe('on a slow network', () => {
     const allow = { id: 'c1', kind: 'permission', requestId: 'req1', decision: 'allow' } as const
     expect(await link.send('s1', allow)).toEqual({ ok: true })
     expect(await link.send('s1', allow)).toEqual({ ok: true })
-    expect(challenges).toHaveLength(1)
     s1.tick()
     expect(s1.commands.map(c => c.command.id)).toEqual(['c1'])
     s1.ack(device.id, { t: 'ack', id: 'c1', ok: true, why: 'allowed' })

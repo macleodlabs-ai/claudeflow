@@ -1,5 +1,5 @@
 import { channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, verifyPasskey } from './seal'
-import { HEARTBEAT_MS, MAX_ALLOW_TRIES, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
+import { HEARTBEAT_MS, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 import { createNotifier, type Hint } from './notify'
 
 // One session's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), with no engine in it: it
@@ -150,8 +150,6 @@ export const WARM_MS = 60_000
  */
 export function createLink(o: { identity: Identity; session: string; origin: string }) {
   const conns = new Map<string, Conn>()
-  /** Allows checked so far, by requestId: at most MAX_ALLOW_TRIES each, every try with its own Face ID. */
-  const allowsTried = new Map<string, number>()
   /**
    * Command ids already taken, with the ack each got: a phone on a laggy network sends a command again under the same
    * id, so it runs once and the phone is told again what came of it.
@@ -230,16 +228,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     seen.set(c.id, undefined)
     // Ids are random per tap: keep the newest few hundred, enough for any phone's retries.
     if (seen.size > 500) seen.delete(seen.keys().next().value!)
-    if (c.kind !== 'permission' || c.decision !== 'allow') return c
-    // An allow runs a tool on the Mac: it needs Face ID for this request on this connection. A slow network may lose
-    // a try, so a request gets a few, each with its own assertion; past that it is refused like a bad one.
-    const tries = (allowsTried.get(c.requestId) ?? 0) + 1
-    allowsTried.set(c.requestId, tries)
-    const passkey = assertionOf(c.passkey)
-    const challenge = passkeyChallenge('allow', c.requestId, conn.peerEph)
-    if (tries <= MAX_ALLOW_TRIES && passkey && verifyPasskey(passkey, conn.device.credentialKey, challenge, o.origin)) return c
-    queueAck(conn.device.id, { t: 'ack', id: c.id, ok: false, why: 'passkey not verified' })
-    return undefined
+    // An Allow needs no Face ID of its own: the channel it came on was opened by the unlock's passkey check.
+    return c
   }
 
   /** Reads an `up` answer: hellos answered (pairing new devices), boxes opened into commands. */

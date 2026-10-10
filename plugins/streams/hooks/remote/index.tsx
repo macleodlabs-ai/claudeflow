@@ -246,41 +246,6 @@ async function awaitAnswer<T>($: $, answered: Promise<T>, stop: AbortSignal): Pr
 }
 
 /**
- * While an unlocked device is looking, a permission prompt waits for an answer from the phone or from the band above
- * the prompt, the first one winning, with no deadline. If no device looks for NO_DEVICE_MS it goes to the terminal's
- * own prompt: a tool is never allowed for a person who is not there, and there is no recommended answer to take.
- */
-async function holdPermission<V extends { decision: string; reason?: string }>(
-  $: $,
-  e: { tool: string; input: unknown; tool_use_id?: string },
-  verdict: V,
-  signal: AbortSignal,
-): Promise<V> {
-  const id = e.tool_use_id
-  if (verdict.decision !== 'ask' || !link?.isLooking() || !id) return verdict
-  const since = await $.clock.now()
-  const ask: PendingPermission = { id, tool: e.tool, summary: permissionSummary(e.tool, e.input), at: since, since }
-  let resolve: (a: Answer) => void = () => {}
-  const answered = new Promise<Answer>(r => (resolve = r))
-  held.set(id, { ask, resolve })
-  await update($, askingA, askingNow)
-  try {
-    const a = await awaitAnswer($, answered, signal)
-    const now = await $.clock.now()
-    if (!a?.decision) {
-      settle(id, 'moved to Mac', now)
-      return verdict
-    }
-    settle(id, whyOf(a), now)
-    const word = a.decision === 'allow' ? 'Allowed' : 'Denied'
-    return { ...verdict, decision: a.decision, reason: `${word} ${a.by === 'mac' ? 'in the terminal' : 'on your phone'}` }
-  } finally {
-    held.delete(id)
-    await update($, askingA, askingNow)
-  }
-}
-
-/**
  * Claude asks a question with options (AskUserQuestion) while a device is looking: the terminal's dialog shows as
  * always (`next`), the phone shows the options, and the first answer wins (returning while `next` is pending closes
  * the dialog). If no device looks for NO_DEVICE_MS, the option marked "(Recommended)" is taken and Claude is told so;
@@ -461,35 +426,19 @@ export function wireRemote(on: On, opts: RemoteOptions) {
     return next(e)
   })
 
-  on('tool.check', async ($, e, next) => holdPermission($, e, await next(e), next.signal))
-
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => (await holdQuestion($, e, next as never)) as never)
 
-  // While a permission is held, the band above the prompt answers it too ("also on your phone"); the first answer,
-  // here or on a phone, wins and the other side clears. After the session chose for an absent person, it says so.
+  // Permission prompts are never held for a phone: the mode's own decider (the auto-mode classifier, the
+  // terminal's dialog) always answers them, whether or not a device is paired. After the session chose an
+  // absent person's question for them, the band says so.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [asking, note, now] = await Promise.all([read($, askingA), read($, remoteNoteA), $.clock.now()])
-    const hasNote = !!note.text && now < note.until
-    if (e.props.hasSurvey || (!asking.length && !hasNote)) return next(e)
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const first = asking[0]
+    const [note, now] = await Promise.all([read($, remoteNoteA), $.clock.now()])
+    if (e.props.hasSurvey || !note.text || now >= note.until) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
     return (
       <Box flexDirection="column">
-        {first ? (
-          <Box key="asking" flexDirection="column">
-            <Box key="ask-head" gap={1}>
-              <Text bold color="#4d8dff">{`? Claude wants to run ${first.tool}`}</Text>
-              <Text dimColor>{asking.length > 1 ? `also on your phone · ${asking.length - 1} more` : 'also on your phone'}</Text>
-            </Box>
-            <Text key="ask-what">{first.summary}</Text>
-            <Box key="ask-buttons" gap={1}>
-              <Button key={`allow:${first.id}`} label="Allow" hotkey="a" onPress={() => void answerHeld(first.id, { by: 'mac', decision: 'allow' })} />
-              <Button key={`deny:${first.id}`} label="Deny" hotkey="d" onPress={() => void answerHeld(first.id, { by: 'mac', decision: 'deny' })} />
-            </Box>
-          </Box>
-        ) : null}
-        {hasNote ? <Text key="remote-note" dimColor>{note.text}</Text> : null}
+        <Text key="remote-note" dimColor>{note.text}</Text>
         {below}
       </Box>
     )
