@@ -17,6 +17,7 @@ const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const healthA = atom({ plugin: 'streams', key: 'health' } as const, {})
@@ -65,7 +66,7 @@ async function unstick($: $) {
 }
 
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops, now] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows, now] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -73,9 +74,10 @@ async function factsOf($: $): Promise<Facts> {
     read($, outcomeA),
     read($, rowsA),
     read($, loopsA),
+    read($, workflowsA),
     $.clock.now(),
   ])
-  return { busy, current, agents, inflight, outcome, rows, loops, now }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, now }
 }
 
 /**

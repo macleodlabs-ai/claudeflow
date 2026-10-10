@@ -21,6 +21,8 @@ export type State = {
   sentAt: Record<string, number>
   /** When Stop was first tapped; a second tap within STOP_MS stops. */
   stopArmed: number
+  /** A Stop workflow or Stop loop tapped once, by its button key, and when: a second tap within STOP_MS sends it. */
+  armed: { key: string; at: number }
 }
 
 /** A session that has not sent a snapshot in this long has probably ended (it resends every 30 s). */
@@ -42,6 +44,7 @@ export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 
   drafts: {},
   sentAt: {},
   stopArmed: 0,
+  armed: { key: '', at: 0 },
 })
 
 export type Action =
@@ -56,6 +59,8 @@ export type Action =
   | { type: 'draft'; key: string; text: string }
   | { type: 'sent'; key: string; now: number }
   | { type: 'stop-armed'; now: number }
+  /** First tap on a destructive stream button (Stop workflow, Stop loop); `now: 0` disarms. */
+  | { type: 'arm'; key: string; now: number }
 
 export function reduce(s: State, a: Action): State {
   switch (a.type) {
@@ -84,11 +89,16 @@ export function reduce(s: State, a: Action): State {
     }
     case 'stop-armed':
       return { ...s, stopArmed: a.now }
+    case 'arm':
+      return { ...s, armed: { key: a.key, at: a.now } }
   }
 }
 
 /** Two taps, no dialog: a stray touch does not stop a turn. True when this tap is the second one. */
 export const isStopConfirmed = (s: State, now: number): boolean => now - s.stopArmed < STOP_MS
+
+/** The same two taps for a stream's Stop workflow or Stop loop, each button armed on its own. */
+export const isArmed = (s: State, key: string, now: number): boolean => s.armed.key === key && now - s.armed.at < STOP_MS
 
 export type SessionTab = Held & { key: string; isStale: boolean }
 

@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 159 passing" src="https://img.shields.io/badge/tests-159%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 242 passing" src="https://img.shields.io/badge/tests-242%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -102,7 +102,7 @@ Type `status`, or press `status` in the bar, and a card opens above the prompt w
 
 ![The status card above the prompt: git branch and uncommitted files, then each stream as running, waiting for you, done or idle, with what it is doing](assets/status-card.jpg)
 
-- **What needs you comes first**: running work, then loops, then streams **waiting for you** (their last reply ended on a question, shown as the detail), then failures, then finished work.
+- **What needs you comes first**: running work, then loops, then streams **waiting for you** (their last reply ended on a question you have not typed past, shown as the detail; once you send any prompt, in any stream, earlier questions count as seen), then failures, then finished work.
 - **Git rows on top**: the branch, whether anything is unpushed, and which files are uncommitted.
 - **Tickets**: any ticket id you name in a prompt or an agent's task (`TL-260`, `ENG-1042`) gets its own row: running agents on it say what they are doing and how long they have been quiet; otherwise its latest news, or that its agent failed.
 - **Plan limits at the bottom**: each window (5-hour, week) as a bar and percent, green, then yellow from 50%, red from 80%, with how long until it resets and the weekday and time it does.
@@ -124,6 +124,7 @@ Claude Code's Remote Control does not draw plugin UI in the phone app, so stream
 - **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. What you send is filed in that stream.
 - **Stop** a running turn (tap twice, so a stray touch doesn't).
 - **Allow or deny permission prompts.** While the app is open and unlocked on a device, a prompt goes there first, with what the call would do (`Bash: git push …`). **Allow** asks for Face ID (or your passcode) first. Unanswered after 60 seconds, or with no device looking, the prompt appears on the Mac as usual.
+- **Notify me:** turn it on under a session and the phone buzzes when Claude needs you (a permission prompt, a new question), when a workflow finishes or fails, or when a quiet loop finds something. A question buzzes only once it has waited two minutes unanswered, so answering at the Mac never buzzes the phone. Never while you are looking, at most once a minute (Claude needing you is never held back) and 30 times a day. The notification says only "Claude needs you", "Something finished" or "Something failed": nothing from the session passes through the relay or the push service. On an iPhone or iPad it works once the app is on the Home Screen.
 
 #### How it connects
 
@@ -148,7 +149,9 @@ npm ci && ../../app/build.sh && npx wrangler deploy
 
 `wrangler deploy` prints your relay's address, for example `https://relay.<you>.workers.dev`. Run the last line again after you update the checkout.
 
-**3. Tell streams where the relay is.** In `/config` → **streams** → **Relay address**, or in `settings.json`:
+For **Notify me**, give the relay a push key once: `bun vapid.ts --secret-only | npx wrangler secret put VAPID_PRIVATE_KEY` (in `relay/cloudflare`) makes one and pipes it straight into the Worker secret, so the key is never printed. Without it the relay works as before and the app does not offer notifications.
+
+**3. Tell streams where the relay is.** Type `/streams phone relay https://relay.<you>.workers.dev` (`/streams phone relay off` clears it), or set it in `/config` → **streams** → **Relay address**, or in `settings.json`:
 
 ```json
 { "pluginConfigs": { "streams@claudeflow": { "options": { "relayUrl": "https://relay.<you>.workers.dev" } } } }
@@ -180,6 +183,8 @@ The relay is a Cloudflare Worker with one Durable Object per account (a "room").
 - **pose as your Mac.** The device checks the session's long-term key from the QR code; a relay that swaps in its own key derives different keys and can open nothing.
 - **approve anything.** Your Mac keeps each device's passkey public key and checks every unlock and every **Allow** itself, against a fresh challenge and Face ID.
 
+**Notifications** carry no content either. A session tells the relay which devices to wake and why in one word (`needs-you`, `done` or `failed`); the relay keeps each device's push subscription (an endpoint at Apple, Google or Mozilla, and the keys to seal for) and sends that word sealed for the device (RFC 8291, signed with the relay's VAPID key). The push service sees that a push happened and to whom; the relay sees the word.
+
 **It can still** drop or delay messages, as any network can. Then the prompt falls back to the Mac after 60 seconds.
 
 Session to relay traffic is budgeted for the free plan (100,000 requests a day): a session posts when its snapshot changes and every 30 seconds otherwise, every 2 seconds only while a device is looking, and not at all while the account has no paired device and no open pairing. Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters before sealing.
@@ -196,10 +201,10 @@ Once a session starts, and every six hours after, streams checks every plugin yo
 | :---: | --- | --- |
 | 🟨 | **RUNNING** | A turn, subagent or loop is working now |
 | 🟩 | **DONE** | Finished cleanly |
-| 🟦 | **WAITING FOR YOU** | On the status card: the stream's last reply asked you something |
+| 🟦 | **WAITING FOR YOU** | On the status card: the stream's last reply asked you something, and you have sent nothing since |
 | 🟥 | **ERROR** | A subagent or turn failed |
 | 🟧 | **STALLED** | No activity for longer than expected |
-| ↻ | **LOOP** | A `/loop` or cron is armed, with a countdown to the next tick. A loop that stops, or lapses 10 minutes without re-arming, drops back to its stream's status |
+| ↻ | **LOOP** | A `/loop`, cron or Monitor is armed, with a countdown to the next tick as the runtime clamped it (a cron's from its schedule) and why. Ticks that changed nothing fold into one line, `··· 3 quiet ticks · last change 12:04 "PR merged"`. A loop that stops, is deleted, or lapses 10 minutes without re-arming, drops back to its stream's status |
 
 ---
 
@@ -265,6 +270,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
 | `/streams phone` | Open the pairing page with a QR code for your phones and tablets (needs `relayUrl`; see [On your phone and tablet](#-on-your-phone-and-tablet)) |
+| `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
 | `/streams phone devices` | List the paired phones and tablets |
 | `/streams phone forget <id>` | Unpair one device (`all` unpairs every one) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
@@ -336,10 +342,10 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (124 tests) and `claude plugin validate --strict .` |
-| The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (9 tests against a real `wrangler dev`) |
-| The phone and tablet app | `app` | `bun test` (26 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
-| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (12 checks) |
+| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (174 tests) and `claude plugin validate --strict .` |
+| The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (25 tests: 15 against a real `wrangler dev`, 10 of Web Push on its own) |
+| The phone and tablet app | `app` | `bun test` (43 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
+| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (17 checks) |
 
 `e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing, unlocking, answering and allowing. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
 
@@ -354,7 +360,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
 | The app says **Connecting…** | Check the relay address loads in the phone's browser. If you deployed your own, run `npx wrangler deploy` again from `relay/cloudflare`. |
-| `/streams phone` says to set the relay address | Set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)), then `/reload-plugins`. |
+| `/streams phone` says to set the relay address | Run `/streams phone relay https://relay.<you>.workers.dev`, or set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)) and `/reload-plugins`. |
 | **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
 | **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |
 | A session is missing on the phone | That session runs an older streams, or another account with no device paired: update the plugin and `/reload-plugins`, or run `/streams phone` in that account. |

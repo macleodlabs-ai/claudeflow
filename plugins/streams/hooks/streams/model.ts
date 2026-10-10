@@ -1,15 +1,10 @@
 import type { AgentRun, Health, Stream, StreamRow } from '../../types'
 import { healthOf, nextPastel, pastelOf, slug, type Pulse } from '../classify'
 import { limitsOf, sortStatus, statusOf, ticketLines, type LimitView, type StatusLine } from '../status'
+import { lapsed, type Loops } from './loops'
+import type { Workflows } from './workflows'
 
 // The streams as data: what the hooks change and what the views read, with no engine in sight.
-
-export type Loops = Record<string, { kind: 'wakeup' | 'cron'; nextAt: number; label: string }>
-export type LoopArgs = { delaySeconds?: number; stop?: boolean; cron?: string; reason?: string }
-
-/** A wakeup that fired this long ago without re-arming ended by not scheduling another tick. */
-export const LAPSE_MS = 10 * 60_000
-export const lapsed = (l: { kind: string; nextAt: number }, now: number) => l.kind === 'wakeup' && now > l.nextAt + LAPSE_MS
 
 export const colorOf = (s: Stream): string => s.color ?? pastelOf(s.id)
 
@@ -39,6 +34,8 @@ export type Facts = {
   outcome: Record<string, NonNullable<Pulse['outcome']>>
   rows: readonly StreamRow[]
   loops: Loops
+  /** Workflow runs: their running agents keep their stream running, as a subagent's do. */
+  workflows: Workflows
   now: number
 }
 
@@ -47,7 +44,10 @@ export type Facts = {
  * running agent, and the heartbeat's notices never contradict what is drawn.
  */
 function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, Health> {
-  const running = Object.values(f.agents).filter(a => a.status === 'running')
+  const running = [
+    ...Object.values(f.agents).filter(a => a.status === 'running'),
+    ...Object.values(f.workflows).flatMap(r => Object.values(r.agents).flatMap(a => (a.status === 'running' ? [{ streamId: r.streamId, lastAt: a.lastAt }] : []))),
+  ]
   return Object.fromEntries(
     streams.map(s => [
       s.id,
@@ -65,6 +65,7 @@ function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, Health>
 
 /** Every stream's status row, in the order that needs the person first. */
 function statusLinesOf(f: Facts, streams: readonly Stream[], health: Record<string, Health>): StatusLine[] {
+  const lastPromptAt = Math.max(0, ...f.rows.filter(r => r.kind === 'prompt').map(r => r.at))
   const lines = streams
     .filter(s => !s.archived)
     .map(s => {
@@ -77,6 +78,7 @@ function statusLinesOf(f: Facts, streams: readonly Stream[], health: Record<stri
           .filter(a => a.streamId === s.id && a.status === 'running')
           .sort((a, b) => b.lastAt - a.lastAt),
         lastSaid: f.rows.findLast(r => r.streamId === s.id && (r.kind === 'prompt' || r.kind === 'reply')),
+        lastPromptAt,
       })
     })
   return sortStatus(lines, Object.fromEntries(streams.map(s => [s.id, s.lastAt])))

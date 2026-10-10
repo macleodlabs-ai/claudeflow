@@ -4,10 +4,11 @@ import type { EngineInterface, On, RenderElement } from 'claude-code'
 import type { ChatStyle, Stream } from '../../types'
 import { PANE, PANE_KEY, SAVED_ROWS, mem, storeKey, type PaneSaved, type Saved } from '../state'
 import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, type Fold } from '../classify'
-import { colorOf, lapsed, streamsNow, type Facts } from '../streams/model'
+import { colorOf, streamsNow, type Facts } from '../streams/model'
+import { foldQuiet, lapsed } from '../streams/loops'
 import { updateControl } from '../updates/control'
 import { FULL_ROWS, GLYPH, STATUS_WORD } from './look'
-import { badge, fullRow, loopBadge, workOf, type PaneView } from './rows'
+import { badge, fullRow, loopRows, workOf, workflowRows, type PaneView } from './rows'
 
 // The navigator pane: every stream as a card with its live work and latest rows, or one stream in full.
 
@@ -24,6 +25,7 @@ const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const showArchivedA = atom({ plugin: 'streams', key: 'showArchived' } as const, false)
@@ -88,7 +90,7 @@ async function setArchived($: $, id: string, archived: boolean) {
 
 /** The facts as of now; the tick is read so the pane redraws while clocks run. */
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -96,9 +98,10 @@ async function factsOf($: $): Promise<Facts> {
     read($, outcomeA),
     read($, rowsA),
     read($, loopsA),
+    read($, workflowsA),
   ])
   await read($, tickA)
-  return { busy, current, agents, inflight, outcome, rows, loops, now: await $.clock.now() }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, now: await $.clock.now() }
 }
 
 export function wirePane(on: On) {
@@ -132,7 +135,7 @@ export function wirePane(on: On) {
       const width = Math.max(20, e.props.bodyColumns)
       const room = Math.max(3, (e.viewport?.rows ?? 30) - 8)
       const shown = streams.find(s => s.id === view)
-      const v: PaneView = { ui, width, now, current: facts.current, busy: facts.busy, turnStartedAt, outcome: facts.outcome, agents: facts.agents, loops }
+      const v: PaneView = { ui, width, now, current: facts.current, busy: facts.busy, turnStartedAt, outcome: facts.outcome, agents: facts.agents, loops, workflows: facts.workflows }
       const updates = updateControl(ui, await read($, updatesA), await read($, updatingA))
       // Docked beside the transcript, the pane folds away to a tab in the bar and comes back at its width.
       const hideButton = e.props.placement === 'dock' ? <Button key="collapse" plain dimColor label="⇥ hide" hotkey="h" onPress={() => collapsePane($)} /> : null
@@ -148,7 +151,7 @@ export function wirePane(on: On) {
         const activity = workOf(v, shown, 8)
         const style: ChatStyle = (await read($, chatStyleA)) || mem.defaultStyle
         // Full rows run several lines each, so fewer of them fit; the pane scrolls for the rest.
-        const own = rows.filter(r => r.streamId === shown.id).slice(style === 'full' ? -FULL_ROWS : -Math.max(3, room - activity.length * 2))
+        const own = foldQuiet(rows.filter(r => r.streamId === shown.id)).slice(style === 'full' ? -FULL_ROWS : -Math.max(3, room - activity.length * 2))
         const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
         return (
           <Box flexDirection="column">
@@ -175,11 +178,9 @@ export function wirePane(on: On) {
               ))}
               {archiveButton(shown)}
             </Box>
-            <Text wrap="truncate">
-              {badge(v, verdict, verdict.toUpperCase())}
-              {loops[shown.id] ? '  ' : ''}
-              {loopBadge(v, shown)}
-            </Text>
+            <Text wrap="truncate">{badge(v, verdict, verdict.toUpperCase())}</Text>
+            {loopRows(v, shown)}
+            {workflowRows(v, shown)}
             <Text dimColor wrap="truncate">{oneLine(shown.summary, width) || ' '}</Text>
             {activity}
             {own.length === 0 && <Text dimColor>Nothing recorded yet.</Text>}
@@ -206,7 +207,7 @@ export function wirePane(on: On) {
         const verdict = health[s.id] ?? 'idle'
         const f: Fold = isArchived ? 'none' : foldOf(s)
         const count = f === 'all' ? perStream : f === '10' ? 10 : f === '1' ? 1 : 0
-        const recent = count ? rows.filter(row => row.streamId === s.id).slice(-count) : []
+        const recent = count ? foldQuiet(rows.filter(row => row.streamId === s.id)).slice(-count) : []
         return (
           <Box key={s.id} flexDirection="column" marginTop={1}>
             <Box gap={1}>
@@ -229,13 +230,13 @@ export function wirePane(on: On) {
             </Box>
             <Text wrap="truncate">
               {isArchived ? <Text dimColor>{verdict}</Text> : badge(v, verdict, verdict.toUpperCase())}
-              {!isArchived && loops[s.id] ? '  ' : ''}
-              {isArchived ? null : loopBadge(v, s)}
               <Text dimColor>
                 {' '}
                 · {s.rows} rows · {s.agents} agents · {ago(now - s.lastAt)} ago
               </Text>
             </Text>
+            {isArchived ? null : loopRows(v, s)}
+            {isArchived ? null : workflowRows(v, s)}
             {f === 'none' ? null : (
               <Box flexDirection="column">
                 {s.summary ? <Text dimColor wrap="truncate">{oneLine(s.summary, width)}</Text> : null}

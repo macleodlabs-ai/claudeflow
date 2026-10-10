@@ -5,6 +5,7 @@ import { createDevice, type DeviceKeys } from '../../plugins/streams/hooks/remot
 import type { PhoneCommand, Snapshot } from '../../plugins/streams/hooks/remote/snapshot'
 import { paired, refused, type Pairing } from './links'
 import { assertPasskey, createPasskey } from './passkey'
+import type { PushSub } from './push'
 
 /** This device: one id and X25519 key pair for every room; each room has its own passkey. */
 export type Device = DeviceKeys
@@ -15,6 +16,8 @@ export type RoomEvents = {
   snapshot(room: string, snapshot: Snapshot): void
   /** The link's state changed: connected, unlocked, refused. */
   changed(): void
+  /** A session welcomed this device (it is unlocked): the time to tell the room where to push. */
+  welcomed?(): void
 }
 
 /** Visible pings: sessions poll fast and hold permissions only while a device is looking. */
@@ -76,6 +79,7 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       why = ''
       if (!p.isPaired) set(paired(p))
       ping()
+      ev.welcomed?.()
       ev.changed()
     } else if (r?.t === 'denied') {
       why = r.why
@@ -107,6 +111,15 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     why: () => why,
     start: connect,
     ping,
+    /**
+     * Tells the room where to push for this device, or (null) to stop. Plaintext to the room, as the relay needs it;
+     * only once unlocked, so a locked or refused device registers nothing.
+     */
+    push(sub: PushSub | null): boolean {
+      if (!core.isUnlocked() || ws?.readyState !== WebSocket.OPEN) return false
+      ws.send(JSON.stringify({ push: sub }))
+      return true
+    },
     /** Back on screen: reconnect now rather than wait out the backoff. */
     wake() {
       if (!ws) {

@@ -1,6 +1,7 @@
 // The Claudeflow relay on Cloudflare's free plan. Static assets (the app, the pairing page) are served before this
-// Worker runs; it only routes the two API paths to the room's Durable Object, after the checks that need no state,
-// so a malformed request never costs a Durable Object request.
+// Worker runs; it routes the two room paths to the room's Durable Object, after the checks that need no state, so a
+// malformed request never costs a Durable Object request, and answers the push key itself.
+import { vapidOf } from './push'
 import { Room, type Env } from './room'
 import { ID, MAX_BYTES } from './shapes'
 
@@ -13,6 +14,11 @@ const fail = (status: number, why: string) => new Response(why, { status })
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url)
+    if (url.pathname === '/v1/push/key') {
+      // The VAPID public key the app subscribes with; 404 when this relay has none, so the app hides "Notify me".
+      const vapid = await vapidOf(env.VAPID_PRIVATE_KEY, '')
+      return vapid ? Response.json({ key: vapid.publicKey }, { headers: { 'cache-control': 'max-age=300' } }) : fail(404, 'no push key')
+    }
     const match = ROUTE.exec(url.pathname)
     if (!match) return fail(404, 'not found')
     const [, room, kind] = match

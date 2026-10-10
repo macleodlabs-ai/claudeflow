@@ -5,6 +5,7 @@ import type { Stream } from '../../types'
 import { MAX_ROWS, SAVED_ROWS, mem, storeKey, type Saved } from '../state'
 import { SYSTEM, buildPrompt, fallbackName, isFollowUp, loopKey, oneLine, parseTag, parseVerdict, rowKey, slug, textKey } from '../classify'
 import { colorOf, streamsNow, touched, uuidOf, withStream, type Facts } from './model'
+import { afterNotification, loopsAt } from './loops'
 
 // Which stream a prompt belongs to: by #tag, a loop's own stream, the task that sent a notice, or Haiku's
 // guess; and by hand, `/stream`.
@@ -24,6 +25,7 @@ const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
 const ROW = { plugin: 'streams', key: 'rowStream' } as const
 const COLOR = { plugin: 'streams', key: 'streamColor' } as const
 
@@ -59,7 +61,7 @@ async function save($: $) {
 }
 
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops, now] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows, now] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -67,9 +69,10 @@ async function factsOf($: $): Promise<Facts> {
     read($, outcomeA),
     read($, rowsA),
     read($, loopsA),
+    read($, workflowsA),
     $.clock.now(),
   ])
-  return { busy, current, agents, inflight, outcome, rows, loops, now }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, now }
 }
 
 /** Hybrid routing: follow-ups stay put, everything else asks Haiku which stream it continues. */
@@ -170,10 +173,23 @@ export function wireRouting(on: On) {
       id = known ?? (await classify($, text))
       if (!known) await update($, loopStreamA, m => ({ ...m, [key]: id }))
       await touch($, id, s => ({ loops: s.loops + 1 }))
+      // A cron that just fired counts down to its next match from now.
+      const now = await $.clock.now()
+      await update($, loopsA, m => loopsAt(m, now))
       mem.pendingKind = 'loop'
     } else if (e.origin.kind === 'task-notification') {
       id = await streamOfNotification($, text)
+      // A monitor's event is its latest change; its end notice ends it.
+      const now = await $.clock.now()
+      await update($, loopsA, m => afterNotification(m, text, now))
       mem.pendingKind = 'notice'
+    } else if (e.origin.kind === 'plugin' && e.origin.name === 'streams' && mem.runNow.text && mem.runNow.text === text) {
+      // A tick the phone asked to run now (remote/index.ts): filed as that loop's tick in its own stream, like one
+      // the schedule fired, so it is no person's prompt (it answers no question) and Haiku does not route it.
+      id = mem.runNow.streamId
+      mem.runNow = { streamId: '', text: '' }
+      await touch($, id, s => ({ loops: s.loops + 1 }))
+      mem.pendingKind = 'loop'
     } else {
       id = await classify($, text)
     }

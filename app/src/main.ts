@@ -3,7 +3,8 @@
 import { newIdentity, randomId } from '../../plugins/streams/hooks/remote/seal'
 import type { PhoneCommand } from '../../plugins/streams/hooks/remote/snapshot'
 import { gateOf, parseLink, withLink, type Pairing } from './links'
-import { currentOf, initial, isStopConfirmed, reduce, type Action, type State } from './state'
+import { notifyState, subOf, turnOff, turnOn, type PushDeps, type PushSub } from './push'
+import { currentOf, initial, isArmed, isStopConfirmed, reduce, type Action, type State } from './state'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
 import { page, tabs } from './views/page'
@@ -58,9 +59,42 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
       render()
     },
     changed: () => render(),
+    // Each unlock tells the room again where to push: cheap, and it heals a room that forgot (a 410, a new room).
+    welcomed() {
+      if (pushSub) linkOf(p.room)?.push(pushSub)
+    },
   }),
 )
 const linkOf = (room: string) => links.find(l => l.room() === room)
+
+// "Notify me" (push.ts): the browser parts, and what this browser has. iOS offers Push only to Home Screen apps.
+const hasPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+const isStandalone = matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true
+const pushDeps: PushDeps = {
+  permission: () => Notification.requestPermission(),
+  key: () => fetch('/v1/push/key').then(r => (r.ok ? (r.json() as Promise<{ key?: string }>) : undefined)).then(j => j?.key),
+  manager: async () => {
+    await navigator.serviceWorker.register('/sw.js')
+    return (await navigator.serviceWorker.ready).pushManager
+  },
+}
+let pushSub: PushSub | null = null
+let notifying = { why: '', isBusy: false }
+const notifyView = () => ({
+  state: notifyState({ hasPush, isIOS, isStandalone, permission: hasPush ? Notification.permission : 'unsupported', isSubscribed: !!pushSub }),
+  ...notifying,
+})
+// A subscription made on an earlier visit is still this browser's: the toggle shows on, and unlocks resend it.
+if (hasPush)
+  navigator.serviceWorker
+    .getRegistration()
+    .then(r => r?.pushManager.getSubscription())
+    .then(s => {
+      pushSub = subOf(s?.toJSON()) ?? null
+      render()
+    })
+    .catch(() => {})
 
 const el = (id: string) => document.getElementById(id)!
 /** From 820 px the Streams view is a list and a detail pane (styles.css uses the same breakpoint). */
@@ -92,12 +126,13 @@ function render() {
   }))
   el('gate').innerHTML = links.length ? gates(views) : unpaired()
   el('tabs').innerHTML = tabs(state, now)
-  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches)
-  // On a Mac the sidebar holds plan usage right under the session tabs.
-  const usage = el('main').querySelector('.usage')
-  if (usage && side.matches) el('tabs').append(usage)
-  const hasUsage = !!currentOf(state, now)?.snapshot.limits?.length
+  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView())
+  // On a Mac the sidebar holds the dock (runs-and-loops line, plan usage) right under the session tabs.
+  const dock = el('main').querySelector('.dock')
+  if (dock && side.matches) el('tabs').append(dock)
+  const hasUsage = !!dock?.querySelector('.usage')
   document.body.classList.toggle('has-usage', hasUsage)
+  document.body.classList.toggle('has-summary', !!dock?.querySelector('.flowsum'))
   document.body.classList.toggle('usage-open', hasUsage && state.isUsageOpen)
 }
 
@@ -153,6 +188,19 @@ document.addEventListener('click', async e => {
     if (!ok) buttons.forEach(b => (b.disabled = false))
     return
   }
+  if (at('[data-notify]')) {
+    // turnOn asks for permission before its first await: iOS allows the prompt only inside the tap.
+    const turning = pushSub ? turnOff(pushDeps).then(() => ({ sub: null })) : turnOn(pushDeps)
+    notifying = { why: '', isBusy: true }
+    render()
+    const r = await turning
+    if ('sub' in r) {
+      pushSub = r.sub
+      links.forEach(l => l.push(r.sub))
+    }
+    notifying = { why: 'why' in r ? r.why : '', isBusy: false }
+    return render()
+  }
   const gateBtn = at('[data-gate]')
   if (gateBtn) {
     const link = linkOf(gateBtn.dataset.room!)
@@ -166,6 +214,26 @@ document.addEventListener('click', async e => {
     } else dispatch({ type: 'stop-armed', now })
     return render()
   }
+  // Stop workflow and Stop loop: the first tap arms that button, the second within STOP_MS sends.
+  const armed = at('[data-arm]')
+  if (armed) {
+    const now = Date.now()
+    const arm = armed.dataset.arm!
+    if (!isArmed(state, arm, now)) return dispatch({ type: 'arm', key: arm, now }), render()
+    dispatch({ type: 'arm', key: '', now: 0 })
+    armed.setAttribute('disabled', '')
+    if (armed.dataset.stopTask) await send({ id: randomId(), kind: 'stopTask', taskId: armed.dataset.stopTask })
+    else if (armed.dataset.stopLoop) await send({ id: randomId(), kind: 'stopLoop', streamId: streamIdOf(armed.dataset.stopLoop) })
+    return render()
+  }
+  const tick = at('[data-run-tick]')
+  if (tick) {
+    tick.setAttribute('disabled', '')
+    await send({ id: randomId(), kind: 'runTick', streamId: streamIdOf(tick.dataset.runTick!) })
+    return render()
+  }
+  const phase = at('[data-phase]')
+  if (phase) return dispatch({ type: 'toggle', key: phase.dataset.phase! }), render()
   const v = at('[data-view]')
   if (v) return dispatch({ type: 'view', view: v.dataset.view === 'status' ? 'status' : 'streams' }), render()
   if (at('[data-usage]')) return dispatch({ type: 'usage' }), render()
@@ -183,19 +251,21 @@ document.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && t.matches?.('[role="button"]:not(button)')) {
     e.preventDefault()
     // The redraw replaces the element: put focus back on its replacement so the keyboard keeps its place.
-    const attr = ['data-toggle', 'data-select', 'data-usage'].find(a => t.hasAttribute(a))
+    const attr = ['data-toggle', 'data-select', 'data-usage', 'data-phase'].find(a => t.hasAttribute(a))
     const sel = attr && `[${attr}="${CSS.escape(t.getAttribute(attr) ?? '')}"]`
     t.click()
     if (sel) document.querySelector<HTMLElement>(sel)?.focus()
   }
 })
 
-// Clocks and permission countdowns move between snapshots: every second while a prompt counts down, else every 10 s.
+// Clocks and countdowns move between snapshots (which carry only times): every second while a prompt, a loop's next
+// tick or a running workflow counts, else every 10 s. Drawing only: no request is made.
 let ticks = 0
 setInterval(() => {
   if (document.visibilityState !== 'visible') return
-  const hasPrompt = !!currentOf(state, Date.now())?.snapshot.permissions?.length
-  if (hasPrompt || ++ticks % 10 === 0) render()
+  const x = currentOf(state, Date.now())?.snapshot
+  const isCounting = !!x?.permissions?.length || x?.summary?.nextTickAt !== undefined || !!x?.streams?.some(st => st.workflow?.status === 'running')
+  if (isCounting || ++ticks % 10 === 0) render()
 }, 1_000)
 setInterval(() => links.forEach(l => l.ping()), PING_MS)
 // A phone wakes the page without a reconnect: check the line when it comes back.
