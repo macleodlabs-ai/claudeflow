@@ -9,17 +9,37 @@ import { chips, streamsView } from './streams'
 import { usageBar } from './usage'
 import { clock, esc, spinner } from './util'
 
+/** One session's button: working dot, account · project, and how many of its streams are live. */
+function tab(t: SessionTab, current: SessionTab | undefined, cls: string, role = ''): string {
+  const x = t.snapshot
+  const live = (x.streams ?? []).filter(st => st.kind === 'running' || st.kind === 'waiting').length
+  return `<button class="${cls} ${t.key === current?.key ? 'on' : ''} ${t.isStale ? 'stale' : ''}" data-session="${esc(t.key)}" aria-current="${t.key === current?.key}"${role}>
+      ${x.session.busy ? '<span class="busy" aria-label="working">●</span> ' : ''}<span class="who">${esc(x.session.account)}</span> · ${esc(x.session.project)}${live ? `<span class="n">${live}</span>` : ''}</button>`
+}
+
 export function tabs(s: State, now: number): string {
+  const current = currentOf(s, now)
+  return tabsOf(s, now)
+    .map(t => tab(t, current, 'tab'))
+    .join('')
+}
+
+/**
+ * The header's page name: the shown session's project. With more than one session it is a button: swipe it sideways
+ * for the next or previous session (main.ts), hold or tap it for the list; dots say where in the list this one is.
+ */
+export function switcher(s: State, now: number): string {
   const all = tabsOf(s, now)
   const current = currentOf(s, now)
-  return all
-    .map(t => {
-      const x = t.snapshot
-      const live = (x.streams ?? []).filter(st => st.kind === 'running' || st.kind === 'waiting').length
-      return `<button class="tab ${t.key === current?.key ? 'on' : ''} ${t.isStale ? 'stale' : ''}" data-session="${esc(t.key)}" aria-current="${t.key === current?.key}">
-      ${x.session.busy ? '<span class="busy" aria-label="working">●</span> ' : ''}<span class="who">${esc(x.session.account)}</span> · ${esc(x.session.project)}${live ? `<span class="n">${live}</span>` : ''}</button>`
-    })
-    .join('')
+  if (!current) return 'Streams'
+  const name = esc(current.snapshot.session.project)
+  if (all.length < 2) return name
+  const dots = all.map(t => `<i class="${t.key === current.key ? 'on' : ''}"></i>`).join('')
+  const menu = s.isSwitchOpen
+    ? `<div class="switch-menu" role="menu">${all.map(t => tab(t, current, 'switch-item', ' role="menuitem"')).join('')}</div>`
+    : ''
+  return `<button class="switch" type="button" data-switch aria-haspopup="menu" aria-expanded="${s.isSwitchOpen}">
+    <span class="switch-name">${name}</span><span class="switch-dots" aria-hidden="true">${dots}</span><span class="caret" aria-hidden="true">▾</span></button>${menu}`
 }
 
 function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?: NotifyView): string {

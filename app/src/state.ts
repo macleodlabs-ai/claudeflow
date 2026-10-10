@@ -68,6 +68,8 @@ export type State = {
   /** Cards opened, by stream key. */
   open: string[]
   isUsageOpen: boolean
+  /** The header's list of sessions, opened by holding or tapping the project name. */
+  isSwitchOpen: boolean
   /** Reply text by stream key, kept until it is sent: a redraw from a new snapshot must not lose it. */
   drafts: Record<string, string>
   /** When Stop was first tapped; a second tap within STOP_MS stops. */
@@ -122,6 +124,7 @@ export const initial = (saved: Partial<Pick<State, 'chosen' | 'view' | 'open' | 
   view: saved.view === 'status' ? 'status' : 'streams',
   open: saved.open ?? [],
   isUsageOpen: saved.isUsageOpen ?? false,
+  isSwitchOpen: false,
   drafts: {},
   stopArmed: 0,
   armed: { key: '', at: 0 },
@@ -139,6 +142,7 @@ export type Action =
   /** Show a stream in the wide layout's detail pane: the last opened card is the selected one. */
   | { type: 'select'; key: string }
   | { type: 'usage' }
+  | { type: 'switch'; open: boolean }
   | { type: 'draft'; key: string; text: string }
   /** A reply went: its draft is cleared (the tap keeps the text for a retry). */
   | { type: 'sent'; key: string }
@@ -201,7 +205,7 @@ export function reduce(s: State, a: Action): State {
       return { ...s, sessions, ...seenAsks(s, key, a.snapshot, a.now) }
     }
     case 'choose':
-      return { ...s, chosen: a.key, stopArmed: 0 }
+      return { ...s, chosen: a.key, stopArmed: 0, isSwitchOpen: false }
     case 'view':
       return { ...s, view: a.view }
     case 'toggle':
@@ -212,6 +216,8 @@ export function reduce(s: State, a: Action): State {
       return { ...s, open: [...s.open.filter(k => k !== a.key), a.key] }
     case 'usage':
       return { ...s, isUsageOpen: !s.isUsageOpen }
+    case 'switch':
+      return { ...s, isSwitchOpen: a.open }
     case 'draft':
       return { ...s, drafts: { ...s.drafts, [a.key]: a.text } }
     case 'sent': {
@@ -253,6 +259,13 @@ export const tabsOf = (s: State, now: number): SessionTab[] =>
 export const currentOf = (s: State, now: number): SessionTab | undefined => {
   const tabs = tabsOf(s, now)
   return tabs.find(t => t.key === s.chosen) ?? tabs[0]
+}
+
+/** The tab `step` places from the shown one, wrapping round: a sideways swipe on the header moves through them. */
+export const stepOf = (s: State, now: number, step: 1 | -1): string | undefined => {
+  const tabs = tabsOf(s, now)
+  const i = tabs.findIndex(t => t.key === currentOf(s, now)?.key)
+  return tabs.length < 2 ? undefined : tabs[(i + step + tabs.length) % tabs.length]!.key
 }
 
 /** Whether a request can still be answered from here: the session holds it and nothing settled it. */
