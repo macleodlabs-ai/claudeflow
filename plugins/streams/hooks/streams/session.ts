@@ -42,8 +42,6 @@ async function autoArchive($: $, ids: string[]) {
   await update($, streamsA, list => list.map(s => (ids.includes(s.id) ? { ...s, archived: true } : s)))
   if (ids.includes(await read($, focusA))) {
     await update($, focusA, () => '')
-    const current = await read($, currentA)
-    $.ui.status(current && !ids.includes(current) ? `stream ${current}` : undefined)
   }
   if (ids.includes(await read($, viewA))) await update($, viewA, () => '')
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
@@ -148,8 +146,8 @@ export function wireSession(on: On, opts: { autoArchiveHours: number }) {
     })
     const streams = await read($, streamsA)
     await Promise.all(streams.map(s => $.state.set({ ...COLOR, id: s.id }, colorOf(s))))
-    const [focus, current] = await Promise.all([read($, focusA), read($, currentA)])
-    $.ui.status(focus ? `◉ stream ${focus}` : current ? `stream ${current}` : undefined)
+    // The stream shows in the bar and the pane, not the status line: clear what an earlier version left there.
+    $.ui.status(undefined)
     const pane = (await $.store.get(PANE_KEY)) as PaneSaved | undefined
     if (pane?.collapsed) await update($, paneCollapsedA, () => true)
     else if (e.isInteractive) void $.ui.open({ id: PANE, title: 'Streams' })
