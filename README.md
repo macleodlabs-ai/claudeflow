@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.4" src="https://img.shields.io/badge/version-1.1.4-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.5" src="https://img.shields.io/badge/version-1.1.5-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
   <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
@@ -124,7 +124,7 @@ Claude Code's Remote Control does not draw plugin UI in the phone app, so stream
 - **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
 - **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. What you send is filed in that stream.
 - **Stop** a running turn (tap twice, so a stray touch doesn't).
-- **Permission prompts stay on your Mac.** Claude Code's own dialog and auto mode's classifier answer them exactly as without a phone; a paired phone never changes what the terminal shows. Claude's questions with options show on the phone too; unanswered for 2 minutes, Claude takes the option it marked recommended and says so.
+- **Allow or deny permission prompts.** Only a prompt that needs you reaches the phone: one your rules and auto mode's classifier did not settle, the moment Claude Code shows its own dialog. That dialog stays up on the Mac, with "also on your phone" under it; the first answer, on either, wins. No second Face ID: the unlock covers it. Claude's questions with options show on the phone too; unanswered for 2 minutes, Claude takes the option it marked recommended and says so.
 - **Notify me:** turn it on under a session and the phone buzzes when Claude needs you (a permission prompt or a question with options held for the phone, at once; a new open question), when a workflow finishes or fails, or when a quiet loop finds something. An open question at the end of a turn buzzes only once it has waited two minutes unanswered, so answering at the Mac never buzzes the phone. A prompt that moves to the Mac after 2 minutes never buzzes again. Never while you are looking, at most once a minute (Claude needing you is never held back) and 30 times a day. The notification says only "Claude needs you", "Something finished" or "Something failed": nothing from the session passes through the relay or the push service. On an iPhone or iPad it works once the app is on the Home Screen.
 
 #### How it connects

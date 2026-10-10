@@ -47,7 +47,6 @@ const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 /** The status card's git rows, shared with the card (ui/bar.tsx): one read serves both while it is fresh. */
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
 /** The permissions held now, for the band above the prompt (read while drawn, so it redraws as they change). */
-const askingA = atom({ plugin: 'streams', key: 'asking' } as const, [])
 /** What the session answered for an absent person, shown in the band for a while. */
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
 /** How long the band says the session chose for the person. */
@@ -110,9 +109,6 @@ function settle(id: string, why: AckWhy, at: number, label?: string) {
   settled.set(id, { id, why, at, ...(label !== undefined ? { label } : {}) })
   if (settled.size > 50) settled.delete(settled.keys().next().value!)
 }
-
-/** The band's rows: what each held permission would run. */
-const askingNow = () => [...held.values()].flatMap(h => (h.ask ? [{ id: h.ask.id, tool: h.ask.tool, summary: h.ask.summary }] : []))
 
 let options: RemoteOptions = { relayUrl: '' }
 
@@ -243,6 +239,87 @@ async function awaitAnswer<T>($: $, answered: Promise<T>, stop: AbortSignal): Pr
     else if (now - (quietSince ??= now) >= NO_DEVICE_MS) return undefined
   }
   return undefined
+}
+
+/** The calls tool.check put to the mode's decider, by tool and input: PermissionRequest does not name its call. */
+const askedIds = new Map<string, string>()
+const callKey = (tool: string, input: unknown) => `${tool}\0${JSON.stringify(input ?? null)}`
+
+/** Whether a dialog holds the keys now: the engine refuses to fill the prompt box while one does. */
+const isDialogUp = async ($: $): Promise<boolean> =>
+  (await $.prompt.fill({ text: '', mode: 'insert' }).catch(() => undefined))?.refusal === 'dialog'
+
+/** How long a permission request looks for the terminal's dialog before leaving the call to it alone. */
+const DIALOG_WAIT_MS = 1_500
+
+/** The phone's answer, or undefined once the dialog is gone (answered at the Mac) or the request is withdrawn. */
+async function whileDialog<T>($: $, answered: Promise<T>, stop: AbortSignal): Promise<T | undefined> {
+  const got = answered.then(v => ({ v }))
+  while (!stop.aborted) {
+    const r = await Promise.race([got, $.clock.sleep(TICK_MS, { signal: stop }).then(() => undefined, () => undefined)])
+    if (r) return r.v
+    if (!(await isDialogUp($))) return undefined
+  }
+  return undefined
+}
+
+type PermissionHookResult = { decision?: { behavior: 'allow' } | { behavior: 'deny'; message?: string } }
+
+/**
+ * A permission prompt that needs the person (PermissionRequest: rules and auto mode's classifier have passed it on)
+ * also goes to the paired devices, with "also on your phone" under the terminal's own dialog. The first answer wins:
+ * the phone's is this hook's decision, which closes the dialog; one at the Mac closes the dialog and ends the hold.
+ * Where the dialog is not up while this hook runs, it steps aside at once: the terminal never waits on a phone.
+ */
+async function holdManual<R extends PermissionHookResult>(
+  $: $,
+  e: { tool_name: string; tool_input: unknown },
+  next: (e: never) => Promise<R>,
+  signal: AbortSignal,
+): Promise<R | PermissionHookResult> {
+  const id = askedIds.get(callKey(e.tool_name, e.tool_input))
+  const devices = devicesOf(await $.store.get(STORE.devices))
+  if (!id || !link || devices.length === 0) return next(e as never)
+  // Other PermissionRequest hooks run as ever; a decision of theirs stands.
+  const below = next(e as never)
+  const decided = below.then(r => (r?.decision ? r : new Promise<never>(() => {})))
+  const started = await $.clock.now()
+  let isUp = await isDialogUp($)
+  while (!isUp && (await $.clock.now()) - started < DIALOG_WAIT_MS) {
+    await $.clock.sleep(250).catch(() => undefined)
+    isUp = await isDialogUp($)
+  }
+  if (!isUp) return below
+  const ask: PendingPermission = { id, tool: e.tool_name, summary: permissionSummary(e.tool_name, e.tool_input), at: started, since: started }
+  let resolve: (a: Answer) => void = () => {}
+  const answered = new Promise<Answer>(r => (resolve = r))
+  held.set(id, { ask, resolve })
+  try {
+    $.ui.notice(id, 'also on your phone')
+  } catch {}
+  try {
+    const first = await Promise.race([decided.then(r => ({ hooks: r })), whileDialog($, answered, signal).then(a => ({ a }))])
+    const now = await $.clock.now()
+    if ('hooks' in first) {
+      answerHeld(id, { by: 'mac' })
+      settle(id, 'answered on Mac', now)
+      return first.hooks
+    }
+    if (!first.a?.decision) {
+      answerHeld(id, { by: 'mac' })
+      settle(id, 'answered on Mac', now)
+      return {}
+    }
+    settle(id, whyOf(first.a), now)
+    return first.a.decision === 'allow'
+      ? { decision: { behavior: 'allow' } }
+      : { decision: { behavior: 'deny', message: 'Denied on your phone' } }
+  } finally {
+    held.delete(id)
+    try {
+      $.ui.notice(id, undefined)
+    } catch {}
+  }
 }
 
 /**
@@ -426,11 +503,21 @@ export function wireRemote(on: On, opts: RemoteOptions) {
     return next(e)
   })
 
+  // tool.check's verdict is never changed: it only notes which call an `ask` was, for PermissionRequest below.
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (verdict.decision === 'ask' && e.tool_use_id) {
+      askedIds.set(callKey(e.tool, e.input), e.tool_use_id)
+      if (askedIds.size > 50) askedIds.delete(askedIds.keys().next().value!)
+    }
+    return verdict
+  })
+
+  on('classic.PermissionRequest', async ($, e, next) => (await holdManual($, e, next as never, next.signal)) as never)
+
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => (await holdQuestion($, e, next as never)) as never)
 
-  // Permission prompts are never held for a phone: the mode's own decider (the auto-mode classifier, the
-  // terminal's dialog) always answers them, whether or not a device is paired. After the session chose an
-  // absent person's question for them, the band says so.
+  // After the session chose an absent person's question for them, the band says so.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const [note, now] = await Promise.all([read($, remoteNoteA), $.clock.now()])
     if (e.props.hasSurvey || !note.text || now >= note.until) return next(e)
