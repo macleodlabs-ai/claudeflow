@@ -91,6 +91,18 @@ header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: no
 .switch-item .busy { color: var(--running-ink); }
 .switch-item .n { margin-left: auto; padding-left: 12px; color: var(--text-dim); font-size: var(--fs-xs); font-weight: 800; }
 .switch-item.stale { opacity: .55; }
+/* Phones and small tablets: the header's switcher lists the sessions, so the tab row would only repeat it; the state
+   counts and the Streams | Status switch share one line, the counts scrolling sideways if they must. */
+@media (max-width: 819px) {
+  #tabs { display: none; }
+  .toolbar:not(:has(.session-bar)) { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .toolbar:not(:has(.session-bar)) .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0; }
+  .toolbar .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; white-space: nowrap; }
+  .toolbar .views { flex: none; margin: 0; }
+  .toolbar .views button { min-height: 36px; padding: 0 12px; }
+}
+@media (max-width: 479px) { .chip-word { display: none; } }
 /* News: a red dot on a stream changed since it was viewed, and on other projects that have such streams. */
 .new-dot, .news { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--error); vertical-align: middle; flex: none; }
 .switch-dots i.new { background: var(--error); }
@@ -100,7 +112,8 @@ header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: no
 #bell:empty { display: none; }
 /* On a phone the project is the title: the wordmark gives way so the theme button and the line status stay on screen. */
 @media (max-width: 519px) {
-  header:has(.switch) .wordmark { display: none; }
+  /* With a session shown, the project is the title: the wordmark gives way (the logo stays). */
+  body:has(#tabs:not(:empty)) .wordmark { display: none; }
   .switch-menu { position: fixed; top: 64px; left: 16px; right: 16px; min-width: 0; max-width: none; }
 }
 /* Connection: a hollow red ring while reconnecting, a filled green dot when connected; the label is for screen readers. */
