@@ -92,7 +92,7 @@ const snap = (id: string, busy = false): Snapshot => ({
  * may redirect it, as a relay could).
  */
 function session(ws: FakeSocket, id: string, o: { sk?: string; devices?: Stored[]; pairing?: Open } = {}) {
-  const link = createLink({ identity: { room, token: randomId(32), sk: o.sk ?? account.sk }, session: id, origin: ORIGIN })
+  const link = createLink({ identity: { room, token: randomId(32), sk: o.sk ?? account.sk }, session: id, origin: ORIGIN, project: '/work/claudeflow' })
   let read = 0
   let seq = 0
   let devices = o.devices ?? []

@@ -7,7 +7,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PAIRING_MS, createLink, type Device, type Identity, type Pairing } from '../plugins/streams/hooks/remote/link'
+import { INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, type Device, type Identity, type Invite, type Pairing } from '../plugins/streams/hooks/remote/link'
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
 import type { Ack, PhoneCommand, Settled, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
 import { qrVideo } from './camera'
@@ -181,10 +181,12 @@ function startSession() {
   const identity: Identity = { room: randomId(), token: randomId(32), sk }
   const pairing: Pairing = { secret: randomId(32), until: Date.now() + PAIRING_MS }
   const id = crypto.randomUUID()
-  const link = createLink({ identity, session: id, origin: ORIGIN })
+  const link = createLink({ identity, session: id, origin: ORIGIN, project: '/work/claudeflow' })
   const s = {
     identity, pairing, pk: publicKeyOf(sk), id,
     devices: [] as Device[],
+    /** Shared invites not yet used, as index.tsx keeps them in $.store. */
+    invites: [] as Invite[],
     commands: [] as { device: string; command: PhoneCommand }[],
     denied: [] as { to: string; why: string }[],
     permissions: [] as Snapshot['permissions'],
@@ -243,7 +245,9 @@ function startSession() {
   void (async () => {
     while (s.isRunning) {
       const now = Date.now()
-      const known = () => ({ devices: s.devices, pairing, now, snapshot: snapshot(), isHolding: s.permissions.length > 0 })
+      // As index.tsx: the owner's devices see who the project is shared with.
+      const people = s.devices.flatMap(d => (d.role ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
+      const known = () => ({ devices: s.devices, pairing, invites: s.invites, now, snapshot: { ...snapshot(), ...(people.length ? { people } : {}) }, isHolding: s.permissions.length > 0 })
       let post = s.isLagging ? undefined : link.next(known())
       let hasAcked = false
       while (post) {
@@ -255,10 +259,16 @@ function startSession() {
           s.devices = [...s.devices.filter(x => x.id !== d.id), d]
           s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
         }
+        s.invites = s.invites.filter(i => !got.used.includes(i.secret))
         s.commands.push(...got.commands)
         // What index.tsx's phoneCommand answers, acked in the same tick.
         for (const { device, command: c } of got.commands) {
           let done: Omit<Ack, 't' | 'id'> = { ok: true }
+          if (c.kind === 'invite') {
+            const secret = randomId(32)
+            s.invites.push({ secret, until: Date.now() + INVITE_MS, project: '/work/claudeflow', role: c.role, days: SHARE_DAYS })
+            done = { ok: true, secret }
+          }
           if (c.kind === 'permission' || c.kind === 'choose') {
             const isHeld = c.kind === 'permission' ? s.permissions.some(p => p.id === c.requestId) : s.questions.some(q => q.id === c.requestId)
             if (isHeld) {
@@ -311,7 +321,9 @@ try {
       // A fourth device has a camera that sees the Mac's pairing code: it pairs from inside the app, never leaving it.
       qrVideo(join(TMP, 'pairing-code.y4m'), link)
       const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${join(TMP, 'pairing-code.y4m')}`]
-      const [d1, d2, d3, d4] = await Promise.all([openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343), openDevice('scanner', 9344, camera)])
+      const [d1, d2, d3, d4, d5] = await Promise.all([
+        openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343), openDevice('scanner', 9344, camera), openDevice('guest', 9345),
+      ])
       await d4.goto(`${ORIGIN}/`)
       await d4.see('Not paired')
       await d4.tap('[data-scan]')
@@ -453,6 +465,24 @@ try {
       check('an unpaired device with a bogus secret is denied ("bad pairing proof")', s.denied.some(x => x.to === id3 && x.why === 'bad pairing proof'))
       check('the denied device is not stored and saw no snapshot', !s.devices.some(d => d.id === id3) && !(await d3.text()).includes('Deploy the relay now?'))
       await d3.shot('e2e-06-stranger-denied.png')
+
+      // Device 1 shares the project from the ☰ menu: an invite to watch, as a link a guest opens and pairs with.
+      await d1.tap('[data-menu]')
+      await d1.tap('[data-invite="viewer"]')
+      const inviteLink = String(await until('the invite link', () => d1.js(`document.querySelector('.invite-link')?.value || ''`), POLL_WAIT_MS))
+      check('the ☰ menu makes an invite link for this project', inviteLink.startsWith(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=`), inviteLink)
+      await d1.shot('app-390-share.png')
+      await d5.goto(inviteLink)
+      await d5.see('Pair this device')
+      await d5.tap('[data-gate="pair"]')
+      await d5.see('Watching', POLL_WAIT_MS)
+      const id5 = await d5.deviceId()
+      check('the guest joins as a watcher of this project: role, project and an end date, the invite used up',
+        s.devices.some(d => d.id === id5 && d.role === 'viewer' && d.project === '/work/claudeflow' && (d.until ?? 0) > Date.now()) && s.invites.length === 0,
+        JSON.stringify(s.devices.find(d => d.id === id5)))
+      check('a watcher sees the streams but no control: no Yes, no Stop, no composer',
+        (await d5.text()).includes('relay deploy') && !(await d5.js(`[...document.querySelectorAll('[data-answer], [data-stop], .slide.compose')].some(e => e.offsetParent)`)))
+      await d5.shot('app-390-watching.png')
 
       // Workflows and loops: the cards say where each is, and Stop workflow (two taps) reaches the session as stopTask.
       s.permissions = []

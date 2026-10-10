@@ -129,7 +129,7 @@ describe('who is woken, and how often', () => {
     const me = account()
     const [a, b] = [phone(me, 'iPhone'), phone(me, 'iPad')]
     const relay = room([a, b])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const devices = [a.stored(), b.stored()]
     cycle(link, relay, { devices, now: T0, snapshot: ask('Deploy now?'), isHolding: false, active: [a] })
     expect(cycle(link, relay, { devices, now: T0 + 2000, snapshot: ask('Deploy now?'), isHolding: false, active: [a] }).posts).toHaveLength(0)
@@ -146,7 +146,7 @@ describe('who is woken, and how often', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const devices = [a.stored()]
     cycle(link, relay, { devices, now: T0, snapshot: ask('q0'), active: [] })
     cycle(link, relay, { devices, now: T0 + 2000, snapshot: ask('q1'), active: [] })

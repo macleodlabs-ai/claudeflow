@@ -17,7 +17,7 @@ describe('the polling budget', () => {
     const a = phone(me, 'iPhone')
     const stranger = phone(me, 'stranger')
     const relay = room([a, stranger])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const pairing: Pairing = { secret: randomId(32), until: T0 + 2 * HEARTBEAT_MS }
     let now = T0
     const posts = (step: number, active: Phone[], p?: Pairing) => {
@@ -40,7 +40,7 @@ describe('the polling budget', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 }))
     const boxes = (now: number, s: Snapshot) => cycle(link, relay, { devices: [a.stored()], now, snapshot: s }).frames.filter(f => tOf(f) === 'box').length
     const busy = { session: { id: SESSION, account: 'macleod', project: 'p', busy: true } }
@@ -56,7 +56,7 @@ describe('the polling budget', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 }))
     const working = (n: number) => snapshot(T0, { status: [{ id: 'x', area: 'x', state: 'x', detail: `step ${n}` }] })
     const boxes = (now: number, s: Snapshot, active: Phone[]) =>
@@ -87,7 +87,7 @@ describe('the polling budget', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     let now = T0
     const posts = (step: number, o: { active?: Phone[]; isHolding?: boolean; snapshot?: Snapshot } = {}) => {
       now += step
@@ -111,7 +111,7 @@ describe('the polling budget', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 }))
     let now = T0
     const posts = (step: number) => {
@@ -129,7 +129,7 @@ describe('the polling budget', () => {
 
   test('an account with nothing paired and no pairing open never posts', () => {
     // Every session of every account runs this; one that no device could answer must spend nothing.
-    const link = createLink({ identity: account(), session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: account(), session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const known = { devices: [], now: T0, snapshot: snapshot(T0), isHolding: true }
     expect(link.isQuiet(known)).toBe(true)
     expect(link.next(known)).toBeUndefined()
@@ -141,7 +141,7 @@ describe('the polling budget', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     let now = T0
     const tries = (at: number) => cycle(link, relay, { devices: [a.stored()], now: at, isDown: true }).posts.length
     expect(tries(now)).toBe(1)
@@ -160,14 +160,14 @@ describe('the polling budget', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const known = (now: number) => ({ devices: [a.stored()], now, snapshot: snapshot(T0), isHolding: false })
     relay.from(a, a.hello({ now: T0 }))
     expect(link.next(known(T0))?.frames).toEqual([])
     expect(link.answered(JSON.stringify(relay.answer()), T0).again).toBe(true)
     const lost = link.next(known(T0)) as UpBody
     expect(lost.frames.map(tOf)).toEqual(['welcome', 'box'])
-    expect(link.answered(undefined, T0)).toEqual({ paired: [], commands: [], again: false })
+    expect(link.answered(undefined, T0)).toEqual({ paired: [], used: [], commands: [], again: false })
     expect(link.next(known(T0 + TICK_MS))).toBeUndefined()
     const retry = link.next(known(T0 + 4000)) as UpBody
     expect(retry.frames.map(tOf)).toEqual(['welcome', 'box'])
@@ -182,7 +182,7 @@ describe('the polling budget', () => {
     // A relay replaying a hello in every answer must not turn one tick into a request loop.
     const me = account()
     const a = phone(me, 'iPhone')
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const hello = a.hello({ now: T0 })
     let seq = 0
     const flood = () => JSON.stringify({ frames: [{ seq: ++seq, from: a.id, data: hello }], devices: [{ id: a.id, isActive: true }] })

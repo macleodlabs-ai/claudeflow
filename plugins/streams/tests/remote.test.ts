@@ -24,7 +24,7 @@ describe('pairing and unlocking', () => {
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
     const relay = room([a, b])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     relay.from(a, a.hello({ now: T0, secret: pairing.secret }))
     relay.from(b, b.hello({ now: T0, secret: pairing.secret }))
@@ -58,7 +58,7 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     // A hello waits in the room up to two minutes, so the previous minute's Face ID still counts.
     relay.from(a, a.hello({ now: T0 - 60_000 }))
     const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
@@ -74,7 +74,7 @@ describe('pairing and unlocking', () => {
     const a = phone(me, 'iPhone')
     const other = phone(me, 'old')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const stale = { ...a.stored(), credentialId: other.stored().credentialId, credentialKey: other.stored().credentialKey }
     const devices = devicesOf([stale, a.stored()])
     expect(devices).toEqual([a.stored()])
@@ -88,7 +88,7 @@ describe('pairing and unlocking', () => {
     const stranger = phone(me, 'stranger')
     const a = phone(me, 'iPhone')
     const relay = room([stranger, a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(stranger, stranger.hello({ now: T0 }))
     const forged = { ...a.hello({ now: T0 }), pk: newIdentity().pk }
     relay.from(a, forged)
@@ -106,7 +106,7 @@ describe('pairing and unlocking', () => {
     const late = phone(me, 'late')
     const guess = phone(me, 'guess')
     const relay = room([late, guess])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     relay.from(late, late.hello({ now: T0, secret: pairing.secret }))
     relay.from(guess, guess.hello({ now: T0, secret: randomId(32) }))
@@ -126,7 +126,7 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     relay.from(a, a.hello({ now: T0, secret: pairing.secret, origin: 'https://evil.example' }))
     relay.from(a, a.hello({ now: T0, secret: pairing.secret, challenge: passkeyChallenge('pair', randomId(), a.id, a.pk) }))
@@ -143,7 +143,7 @@ describe('pairing and unlocking', () => {
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
     const relay = room([a, b])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
     const hello = a.hello({ now: T0, secret: pairing.secret }) as { registration: Record<string, string> }
     const relayKey = spkiOf(p256.utils.randomSecretKey())
@@ -160,7 +160,7 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 - 120_000 }))
     relay.from(a, a.hello({ now: T0 + 60_000 }))
     relay.from(a, a.hello({ now: T0, origin: 'https://evil.example' }))
@@ -173,7 +173,7 @@ describe('pairing and unlocking', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 }))
     cycle(link, relay, { devices: [a.stored()], now: T0 })
     relay.from(a, a.command({ id: 'c1', kind: 'stop' }))
@@ -189,7 +189,7 @@ describe('allowing a tool from a phone', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
-    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 }))
     cycle(link, relay, { devices: [a.stored()], now: T0 })
     const send = (...boxes: unknown[]) => {

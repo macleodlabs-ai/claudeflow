@@ -2,6 +2,7 @@
 // prompts, the Streams | Status switch and its view, "Notify me", with plan usage pinned at the bottom.
 import { currentOf, newsOf, isInFlight, isStopConfirmed, askCards, stopKey, tabsOf, type SessionTab, type State } from '../state'
 import { dock, type ComposeView } from './compose'
+import { roleNote } from './menu'
 import { summaryLine } from './flows'
 import { notifyRow, type NotifyView } from './notify'
 import { permissions } from './permissions'
@@ -57,6 +58,9 @@ export function switcher(s: State, now: number): string {
 
 function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?: NotifyView, compose?: ComposeView): string {
   const x = t.snapshot
+  // Shared access that has run out shows nothing of the project (its sessions have stopped sending anyway).
+  if (x.you && now >= x.you.until)
+    return `<div class="gate"><h2>Access ended</h2><p>Your access to <b>${x.session.project}</b> has ended. Ask whoever shared it to give you more time.</p></div>`
   const streams = x.streams ?? []
   const isStopping = isInFlight(s.taps[stopKey(t.key)])
   const stop =
@@ -73,7 +77,7 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
   // Mac, main.ts moves those two into the sidebar).
   const bottom = dock(s, t.key, x, compose ?? { files: [], isListening: false, hasMic: false, why: '' }, [usageBar(x, now), summaryLine(x, now)])
   // From 820 px the working line and Stop sit at the right of the toolbar, by the streams they stop.
-  return `${isWide ? '' : stop}${permissions(askCards(s, t.key, now), now)}${stale}
+  return `${roleNote(t, now)}${isWide ? '' : stop}${permissions(askCards(s, t.key, now), now)}${stale}
     <div class="toolbar"><div class="chips">${chips(streams)}</div>${views}${isWide ? stop : ''}</div>${body}${notifyRow(notify)}${bottom}`
 }
 
