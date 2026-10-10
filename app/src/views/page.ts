@@ -1,6 +1,7 @@
 // The session page: one tab per session across every paired room, then the chosen session's Stop, permission
 // prompts, the Streams | Status switch and its view, "Notify me", with plan usage pinned at the bottom.
 import { currentOf, newsOf, isInFlight, isStopConfirmed, askCards, stopKey, tabsOf, type SessionTab, type State } from '../state'
+import { dock, type ComposeView } from './compose'
 import { summaryLine } from './flows'
 import { notifyRow, type NotifyView } from './notify'
 import { permissions } from './permissions'
@@ -54,7 +55,7 @@ export function switcher(s: State, now: number): string {
     <span class="switch-name">${name}</span><span class="switch-dots" aria-hidden="true">${dots}</span>${badge}<span class="caret" aria-hidden="true">▾</span></button>${menu}`
 }
 
-function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?: NotifyView): string {
+function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?: NotifyView, compose?: ComposeView): string {
   const x = t.snapshot
   const streams = x.streams ?? []
   const isStopping = isInFlight(s.taps[stopKey(t.key)])
@@ -68,19 +69,20 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
     <button data-view="streams" role="tab" aria-selected="${s.view === 'streams'}" class="${s.view === 'streams' ? 'on' : ''}">Streams</button>
     <button data-view="status" role="tab" aria-selected="${s.view === 'status'}" class="${s.view === 'status' ? 'on' : ''}">Status</button></div>`
   const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide)
-  // The dock: the runs-and-loops line sits on plan usage, pinned to the bottom (on a Mac, main.ts puts it in the sidebar).
-  const dock = summaryLine(x, now) + usageBar(x, s.isUsageOpen, now)
+  // The dock: the composer for the stream being viewed, with plan usage and the runs-and-loops line a swipe away (on a
+  // Mac, main.ts moves those two into the sidebar).
+  const bottom = dock(s, t.key, x, compose ?? { files: [], isListening: false, hasMic: false, why: '' }, [usageBar(x, s.isUsageOpen, now), summaryLine(x, now)])
   // From 820 px the working line and Stop sit at the right of the toolbar, by the streams they stop.
   return `${isWide ? '' : stop}${permissions(askCards(s, t.key, now), now)}${stale}
-    <div class="toolbar"><div class="chips">${chips(streams)}</div>${views}${isWide ? stop : ''}</div>${body}${notifyRow(notify)}${dock ? `<div class="dock">${dock}</div>` : ''}`
+    <div class="toolbar"><div class="chips">${chips(streams)}</div>${views}${isWide ? stop : ''}</div>${body}${notifyRow(notify)}${bottom}`
 }
 
 /**
  * The page below the gates; empty-state text when nothing has arrived yet. `isWide` is the 820 px two-pane layout;
  * `notify` the "Notify me" row, drawn with a session, so only once a room is unlocked.
  */
-export function page(s: State, now: number, hasOpenRoom: boolean, isWide = false, notify?: NotifyView): string {
+export function page(s: State, now: number, hasOpenRoom: boolean, isWide = false, notify?: NotifyView, compose?: ComposeView): string {
   const t = currentOf(s, now)
-  if (t) return session(s, t, now, isWide, notify)
+  if (t) return session(s, t, now, isWide, notify, compose)
   return hasOpenRoom ? '<div class="empty"><span class="motif" aria-hidden="true"></span>Nothing flowing yet. Start Claude Code on your Mac.</div>' : ''
 }

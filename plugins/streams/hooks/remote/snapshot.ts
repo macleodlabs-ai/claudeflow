@@ -77,9 +77,19 @@ export type PendingQuestion = { id: string; question: string; header: string; op
 /** How a held prompt or question ended. `label`: the option chosen, for a question. */
 export type Settled = { id: string; why: AckWhy; label?: string; at: number }
 
+/** A file sent with a prompt: its chunks (`chunk` commands under `blob`) came first. */
+export type PhoneFile = { blob: string; name: string; type: string }
+
+/** The most a file may weigh as base64 (about 375 KB of image or file), and the chunk size the phone sends it in: sealed and base64ed again, a chunk stays under the relay's 16 KB per device message. */
+export const MAX_FILE_B64 = 500_000
+export const CHUNK_B64 = 8_000
+
 /** What the phone can ask a session to do. */
 export type PhoneCommand =
-  | { id: string; kind: 'answer'; streamId: string; text: string }
+  /** A prompt: into `streamId`'s stream, or ('') a new one that routing files. */
+  | { id: string; kind: 'answer'; streamId: string; text: string; files?: PhoneFile[] }
+  /** One piece of a file to send with a prompt, as base64. */
+  | { id: string; kind: 'chunk'; blob: string; part: number; of: number; data: string }
   | { id: string; kind: 'stop' }
   | { id: string; kind: 'permission'; requestId: string; decision: 'allow' | 'deny'; passkey?: PasskeyAssertion }
   /** Stop a Workflow run this session shows. */
@@ -98,8 +108,8 @@ export type PasskeyAssertion = { authenticatorData: string; clientDataJSON: stri
  * Why a command was or was not done, or how a held prompt ended. `allowed`, `denied`, `chosen`, `answered on Mac`,
  * `moved to Mac` (nobody answered, so the terminal asks) and `chose recommended` also answer a late tap.
  */
-export type AckWhy = 'allowed' | 'denied' | 'chosen' | 'answered on Mac' | 'moved to Mac' | 'chose recommended' | 'passkey not verified' | 'unknown request'
-const ACK_WHY: readonly string[] = ['allowed', 'denied', 'chosen', 'answered on Mac', 'moved to Mac', 'chose recommended', 'passkey not verified', 'unknown request']
+export type AckWhy = 'allowed' | 'denied' | 'chosen' | 'answered on Mac' | 'moved to Mac' | 'chose recommended' | 'passkey not verified' | 'unknown request' | 'file missing'
+const ACK_WHY: readonly string[] = ['allowed', 'denied', 'chosen', 'answered on Mac', 'moved to Mac', 'chose recommended', 'passkey not verified', 'unknown request', 'file missing']
 
 /**
  * The session's answer to one command (session → device, sealed like a snapshot): definite feedback for the phone on
@@ -139,6 +149,13 @@ export const permissionSummary = (tool: string, input: unknown): string => {
 /** A task or stream id as the session makes them: short, no spaces, no markup. */
 const isId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,80}$/.test(v)
 
+/** A file reference, if well formed: a plain name (no path), a MIME type. */
+const fileOf = (v: unknown): PhoneFile | undefined => {
+  const f = (v ?? {}) as Record<string, unknown>
+  const name = typeof f.name === 'string' ? f.name.replace(/[^\w.\- ]/g, '_').slice(0, 80) : ''
+  return isId(f.blob) && name && !/^\.+$/.test(name) && typeof f.type === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(f.type) ? { blob: f.blob, name, type: f.type } : undefined
+}
+
 /**
  * An AskUserQuestion call the phone can answer, from its input: one single-choice question with 2-4 options. Anything
  * else (several questions, multi-select, free text, a number) stays with the terminal's own dialog. Labels are kept
@@ -168,7 +185,19 @@ export function questionOf(input: unknown, id: string, since: number): PendingQu
 export const commandOf = (c: unknown): PhoneCommand | undefined => {
   const k = (c ?? {}) as Record<string, unknown>
   if (typeof k.id !== 'string') return undefined
-  if (k.kind === 'answer') return typeof k.streamId === 'string' && typeof k.text === 'string' && k.text.trim().length > 0 && k.text.length <= 4000 ? (c as PhoneCommand) : undefined
+  if (k.kind === 'answer') {
+    const files = k.files === undefined ? [] : Array.isArray(k.files) && k.files.length <= 8 ? k.files.map(fileOf) : [undefined]
+    if (files.some(f => !f) || typeof k.streamId !== 'string' || typeof k.text !== 'string' || k.text.length > 4000) return undefined
+    if (!k.text.trim() && files.length === 0) return undefined
+    return { id: k.id, kind: 'answer', streamId: k.streamId, text: k.text, ...(files.length ? { files: files as PhoneFile[] } : {}) }
+  }
+  if (k.kind === 'chunk') {
+    const ok = isId(k.blob) && Number.isInteger(k.part) && Number.isInteger(k.of) && (k.of as number) >= 1 && (k.of as number) <= Math.ceil(MAX_FILE_B64 / CHUNK_B64)
+    if (!ok || (k.part as number) < 0 || (k.part as number) >= (k.of as number)) return undefined
+    return typeof k.data === 'string' && k.data.length <= CHUNK_B64 && /^[A-Za-z0-9+/=]*$/.test(k.data)
+      ? { id: k.id, kind: 'chunk', blob: k.blob as string, part: k.part as number, of: k.of as number, data: k.data }
+      : undefined
+  }
   if (k.kind === 'stop') return c as PhoneCommand
   if (k.kind === 'permission') return typeof k.requestId === 'string' && (k.decision === 'allow' || k.decision === 'deny') ? (c as PhoneCommand) : undefined
   // Ids only, each its own field: the session acts only on a task or stream it shows (remote/index.tsx).
