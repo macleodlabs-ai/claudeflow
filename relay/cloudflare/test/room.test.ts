@@ -159,12 +159,17 @@ test('two devices connected at once each get only their own frames', async () =>
   d2.ws.close()
 })
 
-test('a device is listed while connected and active only after it reports itself visible', async () => {
+test('a device is listed while connected and active only while it reports itself looking', async () => {
   // Sessions poll fast only while some device is active, to stay inside the free plan's request budget.
   const room = id()
   const [tok, session, deviceId] = [token(), id(), id()]
   const d = await device(room, deviceId)
   expect((await up(room, { token: tok, session })).devices).toEqual([{ id: deviceId, isActive: false }])
+  d.send({ here: true })
+  await waitFor(async () => ((await up(room, { token: tok, session })).devices[0]?.isActive ? true : undefined))
+  // Put away or out of focus, it stops counting at once, not 30 s later: sessions stop sending it every change.
+  d.send({ here: false })
+  await waitFor(async () => ((await up(room, { token: tok, session })).devices[0]?.isActive === false ? true : undefined))
   d.send({ here: true })
   await waitFor(async () => ((await up(room, { token: tok, session })).devices[0]?.isActive ? true : undefined))
   d.ws.close()

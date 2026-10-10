@@ -15,7 +15,7 @@ export type Data = string | object
 /** `notify`: the session's plaintext hint to wake these devices by Web Push. A kind, never any text. */
 export type Up = { token: string; session: string; since: number; frames: { to: string; data: Data }[]; notify?: { to: string[]; kind: NotifyKind } }
 /** A visible ping, a frame for sessions, or the device's push subscription (null: notifications turned off). */
-export type DeviceMessage = { here: true } | { to: string; data: Data } | { push: Subscription | null }
+export type DeviceMessage = { here: boolean } | { to: string; data: Data } | { push: Subscription | null }
 
 /** Most devices one hint may name: an account pairs a handful. */
 const NOTIFY_MAX = 32
@@ -75,11 +75,11 @@ export function subscriptionOf(v: unknown): Subscription | undefined {
   return { endpoint, p256dh: key, auth: secret }
 }
 
-/** A device's WebSocket message: a visible ping, or a frame for one session or for every session (`*`). */
+/** A device's WebSocket message: a ping saying whether it is looking (`here: false` when it is put away), or a frame for one session or for every session (`*`). */
 export function parseDeviceMessage(text: string): DeviceMessage | null {
   const v = parse(text)
   if (!v) return null
-  if (v.here === true) return { here: true }
+  if (typeof v.here === 'boolean') return { here: v.here }
   if (v.push === null) return { push: null }
   if (v.push !== undefined) {
     const sub = subscriptionOf(v.push)
