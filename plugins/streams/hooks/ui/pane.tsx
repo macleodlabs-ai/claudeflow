@@ -143,6 +143,21 @@ export function wirePane(on: On) {
       const updates = updateControl(ui, await read($, updatesA), await read($, updatingA))
       // Docked beside the transcript, the pane folds away to a tab in the bar and comes back at its width.
       const hideButton = e.props.placement === 'dock' ? <Button key="collapse" plain dimColor label="⇥ hide" hotkey="h" onPress={() => collapsePane($)} /> : null
+      const style: ChatStyle = (await read($, chatStyleA)) || mem.defaultStyle
+      const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
+      // Both choices always drawn, the current one lit; `v` switches to the other (one button carries it, so the
+      // hotkey is the pane's once, as in a stream's own view). The list and a stream's view share the one style.
+      const styleButtons = (keyOf: (st: ChatStyle) => string, hasHotkey: boolean) =>
+        (['full', 'compact'] as const).map(st => (
+          <Button
+            key={keyOf(st)}
+            plain
+            dimColor={st !== style}
+            label={`${st === style ? '◉' : '○'} ${st}`}
+            {...(hasHotkey && st === nextStyle ? { hotkey: 'v' } : {})}
+            onPress={() => update($, chatStyleA, () => st)}
+          />
+        ))
       const archiveButton = (s: Stream) =>
         s.archived ? (
           <Button key={`restore:${s.id}`} plain dimColor label="restore" onPress={() => setArchived($, s.id, false)} />
@@ -153,10 +168,8 @@ export function wirePane(on: On) {
       if (shown) {
         const verdict = health[shown.id] ?? 'idle'
         const activity = workOf(v, shown, 8)
-        const style: ChatStyle = (await read($, chatStyleA)) || mem.defaultStyle
         // Full rows run several lines each, so fewer of them fit; the pane scrolls for the rest.
         const own = foldQuiet(rows.filter(r => r.streamId === shown.id)).slice(style === 'full' ? -FULL_ROWS : -Math.max(3, room - activity.length * 2))
-        const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
         return (
           <Box flexDirection="column">
             <Box gap={2}>
@@ -169,17 +182,7 @@ export function wirePane(on: On) {
                 {shown.name}
               </Text>
               <Text dimColor>│ view</Text>
-              {(['full', 'compact'] as const).map(s => (
-                // Both choices always drawn, the current one lit: `v` switches to the other.
-                <Button
-                  key={`style:${s}`}
-                  plain
-                  dimColor={s !== style}
-                  label={`${s === style ? '◉' : '○'} ${s}`}
-                  {...(s === nextStyle ? { hotkey: 'v' } : {})}
-                  onPress={() => update($, chatStyleA, () => s)}
-                />
-              ))}
+              {styleButtons(st => `style:${st}`, true)}
               {archiveButton(shown)}
             </Box>
             <Text wrap="truncate">{badge(v, verdict, verdict.toUpperCase())}</Text>
@@ -224,12 +227,15 @@ export function wirePane(on: On) {
                 plain
                 dimColor={isArchived}
                 hover={{ color: colorOf(s), bold: true }}
-                label={`${s.name}${focus === s.id ? ' ◉' : ''}`}
+                // The header keeps one line at any width: fold, full/compact and ✕ take 24 columns plus the fold label,
+                // and the name gives way first.
+                label={isArchived ? `${s.name}${focus === s.id ? ' ◉' : ''}` : oneLine(`${s.name}${focus === s.id ? ' ◉' : ''}`, Math.max(6, width - 24 - FOLD_LABEL[f].length))}
                 onPress={() => openStream($, s.id)}
               />
               {isArchived ? null : (
                 <Button key={`fold:${s.id}`} plain dimColor label={FOLD_LABEL[f]} onPress={() => update($, foldA, m => ({ ...m, [s.id]: NEXT_FOLD[f] }))} />
               )}
+              {isArchived ? null : styleButtons(st => `style:${s.id}:${st}`, s.id === active[0]?.id)}
               {archiveButton(s)}
             </Box>
             <Text wrap="truncate">
@@ -245,12 +251,14 @@ export function wirePane(on: On) {
               <Box flexDirection="column">
                 {s.summary ? <Text dimColor wrap="truncate">{oneLine(s.summary, width)}</Text> : null}
                 {workOf(v, s, f === '1' ? 2 : 5)}
-                {recent.map(row => (
-                  <Text key={row.id} color={row.kind === 'prompt' ? colorOf(s) : undefined} dimColor={row.kind !== 'prompt'} wrap="truncate">
-                    {'  '}
-                    {GLYPH[row.kind]} {oneLine(row.text, width - 4)}
-                  </Text>
-                ))}
+                {style === 'full'
+                  ? recent.map(row => fullRow(v, row, colorOf(s)))
+                  : recent.map(row => (
+                      <Text key={row.id} color={row.kind === 'prompt' ? colorOf(s) : undefined} dimColor={row.kind !== 'prompt'} wrap="truncate">
+                        {'  '}
+                        {GLYPH[row.kind]} {oneLine(row.text, width - 4)}
+                      </Text>
+                    ))}
               </Box>
             )}
           </Box>
