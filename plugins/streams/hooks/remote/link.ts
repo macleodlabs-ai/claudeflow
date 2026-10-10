@@ -1,5 +1,5 @@
 import { channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, verifyPasskey } from './seal'
-import { HEARTBEAT_MS, commandOf, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
+import { HEARTBEAT_MS, MAX_ALLOW_TRIES, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 
 // One session's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), with no engine in it: it
 // reads what the relay answered and says what to post and when, which devices were paired and which commands to do.
@@ -131,8 +131,19 @@ export const WARM_MS = 60_000
  */
 export function createLink(o: { identity: Identity; session: string; origin: string }) {
   const conns = new Map<string, Conn>()
-  /** Allows already checked, by requestId: one try each, so no assertion is used twice. */
-  const allowsTried = new Set<string>()
+  /** Allows checked so far, by requestId: at most MAX_ALLOW_TRIES each, every try with its own Face ID. */
+  const allowsTried = new Map<string, number>()
+  /**
+   * Command ids already taken, with the ack each got: a phone on a laggy network sends a command again under the same
+   * id, so it runs once and the phone is told again what came of it.
+   */
+  const seen = new Map<string, Ack | undefined>()
+  /** Acks not yet posted, sealed only when posted so a failed post loses none. */
+  let acks: { to: string; ack: Ack }[] = []
+  const queueAck = (to: string, ack: Ack) => {
+    seen.set(ack.id, ack)
+    acks.push({ to, ack })
+  }
   let connected = new Map<string, boolean>()
   let since = 0
   /** What was last posted and when, and when the relay may be tried again after it failed. */
@@ -140,7 +151,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   /** Welcomes and denials not yet posted. */
   let outbox: OutFrame[] = []
   /** The post on the wire, read back by `answered`. */
-  let sent: { frames: OutFrame[]; body: string; known: Known } | undefined
+  let sent: { frames: OutFrame[]; acks: typeof acks; body: string; known: Known } | undefined
   /** Which post of this tick comes next: 0 is the tick's first, which waits until one is due. */
   let round = 0
 
@@ -188,13 +199,25 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       return undefined
     }
     const c = opened.t === 'command' ? commandOf(opened.command) : undefined
-    if (c?.kind !== 'permission' || c.decision !== 'allow') return c
-    // An allow runs a tool on the Mac: it needs Face ID for this request on this connection, checked once.
-    if (allowsTried.has(c.requestId)) return undefined
-    allowsTried.add(c.requestId)
+    if (!c) return undefined
+    if (seen.has(c.id)) {
+      const was = seen.get(c.id)
+      if (was) acks.push({ to: conn.device.id, ack: was })
+      return undefined
+    }
+    seen.set(c.id, undefined)
+    // Ids are random per tap: keep the newest few hundred, enough for any phone's retries.
+    if (seen.size > 500) seen.delete(seen.keys().next().value!)
+    if (c.kind !== 'permission' || c.decision !== 'allow') return c
+    // An allow runs a tool on the Mac: it needs Face ID for this request on this connection. A slow network may lose
+    // a try, so a request gets a few, each with its own assertion; past that it is refused like a bad one.
+    const tries = (allowsTried.get(c.requestId) ?? 0) + 1
+    allowsTried.set(c.requestId, tries)
     const passkey = assertionOf(c.passkey)
     const challenge = passkeyChallenge('allow', c.requestId, conn.peerEph)
-    return passkey && verifyPasskey(passkey, conn.device.credentialKey, challenge, o.origin) ? c : undefined
+    if (tries <= MAX_ALLOW_TRIES && passkey && verifyPasskey(passkey, conn.device.credentialKey, challenge, o.origin)) return c
+    queueAck(conn.device.id, { t: 'ack', id: c.id, ok: false, why: 'passkey not verified' })
+    return undefined
   }
 
   /** Reads an `up` answer: hellos answered (pairing new devices), boxes opened into commands. */
@@ -259,6 +282,12 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     isQuiet,
 
     /**
+     * Tells `device` what came of its command (`ack.id`), sealed in the next post; a later copy of the same command
+     * gets the same ack again. Every command the adapter handles is acked, so the phone never has to guess.
+     */
+    ack: (device: string, ack: Ack) => queueAck(device, ack),
+
+    /**
      * The post to send now, or none. A tick's first post waits until one is due: every tick while a permission is
      * held for a looking device (`isHolding`), when there are welcomes to send, or when the snapshot changed; every
      * 6 s while a paired device (any device while a pairing is open) looks or for a minute after a welcome; otherwise
@@ -271,11 +300,18 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       if (isQuiet(k)) return undefined
       const body = snapshotKey(k.snapshot)
       const isActive = k.now < poll.warmUntil || [...connected.values()].some(Boolean)
-      const isDue = round > 0 || k.isHolding || outbox.length > 0 || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
+      const isDue =
+        round > 0 || k.isHolding || outbox.length > 0 || acks.length > 0 || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
       if (!isDue) return undefined
-      const frames = [...outbox, ...snapshots(k.snapshot, k.now)]
+      // Acks are sealed like snapshots, on the device's current channel; one whose device has gone is dropped.
+      const sealed = acks.flatMap(a => {
+        const c = conns.get(a.to)
+        return c ? [{ to: a.to, data: { t: 'box', b: c.ch.seal(a.ack) } }] : []
+      })
+      const frames = [...outbox, ...sealed, ...snapshots(k.snapshot, k.now)]
+      sent = { frames, acks, body, known: { devices: k.devices, pairing: k.pairing, now: k.now } }
       outbox = []
-      sent = { frames, body, known: { devices: k.devices, pairing: k.pairing, now: k.now } }
+      acks = []
       return { token: o.identity.token, session: o.session, since, frames }
     },
 
@@ -291,6 +327,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       if (!s || !r) {
         if (s) {
           outbox = [...s.frames.filter(f => obj(f.data).t !== 'box'), ...outbox]
+          acks = [...s.acks, ...acks]
           for (const c of conns.values()) c.last = { body: '', at: 0 }
           poll.fails++
           poll.retryAt = now + backoffMs(poll.fails)

@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 159 passing" src="https://img.shields.io/badge/tests-159%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 185 passing" src="https://img.shields.io/badge/tests-185%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -123,7 +123,7 @@ Claude Code's Remote Control does not draw plugin UI in the phone app, so stream
 - **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
 - **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. What you send is filed in that stream.
 - **Stop** a running turn (tap twice, so a stray touch doesn't).
-- **Allow or deny permission prompts.** While the app is open and unlocked on a device, a prompt goes there first, with what the call would do (`Bash: git push …`). **Allow** asks for Face ID (or your passcode) first. Unanswered after 60 seconds, or with no device looking, the prompt appears on the Mac as usual.
+- **Allow or deny permission prompts.** While the app is open and unlocked on a device, a prompt goes there first, with what the call would do (`Bash: git push …`). **Allow** asks for Face ID (or your passcode) first. There is no countdown: the prompt waits until you answer it, on the phone or in the band above the prompt on your Mac, whichever comes first. With no device looking for 2 minutes, it moves to the Mac's usual prompt; it is never allowed for you. Claude's questions with options show on the phone too; unanswered for 2 minutes, Claude takes the option it marked recommended and says so.
 
 #### How it connects
 
@@ -180,7 +180,7 @@ The relay is a Cloudflare Worker with one Durable Object per account (a "room").
 - **pose as your Mac.** The device checks the session's long-term key from the QR code; a relay that swaps in its own key derives different keys and can open nothing.
 - **approve anything.** Your Mac keeps each device's passkey public key and checks every unlock and every **Allow** itself, against a fresh challenge and Face ID.
 
-**It can still** drop or delay messages, as any network can. Then the prompt falls back to the Mac after 60 seconds.
+**It can still** drop or delay messages, as any network can. Then the phone shows your tap as sent and waiting, with Retry, and the prompt can still be answered on the Mac.
 
 Session to relay traffic is budgeted for the free plan (100,000 requests a day): a session posts when its snapshot changes and every 30 seconds otherwise, every 2 seconds only while a device is looking, and not at all while the account has no paired device and no open pairing. Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters before sealing.
 
@@ -336,12 +336,12 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (124 tests) and `claude plugin validate --strict .` |
+| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (133 tests) and `claude plugin validate --strict .` |
 | The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (9 tests against a real `wrangler dev`) |
-| The phone and tablet app | `app` | `bun test` (26 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
-| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (12 checks) |
+| The phone and tablet app | `app` | `bun test` (43 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
+| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (22 checks) |
 
-`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing, unlocking, answering and allowing. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
+`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing (a double tap included), unlocking, answering, allowing on a slow Mac, a prompt answered on the Mac, and a question with options. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
 
 ---
 

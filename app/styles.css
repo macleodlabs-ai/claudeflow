@@ -69,6 +69,12 @@ header h1.brand { display: flex; align-items: center; gap: 10px; margin: 0; font
 .conn { flex: none; width: 12px; height: 12px; border-radius: 50%; overflow: hidden; white-space: nowrap; text-indent: 100%; font-size: 1px; color: transparent;
         background: transparent; box-shadow: inset 0 0 0 2px var(--error), 0 0 10px color-mix(in srgb, var(--error) 60%, transparent); }
 .conn.on { background: var(--done); box-shadow: 0 0 0 2px color-mix(in srgb, var(--done) 35%, transparent), 0 0 10px color-mix(in srgb, var(--done) 70%, transparent); }
+/* The line dropped: a small glass strip under the header, sticky so it stays in view (the header dot says it too). */
+.banner { position: sticky; top: calc(env(safe-area-inset-top) + 4px); z-index: 5; display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 12px;
+          border-radius: var(--r-sm); background: var(--glass-strong); border: 1px solid color-mix(in srgb, var(--stalled) 55%, var(--glass-line)); color: var(--text);
+          font-size: var(--fs-md); font-weight: 600; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.banner::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--stalled); }
+.banner[hidden] { display: none; }
 
 /* ---------- Session tabs ---------- */
 .tabs { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin: 0 -2px 6px; scrollbar-width: none; }
@@ -161,6 +167,40 @@ header h1.brand { display: flex; align-items: center; gap: 10px; margin: 0; font
 .perm .what { font: 13px/1.45 var(--font-mono); word-break: break-word; margin: 10px 0 0; padding: 8px 10px; border-radius: var(--r-xs); background: var(--night-800); color: var(--text); border: 1px solid var(--glass-line); }
 .perm .left { margin-left: auto; white-space: nowrap; padding: 2px 9px; border-radius: var(--r-pill); background: var(--night-800); color: var(--text-soft); font-size: var(--fs-sm); font-weight: 700; font-variant-numeric: tabular-nums; }
 .perm .actions .btn { flex: 1; max-width: 200px; }
+/* ✕ hides a card here only; 44px to tap, drawn small. */
+.perm .x { flex: none; width: 44px; height: 44px; margin: -10px -10px -10px 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--text-dim); font: 700 16px/1 var(--font-ui); cursor: pointer; }
+.perm .x:hover { color: var(--text); background: var(--glass); }
+.perm .left + .x { margin-left: 0; }
+.perm-head b + .x { margin-left: auto; }
+/* Settled or timed out: no longer asking, so the waiting glow goes. */
+.perm.settled { background: var(--night-700); border-color: var(--glass-line-strong); box-shadow: var(--shadow-panel); }
+.perm.settled .perm-head b::before { background: var(--idle); color: var(--on-idle); }
+.perm.allowed { border-color: var(--done); } .perm.allowed .perm-head b::before { content: "✓"; background: var(--done); color: var(--on-status); }
+.perm.denied { border-color: var(--error); } .perm.denied .perm-head b::before { content: "✗"; background: var(--error); color: var(--on-status); }
+.perm.chosen { border-color: var(--done); } .perm.chosen .perm-head b::before { content: "✓"; background: var(--done); color: var(--on-status); }
+.perm.moved .perm-head b::before, .perm.auto .perm-head b::before { content: "↗"; background: var(--stalled); color: var(--on-status); }
+/* A question: its text, then its options as full-width buttons, the recommended one first in the brand colour. */
+.perm .ask { margin: 10px 0 0; color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.perm .actions.options { flex-direction: column; align-items: stretch; }
+.perm .actions.options .btn { max-width: none; flex: none; text-align: left; display: flex; align-items: center; gap: 8px; }
+.btn.primary { background: var(--brand); color: var(--ink); }
+.btn .rec { margin-left: auto; font-size: var(--fs-xs); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; opacity: .8; }
+/* Where a tap is: a spinner and plain words, read out as they change. */
+.stage { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--text-soft); font-size: var(--fs-md); font-weight: 600; }
+.stage.done { font-size: var(--fs-base); color: var(--text); }
+.perm.allowed .stage.done { color: var(--done); } .perm.denied .stage.done { color: var(--error); } .perm.chosen .stage.done { color: var(--done); } .perm.moved .stage.done, .perm.auto .stage.done { color: var(--stalled); }
+.stage.why { color: var(--error); }
+.actions .stage { flex-basis: 100%; margin-top: 2px; }
+.perm > .btn.ghost, .question .btn.ghost[data-retry] { margin-top: 10px; }
+.spinner { flex: none; display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor;
+           animation: spin .9s linear infinite; vertical-align: -2px; }
+.btn .spinner { margin-right: 8px; }
+/* The button that is waiting stays readable; the others dim as usual. */
+.btn:disabled:has(.spinner) { opacity: .85; }
+@media (prefers-reduced-motion: reduce) {
+  /* A still ring: the words beside it say what is happening. */
+  .spinner { animation: none; border-color: currentColor; border-top-color: currentColor; opacity: .7; }
+}
 .stale-note { color: var(--stalled); font-size: var(--fs-sm); margin: -4px 0 10px; }
 
 /* ---------- Status view ---------- */
@@ -219,6 +259,8 @@ body.has-usage.usage-open { padding-bottom: calc(env(safe-area-inset-bottom) + 2
 .gate .btn + .btn.yes { background: var(--glass); color: var(--text); border: 1px solid var(--glass-line-strong); box-shadow: none; }
 .gate .why { color: var(--error); font-size: var(--fs-md); font-weight: 600; margin: -8px auto 16px; }
 .gate .why::before { content: "✗ "; }
+.gate .slow { color: var(--text-soft); font-size: var(--fs-md); font-weight: 600; margin: 14px auto 10px; }
+.gate .btn.ghost[data-gate="retry"] { min-height: 44px; font-size: var(--fs-base); }
 .gate .meta { margin-bottom: 6px; color: var(--text-dim); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .gate > .meta:first-child { margin-top: -6px; }
 .lock { color: var(--dim); font-size: var(--fs-sm); text-align: center; margin: 18px 0 0; }
