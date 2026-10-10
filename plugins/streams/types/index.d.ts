@@ -115,6 +115,13 @@ export type Workflow = {
   inferred: boolean
 }
 
+/**
+ * What the fast model made of a stream that showed WAITING or stalled (streams/completion.ts): finished, really
+ * waiting on the person, or still working, and why in a few words. `rowId` is the stream's last row when it was
+ * asked: the verdict holds only while that is still the last row, so anything new there asks again.
+ */
+export type Verdict = { rowId: string; state: 'done' | 'waiting' | 'running'; reason: string; at: number }
+
 /** How a stream's own view draws its rows: one line each, or as the session's transcript draws them. */
 export type ChatStyle = 'compact' | 'full'
 
@@ -142,6 +149,8 @@ declare module 'claude-code' {
       loops: Record<string, Loop>
       /** Workflow tool runs this session, by task id. */
       workflows: Record<string, Workflow>
+      /** The completion check's verdicts, by stream id (`completionCheck`). */
+      verdicts: Record<string, Verdict>
       /** The chat style chosen in the pane this session; '' follows the `chatStyle` setting. */
       chatStyle: ChatStyle | ''
       /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */

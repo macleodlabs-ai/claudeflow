@@ -870,7 +870,7 @@ describe('the status card', () => {
   // The terminal card and the phone read the same streamsNow, so both must drop it together.
   test('a question the person has typed past, in any stream, is no longer waiting; one with nothing after it still is', () => {
     const streams = [s('auth', 5), s('docs', 9)].map(x => ({ ...x, createdAt: 0, rows: 1, agents: 0, loops: 0 }))
-    const facts = (rows: Facts['rows']): Facts => ({ busy: false, current: 'docs', agents: {}, inflight: {}, outcome: {}, rows, loops: {}, workflows: {}, now: 100 })
+    const facts = (rows: Facts['rows']): Facts => ({ busy: false, current: 'docs', agents: {}, inflight: {}, outcome: {}, rows, loops: {}, workflows: {}, verdicts: {}, now: 100 })
     const asked = { id: 'r1', streamId: 'auth', kind: 'reply' as const, text: 'Shall I commit it?', at: 5 }
     const seen = (rows: Facts['rows']) => {
       const card = cardOf(streamsNow(facts(rows), streams), { git: [] })
@@ -1190,6 +1190,7 @@ describe('what the phone is sent', () => {
       rows: [],
       loops: { ci: { kind: 'wakeup', nextAt: at(540), noopStreak: 0 } },
       workflows: {},
+      verdicts: {},
       now,
     })
     const rateLimits = [{ kind: 'five_hour', percentUsed: 38, resetsAt: new Date(at(3600)).toISOString() }]

@@ -1,6 +1,7 @@
-import type { AgentRun, Health, Stream, StreamRow } from '../../types'
+import type { AgentRun, Health, Stream, StreamRow, Verdict } from '../../types'
 import { healthOf, nextPastel, pastelOf, slug, type Pulse } from '../classify'
 import { limitsOf, sortStatus, statusOf, ticketLines, type LimitView, type StatusLine } from '../status'
+import { checkedDone } from './completion'
 import { lapsed, type Loops } from './loops'
 import type { Workflows } from './workflows'
 
@@ -36,6 +37,11 @@ export type Facts = {
   loops: Loops
   /** Workflow runs: their running agents keep their stream running, as a subagent's do. */
   workflows: Workflows
+  /**
+   * The completion check's verdicts (completion.ts): one saying 'done' for a stream's last row turns its stalled into
+   * done and its WAITING into DONE, "checked ✓", on every screen.
+   */
+  verdicts: Record<string, Verdict>
   now: number
 }
 
@@ -51,17 +57,20 @@ function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, Health>
   return Object.fromEntries(
     streams.map(s => [
       s.id,
-      healthOf({
+      checkedHealth(f, s.id, healthOf({
         now: f.now,
         lastAt: Math.max(s.lastAt, ...running.filter(a => a.streamId === s.id).map(a => a.lastAt)),
         isTurnOn: f.busy && s.id === f.current,
         liveAgents: running.filter(a => a.streamId === s.id).length,
         inflight: f.inflight[s.id] ?? 0,
         outcome: f.outcome[s.id],
-      }),
+      })),
     ]),
   )
 }
+
+/** Stalled, unless the completion check found the stream's work finished since its last row. */
+const checkedHealth = (f: Facts, id: string, h: Health): Health => (h === 'stalled' && checkedDone(f.verdicts, f.rows, id) !== undefined ? 'done' : h)
 
 /** Every stream's status row, in the order that needs the person first. */
 function statusLinesOf(f: Facts, streams: readonly Stream[], health: Record<string, Health>): StatusLine[] {
@@ -79,6 +88,7 @@ function statusLinesOf(f: Facts, streams: readonly Stream[], health: Record<stri
           .sort((a, b) => b.lastAt - a.lastAt),
         lastSaid: f.rows.findLast(r => r.streamId === s.id && (r.kind === 'prompt' || r.kind === 'reply')),
         lastPromptAt,
+        checked: checkedDone(f.verdicts, f.rows, s.id),
       })
     })
   return sortStatus(lines, Object.fromEntries(streams.map(s => [s.id, s.lastAt])))

@@ -6,6 +6,7 @@ import { wireWorker } from './streams/worker'
 import { wireRouting } from './streams/routing'
 import { wireFiling } from './streams/filing'
 import { wireFlows } from './streams/flows'
+import { wireCheck } from './streams/check'
 import { wireUpdates } from './updates/check'
 import { wireRemote } from './remote/index'
 import { wireBar } from './ui/bar'
@@ -30,6 +31,7 @@ export const register: Register = (on, options) => {
   wireRemote(on, { relayUrl: typeof options.relayUrl === 'string' ? options.relayUrl.trim() : '' })
   wireBar(on)
   wireFlows(on)
+  wireCheck(on, { isOn: options.completionCheck !== false })
   wireRouting(on)
   wireFiling(on)
   wireTranscript(on)

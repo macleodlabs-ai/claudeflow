@@ -42,6 +42,7 @@ const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
+const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 /** The status card's git rows, shared with the card (ui/bar.tsx): one read serves both while it is fresh. */
 const statusGitA = atom({ plugin: 'streams', key: 'statusGit' } as const, { lines: [], at: 0 })
@@ -167,7 +168,7 @@ async function remoteTick($: $) {
         link.ack(c.device, { t: 'ack', id: c.command.id, ...done })
       }
       // The acks go in this tick, once: a phone waiting on Allow should not wait for the next one.
-      const isAcking = got.commands.length > 0 && !hasAcked
+      const isAcking: boolean = got.commands.length > 0 && !hasAcked
       hasAcked ||= isAcking
       post = got.again || isAcking ? link.next({ devices, pairing, now, snapshot, isHolding: held.size > 0 }) : undefined
     }
@@ -178,7 +179,7 @@ async function remoteTick($: $) {
 
 /** Everything the phone draws for this session now, held permissions included; sealed per device by the link. */
 async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot> {
-  const [streams, busy, agents, inflight, outcome, rows, loops, workflows, updates, now] = await Promise.all([
+  const [streams, busy, agents, inflight, outcome, rows, loops, workflows, verdicts, updates, now] = await Promise.all([
     read($, streamsA),
     read($, busyA),
     read($, agentsA),
@@ -187,10 +188,11 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     read($, rowsA),
     read($, loopsA),
     read($, workflowsA),
+    read($, verdictsA),
     read($, updatesA),
     $.clock.now(),
   ])
-  const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, workflows, now }
+  const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, workflows, verdicts, now }
   let git = await read($, statusGitA)
   if (now - git.at >= HEARTBEAT_MS) {
     const r = await $.process.run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 }).catch(() => undefined)

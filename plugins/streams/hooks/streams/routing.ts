@@ -26,6 +26,7 @@ const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
+const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const ROW = { plugin: 'streams', key: 'rowStream' } as const
 const COLOR = { plugin: 'streams', key: 'streamColor' } as const
 
@@ -61,7 +62,7 @@ async function save($: $) {
 }
 
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops, workflows, now] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -70,9 +71,10 @@ async function factsOf($: $): Promise<Facts> {
     read($, rowsA),
     read($, loopsA),
     read($, workflowsA),
+    read($, verdictsA),
     $.clock.now(),
   ])
-  return { busy, current, agents, inflight, outcome, rows, loops, workflows, now }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now }
 }
 
 /** Hybrid routing: follow-ups stay put, everything else asks Haiku which stream it continues. */

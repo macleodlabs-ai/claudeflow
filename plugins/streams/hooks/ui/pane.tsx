@@ -26,6 +26,7 @@ const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
 const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
+const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const showArchivedA = atom({ plugin: 'streams', key: 'showArchived' } as const, false)
@@ -90,7 +91,7 @@ async function setArchived($: $, id: string, archived: boolean) {
 
 /** The facts as of now; the tick is read so the pane redraws while clocks run. */
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops, workflows] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -99,9 +100,10 @@ async function factsOf($: $): Promise<Facts> {
     read($, rowsA),
     read($, loopsA),
     read($, workflowsA),
+    read($, verdictsA),
   ])
   await read($, tickA)
-  return { busy, current, agents, inflight, outcome, rows, loops, workflows, now: await $.clock.now() }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now: await $.clock.now() }
 }
 
 export function wirePane(on: On) {

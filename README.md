@@ -8,7 +8,7 @@
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 271 passing" src="https://img.shields.io/badge/tests-271%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 279 passing" src="https://img.shields.io/badge/tests-279%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -316,7 +316,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "chatStyle": "full", "diagnostics": false, "relayUrl": "" }
+      "options": { "chatStyle": "full", "completionCheck": true, "diagnostics": false, "relayUrl": "" }
     }
   }
 }
@@ -325,6 +325,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Setting | Default | Description |
 | --- | :---: | --- |
 | `chatStyle` | `full` | How a stream's own view draws its chat: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `view` switch in a stream's header changes it for the session. |
+| `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
 | `relayUrl` | empty | The relay your phones and tablets connect through, e.g. `https://relay.<you>.workers.dev`. Empty: no remote, and sessions never call any relay. |
 
@@ -342,7 +343,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (184 tests) and `claude plugin validate --strict .` |
+| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (192 tests) and `claude plugin validate --strict .` |
 | The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (25 tests: 15 against a real `wrangler dev`, 10 of Web Push on its own) |
 | The phone and tablet app | `app` | `bun test` (62 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
 | Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (27 checks) |

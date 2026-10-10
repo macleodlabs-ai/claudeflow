@@ -27,6 +27,12 @@
       ],
       "default": "full"
     },
+    "completionCheck": {
+      "type": "boolean",
+      "title": "Completion check",
+      "description": "Ask Haiku whether streams that show WAITING or stalled are in fact finished (one small call for all of them, again only after something new happens in a stream). A finished one shows DONE, checked ✓.",
+      "default": true
+    },
     "relayUrl": {
       "type": "string",
       "title": "Relay address",

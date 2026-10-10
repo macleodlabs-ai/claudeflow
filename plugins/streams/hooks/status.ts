@@ -24,6 +24,8 @@ export type StatusInput = {
    * saw it and moved on. A question with nothing after it stays waiting, however long ago it was asked.
    */
   lastPromptAt?: number
+  /** The completion check found this stream finished, and why (streams/completion.ts): DONE, not WAITING or stalled. */
+  checked?: string
 }
 
 const STATE_WORD: Record<StatusKind, string> = {
@@ -61,6 +63,7 @@ export function statusOf(x: StatusInput): StatusLine {
     if (l.kind === 'monitor') return line('loop', `watching${l.reason ? `: ${l.reason}` : ''} · ${s.summary}`)
     return line('loop', [l.kind === 'cron' ? l.every : '', l.reason, s.summary].filter(Boolean).join(' · '), clock)
   }
+  if (x.checked !== undefined && x.health !== 'error') return line('done', x.checked ? `checked ✓ ${x.checked}` : 'checked ✓', { since: s.lastAt })
   const said = x.lastSaid
   const question = said?.kind === 'reply' && (x.lastPromptAt ?? 0) <= said.at ? questionOf(said.text) : undefined
   if (question && x.health !== 'error') return line('waiting', question)
