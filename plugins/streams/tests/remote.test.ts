@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
-import { PAIRING_MS, createLink, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { HEARTBEAT_MS, PHONE_PERMISSION_MS, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { STORE, TICK_MS } from '../hooks/remote/index'
 import { spkiOf } from './authenticator'
@@ -65,6 +65,21 @@ describe('pairing and unlocking', () => {
     expect(r.frames.map(tOf)).toEqual(['welcome', 'box'])
     expect(r.paired).toEqual([])
     expect(a.isUnlocked()).toBe(true)
+  })
+
+  test('a device that paired twice keeps only its newest passkey, so it still unlocks', () => {
+    // A double tap or a retry on a slow network paired one phone twice: the store held both passkeys, the older first,
+    // and every unlock and Allow was checked against the older one the phone no longer uses.
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const other = phone(me, 'old')
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN })
+    const stale = { ...a.stored(), credentialId: other.stored().credentialId, credentialKey: other.stored().credentialKey }
+    const devices = devicesOf([stale, a.stored()])
+    expect(devices).toEqual([a.stored()])
+    relay.from(a, a.hello({ now: T0 }))
+    expect(cycle(link, relay, { devices, now: T0 }).frames.map(tOf)).toEqual(['welcome', 'box'])
   })
 
   test('an unpaired device, or a paired id with another key, is denied and gets no channel', () => {

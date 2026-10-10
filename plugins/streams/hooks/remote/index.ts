@@ -99,7 +99,7 @@ async function remoteTick($: $) {
       if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
         const fresh = devicesOf(await $.store.get(STORE.devices))
-        devices = [...fresh.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired]
+        devices = devicesOf([...fresh.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired])
         await $.store.set(STORE.devices, devices)
       }
       for (const c of got.commands) await phoneCommand($, c.command).catch(() => {})
