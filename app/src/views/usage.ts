@@ -2,7 +2,8 @@
 import type { Snapshot } from '../state'
 import { esc, limitColor, resetsIn } from './util'
 
-export function usageBar(x: Snapshot, isOpen: boolean, now: number): string {
+/** Plan usage, always in full: each limit with its bar and reset, under the model the session runs on. */
+export function usageBar(x: Snapshot, now: number): string {
   const limits = x.limits ?? []
   if (!limits.length) return ''
   const pct = (p: number) => Math.max(0, Math.min(100, Number(p) || 0))
@@ -21,7 +22,8 @@ export function usageBar(x: Snapshot, isOpen: boolean, now: number): string {
       ${l.until !== undefined ? `<span class="meta reset">resets in ${esc(resetsIn(l, now))} · ${esc(l.resetsAt)}</span>` : ''}</div>`,
     )
     .join('')
-  return `<div class="usage" data-usage role="button" aria-expanded="${isOpen}" tabindex="0">
-    <div class="usage-row"><span class="meta">Plan usage</span>${row}<span class="grow"></span><span class="chev" aria-hidden="true">▸</span></div>
-    ${isOpen ? `<div class="more">${more}</div>` : ''}</div>`
+  const model = x.session.model ? `<span class="model">${esc(x.session.model)}</span>` : ''
+  return `<div class="usage">
+    <div class="usage-row"><span class="meta">Plan usage</span><span class="grow"></span>${model}</div>
+    <div class="more">${more}</div></div>`
 }

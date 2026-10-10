@@ -197,8 +197,9 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     await update($, statusGitA, () => git)
   }
   const card = cardOf(streamsNow(facts, streams), { git: git.lines, rateLimits: (await $.session.usage().catch(() => undefined))?.rateLimits })
+  const model = await $.session.model().catch(() => undefined)
   return snapshotOf({
-    session: { ...session, busy },
+    session: { ...session, busy, ...(model ? { model } : {}) },
     lines: card.lines,
     streams,
     colorOf,

@@ -71,7 +71,7 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
   const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide)
   // The dock: the composer for the stream being viewed, with plan usage and the runs-and-loops line a swipe away (on a
   // Mac, main.ts moves those two into the sidebar).
-  const bottom = dock(s, t.key, x, compose ?? { files: [], isListening: false, hasMic: false, why: '' }, [usageBar(x, s.isUsageOpen, now), summaryLine(x, now)])
+  const bottom = dock(s, t.key, x, compose ?? { files: [], isListening: false, hasMic: false, why: '' }, [usageBar(x, now), summaryLine(x, now)])
   // From 820 px the working line and Stop sit at the right of the toolbar, by the streams they stop.
   return `${isWide ? '' : stop}${permissions(askCards(s, t.key, now), now)}${stale}
     <div class="toolbar"><div class="chips">${chips(streams)}</div>${views}${isWide ? stop : ''}</div>${body}${notifyRow(notify)}${bottom}`
