@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { nextTheme, themeOf } from '../src/theme'
+import { nextTheme, switchGlyph, themeOf } from '../src/theme'
 
 describe('theme switch', () => {
-  test('one tap at a time reaches every theme and comes back to the device setting', () => {
-    expect(nextTheme('auto')).toBe('light')
-    expect(nextTheme('light')).toBe('dark')
-    expect(nextTheme('dark')).toBe('auto')
+  test('the switch shows where a tap goes, a sun in the dark and a moon in the light, and a tap goes there', () => {
+    // Showing the current scheme read as the wrong way round: the icon is the action, as on most switches.
+    expect(switchGlyph(true)).toBe('☀')
+    expect(nextTheme(true)).toBe('light')
+    expect(switchGlyph(false)).toBe('☾')
+    expect(nextTheme(false)).toBe('dark')
   })
 
   test('a stored value this build does not know falls back to the device setting, not a pinned scheme', () => {

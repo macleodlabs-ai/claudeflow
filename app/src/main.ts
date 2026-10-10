@@ -71,8 +71,8 @@ let wasOnline = false
 function dispatch(a: Action) {
   const before = state
   state = reduce(state, a)
-  if (a.type === 'choose' || a.type === 'view' || a.type === 'toggle' || a.type === 'reveal' || a.type === 'select' || a.type === 'usage')
-    keep.set('cf:ui', { chosen: state.chosen, view: state.view, open: state.open, isUsageOpen: state.isUsageOpen })
+  if (a.type === 'choose' || a.type === 'view' || a.type === 'toggle' || a.type === 'reveal' || a.type === 'select' || a.type === 'usage' || a.type === 'chat-style')
+    keep.set('cf:ui', { chosen: state.chosen, view: state.view, open: state.open, isUsageOpen: state.isUsageOpen, chatStyle: state.chatStyle })
   if (a.type === 'hide') visit.set('cf:hidden', state.hidden)
   if (a.type === 'mute') keep.set('cf:muted', state.isMuted)
   if (state.seen !== before.seen) keep.set('cf:seen', state.seen)
@@ -354,6 +354,7 @@ document.addEventListener('click', e => {
     })
   }
   if (at('[data-mic]')) return voice.toggle()
+  if (at('[data-chat-style]')) return dispatch({ type: 'chat-style' }), render()
   const unattach = at('[data-unattach]')
   if (unattach) {
     attached.splice(Number(unattach.dataset.unattach), 1)

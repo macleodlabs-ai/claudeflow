@@ -2,6 +2,7 @@
 // draft comes from the state, so a redraw from a new snapshot keeps what was typed.
 import { isInFlight, SENT_MS, SLOW_MS, streamKey, type State, isUnseen } from '../state'
 import { flowDetail, flowSub, progress } from './flows'
+import { md } from './markdown'
 import { clock, color, esc, GLYPH, kindOf, lineText, SLOW_TEXT, STATE_COLOR, stageLine, type Stream } from './util'
 
 const ROW_CLASS: Record<string, string> = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
@@ -37,7 +38,9 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
       <span class="meta">${Number(a.tools) || 0} tools · ${clock((Number(a.endedAt) || now) - (Number(a.startedAt) || now))}</span></div>`,
     )
     .join('')
-  const rows = (x.rows ?? []).map(r => `<div class="row ${ROW_CLASS[r.kind] ?? ''}">${esc(r.text)}</div>`).join('')
+  // Full: a reply drawn as markdown, the rest whole; compact: one line each (styles.css).
+  const isFull = s.chatStyle === 'full'
+  const rows = (x.rows ?? []).map(r => `<div class="row ${ROW_CLASS[r.kind] ?? ''}">${isFull && r.kind === 'reply' ? md(r.text) : esc(r.text)}</div>`).join('')
   const question =
     x.question && mode !== 'list'
       ? `<div class="question">${esc(x.question)}
@@ -54,15 +57,19 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
         ? `data-select="${esc(key)}" role="button" tabindex="0" aria-current="${isSelected}"`
         : ''
   const chev = mode === 'inline' ? `<span class="chev" aria-hidden="true">▸</span>` : ''
+  // The ≡/▤ switch, on an open stream: compact or full, for every stream, as in the terminal's pane.
+  const style = isOpen
+    ? `<button type="button" class="style-btn" data-chat-style aria-label="${isFull ? 'Show compact' : 'Show full'}" title="${isFull ? 'Compact' : 'Full'}">${isFull ? '≡' : '▤'}</button>`
+    : ''
   const flow = mode === 'list' ? '' : flowDetail(s, key, x, now)
   const body =
     mode === 'list'
       ? ''
       : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${x.question ? '' : sentNote(s, key, now)}</div>`
-  return `<section class="card st-${kind} ${isOpen ? 'open' : ''} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
+  return `<section class="card st-${kind} ${isOpen ? 'open' : ''} ${isFull ? 'full' : 'compact'} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
       <div class="title"><div class="name">${esc(x.name)}${mode !== 'detail' && isUnseen(s, sessionKey, x) ? '<span class="new-dot" role="img" aria-label="changed since you looked"></span>' : ''}</div>${line}</div>
-      <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>${chev}</div>
+      <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>${style}${chev}</div>
     ${x.workflow ? progress(x.workflow) : ''}${question}${body}
   </section>`
 }
