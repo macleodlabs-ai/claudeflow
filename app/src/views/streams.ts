@@ -58,7 +58,7 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
   const body =
     mode === 'list'
       ? ''
-      : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${replyBox(s, key)}${x.question ? '' : sentNote(s, key, now)}</div>`
+      : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${x.question ? '' : sentNote(s, key, now)}</div>`
   return `<section class="card st-${kind} ${isOpen ? 'open' : ''} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
       <div class="title"><div class="name">${esc(x.name)}${mode !== 'detail' && isUnseen(s, sessionKey, x) ? '<span class="new-dot" role="img" aria-label="changed since you looked"></span>' : ''}</div>${line}</div>

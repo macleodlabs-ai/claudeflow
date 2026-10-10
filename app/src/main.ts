@@ -31,6 +31,8 @@ import { startTheme } from './theme'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
 import { bell, page, switcher, tabs } from './views/page'
+import { attachOf, sendFiles, type Ready } from './upload'
+import { dictation } from './voice'
 
 /** Web storage can throw (private mode, blocked storage): the app then works for this visit only. */
 const storeOf = (which: () => Storage) => ({
@@ -178,14 +180,51 @@ function render() {
   el('tabs').innerHTML = tabs(state, now)
   el('page-name').innerHTML = switcher(state, now)
   el('bell').innerHTML = bell(state, now)
-  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView())
-  // On a Mac the sidebar holds the dock (runs-and-loops line, plan usage) right under the session tabs.
-  const dock = el('main').querySelector('.dock')
-  if (dock && side.matches) el('tabs').append(dock)
-  const hasUsage = !!dock?.querySelector('.usage')
-  document.body.classList.toggle('has-usage', hasUsage)
-  document.body.classList.toggle('has-summary', !!dock?.querySelector('.flowsum'))
-  document.body.classList.toggle('usage-open', hasUsage && state.isUsageOpen)
+  const compose = { files: attached.map(f => ({ name: f.name, preview: f.preview })), isListening: voice.isListening(), hasMic: voice.isOffered, why: composeWhy }
+  el('main').innerHTML = page(state, now, views.some(v => v.gate === 'open'), wide.matches, notifyView(), compose)
+  // On a Mac the sidebar holds plan usage and the runs-and-loops line right under the session tabs; the composer stays.
+  const dock = el('main').querySelector<HTMLElement>('.dock')
+  if (dock && side.matches) {
+    const info = document.createElement('div')
+    info.className = 'dock'
+    info.append(...dock.querySelectorAll('.slide.info'))
+    if (info.childElementCount) el('tabs').append(info)
+  }
+  document.body.classList.toggle('usage-open', !!dock?.querySelector('.usage') && state.isUsageOpen)
+  // The page keeps clear of the dock, however tall the composer has grown.
+  document.body.style.setProperty('--dock-h', `${dock?.offsetHeight ?? 0}px`)
+  document.querySelectorAll<HTMLTextAreaElement>('[data-compose]').forEach(grow)
+}
+
+/** Files waiting to go with the next prompt, read and sized on the phone. */
+let attached: Ready[] = []
+/** Why the last attach or send did not work, shown by the composer until the next try. */
+let composeWhy = ''
+
+/** The composer grows with its text, up to 40% of the screen, then scrolls. */
+function grow(t: HTMLTextAreaElement) {
+  t.style.height = 'auto'
+  t.style.height = `${Math.min(t.scrollHeight, Math.round(innerHeight * 0.4))}px`
+  document.body.style.setProperty('--dock-h', `${t.closest<HTMLElement>('.dock')?.offsetHeight ?? 0}px`)
+}
+
+/** Dictation types into the composer, where the person can edit it before sending. */
+const voice = dictation(text => {
+  const t = document.querySelector<HTMLTextAreaElement>('[data-compose]')
+  if (!t) return
+  t.value = t.value ? `${t.value.replace(/\s+$/, '')} ${text}` : text
+  state = reduce(state, { type: 'draft', key: t.dataset.draft!, text: t.value })
+  grow(t)
+}, () => render())
+
+async function attach(files: Iterable<File>) {
+  composeWhy = ''
+  for (const f of files) {
+    const r = await attachOf(f)
+    if ('why' in r) composeWhy = r.why
+    else attached.push(r)
+  }
+  render()
 }
 
 /** A new tap on `key` for session `t`, carrying the Allow tries this request has already spent. */
@@ -250,7 +289,28 @@ const streamIdOf = (key: string) => key.slice((currentOf(state, Date.now())?.key
 document.addEventListener('input', e => {
   const d = (e.target as Element).closest?.<HTMLTextAreaElement>('[data-draft]')
   if (d) state = reduce(state, { type: 'draft', key: d.dataset.draft!, text: d.value })
+  if (d?.matches('[data-compose]')) grow(d)
 })
+document.addEventListener('change', e => {
+  const input = (e.target as Element).closest?.<HTMLInputElement>('[data-attach]')
+  if (input?.files?.length) void attach([...input.files])
+})
+// A photo or file pasted into the composer is attached, as one chosen with 📎.
+document.addEventListener('paste', e => {
+  if (!(e.target as Element).closest?.('[data-compose]') || !e.clipboardData?.files.length) return
+  e.preventDefault()
+  void attach([...e.clipboardData.files])
+})
+// While the composer has focus it takes the dock's whole width, plan usage as thin lines under it.
+document.addEventListener('focusin', e => document.body.classList.toggle('composing', !!(e.target as Element).closest?.('[data-compose]')))
+document.addEventListener('focusout', () => document.body.classList.remove('composing'))
+// The dock's dots follow the slide in view.
+document.addEventListener('scroll', e => {
+  const strip = e.target as HTMLElement
+  if (!strip.matches?.('[data-slides]')) return
+  const i = Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth))
+  strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === i))
+}, true)
 document.addEventListener('focusout', () => setTimeout(() => pendingRender && render(), 0))
 
 document.addEventListener('click', e => {
@@ -272,17 +332,39 @@ document.addEventListener('click', e => {
   if (sendBtn) {
     const key = sendBtn.dataset.send!
     const text = (state.drafts[key] ?? '').trim()
-    if (!text || !shown || isInFlight(state.taps[key])) return
+    if ((!text && !attached.length) || !shown || isInFlight(state.taps[key])) return
+    const files = attached
+    attached = []
+    composeWhy = ''
+    voice.stop()
     dispatch({ type: 'sent', key })
     ;(document.activeElement as HTMLElement | null)?.blur?.()
-    return void go(key, tapFor(shown, key, { id: randomId(), kind: 'answer', streamId: streamIdOf(key), text }))
+    const command = { id: randomId(), kind: 'answer' as const, streamId: streamIdOf(key), text }
+    if (!files.length) return void go(key, tapFor(shown, key, command))
+    // The files go first, in chunks; the prompt naming them follows once every chunk is sent.
+    const link = linkOf(shown.room)
+    if (!link) return
+    return void sendFiles(files, c => link.send(shown.snapshot.session.id, c)).then(r => {
+      if ('why' in r) {
+        attached = files
+        composeWhy = r.why
+        return render()
+      }
+      void go(key, tapFor(shown, key, { ...command, files: r.files }))
+    })
+  }
+  if (at('[data-mic]')) return voice.toggle()
+  const unattach = at('[data-unattach]')
+  if (unattach) {
+    attached.splice(Number(unattach.dataset.unattach), 1)
+    return render()
   }
   const replyOpen = at('[data-reply-open]')
   if (replyOpen) {
     const key = replyOpen.dataset.replyOpen!
     dispatch({ type: 'reveal', key })
     render()
-    document.querySelector<HTMLElement>(`[data-draft="${CSS.escape(key)}"]`)?.focus()
+    document.querySelector<HTMLElement>('[data-compose]')?.focus()
     return
   }
   const perm = at('[data-perm]')

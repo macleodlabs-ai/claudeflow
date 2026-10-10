@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.5" src="https://img.shields.io/badge/version-1.1.5-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.1.6" src="https://img.shields.io/badge/version-1.1.6-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
   <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
@@ -117,6 +117,7 @@ Claude Code's Remote Control does not draw plugin UI in the phone app, so stream
 <p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Claudeflow app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
 
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
+- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.claudeflow/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it. Swipe it aside for plan usage and the runs line; while you type, plan usage shows as thin lines under it.
 - **News from other projects:** a red count by the project name says how many other projects have streams that changed since you looked, with red dots on them in the list and the tabs. Within a project, a changed stream wears a red dot until you open it or leave the project. The 🔔 in the header mutes and unmutes the other projects' news.
 - **Switch project from the header:** the header names the shown project. Swipe it sideways for the next or previous session, or hold it for the list of every session, across every account the device is paired with.
 - **What needs you first:** a waiting stream's question shows on its card without opening it.
