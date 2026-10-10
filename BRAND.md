@@ -125,9 +125,11 @@ for the person, so it gets the strongest treatment: border plus tint on the ques
 
 `app/strands.svg`: six strands tangle on the left, cross, meet at a knot, then fan out into their own lanes, each
 ending in a dot. Ghost strands give the tangle depth; a white light runs along them unless motion is reduced.
-The icon (`app/icon.svg`, `app/icon.png` 512) is the same story with five thick strands on a night-to-nebula square,
+The icon (`app/icon.svg`, `app/icon.png` 512) is the same story with five thick strands on a graphite square,
 for 180px and up (manifest, apple-touch). `app/mark.svg` is the small-size version (header lockup, favicon): four
 strands at stroke 12 that cross once, with big end dots, so it stays legible at 16-34px.
+Both tiles are graphite (#2e2e34 lit from the top left to #0e0e10), matching the neutral ground. The earlier
+indigo tiles are kept in `app/brand/indigo/` (not shipped): to go back, copy them over `app/`.
 
 Where it goes:
 - Pair page: full width above the QR card. The moment of joy.

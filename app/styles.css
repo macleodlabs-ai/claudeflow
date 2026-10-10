@@ -65,7 +65,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-even
 /* ---------- Header: the wordmark lockup ---------- */
 header { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 4px 0 12px; }
 header h1.brand { display: flex; align-items: center; gap: 10px; margin: 0; font: 700 24px/1 var(--font-display); letter-spacing: -0.02em; color: var(--text); }
-.mark { width: 30px; height: 30px; border-radius: 8px; flex: none; box-shadow: 0 0 18px rgba(124, 131, 255, .35); }
+.mark { width: 30px; height: 30px; border-radius: 8px; flex: none; box-shadow: 0 1px 6px var(--shade); }
 .wordmark { position: relative; padding-bottom: 5px; }
 .wordmark::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 3px; background: var(--flow); filter: drop-shadow(0 0 6px var(--brand-glow)); }
 .page-name { color: var(--text-dim); font-weight: 800; font-size: var(--fs-base); letter-spacing: -0.01em; white-space: nowrap; }
