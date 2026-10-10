@@ -6,7 +6,8 @@ import { KEY_VERSION, MAX_ROWS, PANE, SAVED_ROWS, jobs, mem, storeKey, type Job,
 import { REPLY_SYSTEM, ago, buildReplyPrompt, pickReplyStream, rowKey, slug, textKey } from '../classify'
 import { inParallel, readTranscript } from '../history'
 import { importPlan } from './importPlan'
-import { colorOf, lapsed, touched, uuidOf, withStream } from './model'
+import { colorOf, touched, uuidOf, withStream } from './model'
+import { loopsAt } from './loops'
 
 // The background worker: files a session's history into streams, and moves a reply filed under the running
 // turn to the mid-turn prompt it answers. Hooks queue the work (`jobs`); a timer drains it.
@@ -84,8 +85,8 @@ async function tick($: $) {
   const [busy, agents, loops] = await Promise.all([read($, busyA), read($, agentsA), read($, loopsA)])
   if (!busy && !Object.values(agents).some(a => a.status === 'running') && Object.keys(loops).length === 0) return
   const now = await $.clock.now()
-  if (Object.values(loops).some(l => lapsed(l, now)))
-    await update($, loopsA, m => Object.fromEntries(Object.entries(m).filter(([, l]) => !lapsed(l, now))))
+  // A loop that lapsed is dropped and a cron that fired moves on: once per fire, not once per second.
+  if (loopsAt(loops, now) !== loops) await update($, loopsA, m => loopsAt(m, now))
   await update($, tickA, () => now)
 }
 

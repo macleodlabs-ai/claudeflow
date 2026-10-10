@@ -1,4 +1,4 @@
-import type { Health, Stream } from '../types'
+import type { Health, Loop, Stream } from '../types'
 import { ago, clockOf, oneLine, type BadgeKind } from './classify'
 
 /**
@@ -14,10 +14,18 @@ export const QUIET_MS = 60_000
 export type StatusInput = {
   stream: Pick<Stream, 'id' | 'name' | 'summary' | 'lastAt'>
   health: Health
-  loop?: { kind: 'wakeup' | 'cron'; nextAt: number; label: string }
+  loop?: Loop
   running: { description: string; last: string; tools: number }[]
-  /** The stream's last prompt or reply: a reply ending in a question is waiting on the person. */
-  lastSaid?: { kind: string; text: string }
+  /** The stream's last prompt or reply: a reply ending in a question may be waiting on the person. */
+  lastSaid?: { kind: string; text: string; at: number }
+  /**
+   * When the person last sent a prompt, in any stream (epoch ms). A question is open only while nothing has been typed
+   * since it was asked: the answer is often filed into another stream, and anything typed after it means the person
+   * saw it and moved on. A question with nothing after it stays waiting, however long ago it was asked.
+   */
+  lastPromptAt?: number
+  /** The completion check found this stream finished, and why (streams/completion.ts): DONE, not WAITING or stalled. */
+  checked?: string
 }
 
 const STATE_WORD: Record<StatusKind, string> = {
@@ -49,8 +57,15 @@ export function statusOf(x: StatusInput): StatusLine {
     const more = x.running.length > 1 ? `${x.running.length} agents · ` : ''
     return line('running', `${more}${top.description}: ${top.tools ? `${top.last} (${top.tools} tools)` : 'starting up'}`)
   }
-  if (x.loop) return x.loop.kind === 'cron' ? line('loop', `${x.loop.label} · ${s.summary}`) : line('loop', s.summary, { nextAt: x.loop.nextAt })
-  const question = x.lastSaid?.kind === 'reply' ? questionOf(x.lastSaid.text) : undefined
+  if (x.loop) {
+    const l = x.loop
+    const clock = l.nextAt !== undefined ? { nextAt: l.nextAt } : {}
+    if (l.kind === 'monitor') return line('loop', `watching${l.reason ? `: ${l.reason}` : ''} · ${s.summary}`)
+    return line('loop', [l.kind === 'cron' ? l.every : '', l.reason, s.summary].filter(Boolean).join(' · '), clock)
+  }
+  if (x.checked !== undefined && x.health !== 'error') return line('done', x.checked ? `checked ✓ ${x.checked}` : 'checked ✓', { since: s.lastAt })
+  const said = x.lastSaid
+  const question = said?.kind === 'reply' && (x.lastPromptAt ?? 0) <= said.at ? questionOf(said.text) : undefined
   if (question && x.health !== 'error') return line('waiting', question)
   return line(x.health, s.summary || '—', { since: s.lastAt })
 }

@@ -1,22 +1,27 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { PANE, PANE_KEY, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
+import { PANE, PANE_KEY, SAVED_ROWS, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
 import { ago } from '../classify'
+import { ARCHIVE_LOOK_MS, archivableOf } from './archive'
 import { colorOf, streamsNow, type Facts } from './model'
 
-// A session's start (its streams restored, the commands declared, the pane opened) and its heartbeat.
+// A session's start (its streams restored, the commands declared, the pane opened) and its heartbeat, which also
+// archives finished streams left alone for `autoArchiveHours` (archive.ts).
 
 type $ = EngineInterface
 
 const streamsA = atom({ plugin: 'streams', key: 'streams' } as const, [])
 const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const focusA = atom({ plugin: 'streams', key: 'focus' } as const, '')
+const viewA = atom({ plugin: 'streams', key: 'view' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
+const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const healthA = atom({ plugin: 'streams', key: 'health' } as const, {})
@@ -24,6 +29,26 @@ const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const historyFiledA = atom({ plugin: 'streams', key: 'historyFiled' } as const, false)
 const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const, false)
 const COLOR = { plugin: 'streams', key: 'streamColor' } as const
+
+/** The `autoArchiveHours` setting (0: off), and when the heartbeat last looked for streams to archive. */
+let archiveHours = 24
+let archiveLookedAt = 0
+
+/**
+ * Archives what archive.ts says is finished and long quiet, as the pane's ✕ does: off the bar and the list, out of
+ * focus and the pane's detail, and saved, so it stays archived after a reload and is restorable from "archived".
+ */
+async function autoArchive($: $, ids: string[]) {
+  await update($, streamsA, list => list.map(s => (ids.includes(s.id) ? { ...s, archived: true } : s)))
+  if (ids.includes(await read($, focusA))) {
+    await update($, focusA, () => '')
+    const current = await read($, currentA)
+    $.ui.status(current && !ids.includes(current) ? `stream ${current}` : undefined)
+  }
+  if (ids.includes(await read($, viewA))) await update($, viewA, () => '')
+  const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
+  await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+}
 
 async function writeDiagnostics($: $) {
   const [rows, streams, historyFiled] = await Promise.all([read($, rowsA), read($, streamsA), read($, historyFiledA)])
@@ -65,7 +90,7 @@ async function unstick($: $) {
 }
 
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops, now] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -73,9 +98,11 @@ async function factsOf($: $): Promise<Facts> {
     read($, outcomeA),
     read($, rowsA),
     read($, loopsA),
+    read($, workflowsA),
+    read($, verdictsA),
     $.clock.now(),
   ])
-  return { busy, current, agents, inflight, outcome, rows, loops, now }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now }
 }
 
 /**
@@ -87,7 +114,8 @@ async function beat($: $) {
   if (mem.isDiagnosing) await writeDiagnostics($).catch(() => {})
   const [streams, before, facts] = await Promise.all([read($, streamsA), read($, healthA), factsOf($)])
   const { now, current } = facts
-  const after = streamsNow(facts, streams).health
+  const n = streamsNow(facts, streams)
+  const after = n.health
   for (const s of streams) {
     const was = before[s.id]
     // A stream that wakes up opens again, whatever it was folded to.
@@ -97,9 +125,15 @@ async function beat($: $) {
   }
   const changed = streams.some(s => before[s.id] !== after[s.id])
   if (changed) await update($, healthA, () => after)
+  if (archiveHours > 0 && now - archiveLookedAt >= ARCHIVE_LOOK_MS) {
+    archiveLookedAt = now
+    const ids = archivableOf({ now: n, streams, loops: facts.loops, hours: archiveHours, at: now })
+    if (ids.length) await autoArchive($, ids)
+  }
 }
 
-export function wireSession(on: On) {
+export function wireSession(on: On, opts: { autoArchiveHours: number }) {
+  archiveHours = opts.autoArchiveHours
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get(storeKey(e.cwd))) as Saved | undefined
     if (saved && (await read($, streamsA)).length === 0) {

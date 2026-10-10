@@ -5,7 +5,8 @@ import type { AgentRun, Folded, Stream, StreamRow } from '../../types'
 import { MAX_ROWS, SAVED_ROWS, jobs, mem, storeKey, type Saved } from '../state'
 import { oneLine, rowKey, textKey } from '../classify'
 import { itemsOf, rowOf } from '../history'
-import { touched, type LoopArgs, type Loops } from './model'
+import { touched } from './model'
+import { afterCall, markQuiet } from './loops'
 
 // Files what the session does, as it happens, in the stream it belongs to: each transcript row, each
 // subagent and its end, each turn and its outcome, each loop armed or stopped.
@@ -109,18 +110,21 @@ async function record($: $, e: AppendedRow, uuid: string) {
   await touch($, sid, s => ({ rows: s.rows + rows.length }))
 }
 
-/** A self-paced wakeup or a cron job arms a loop in its stream; stopping or deleting it disarms it. */
-async function noteLoop($: $, sid: string, tool: string, args: LoopArgs) {
-  if (tool === 'ScheduleWakeup') {
-    // A session has one self-paced loop: stopping it clears it whichever stream it was filed under, and
-    // re-arming it from another stream moves it there.
-    const others = (m: Loops): Loops => Object.fromEntries(Object.entries(m).filter(([, l]) => l.kind !== 'wakeup'))
-    if (args.stop) return update($, loopsA, others)
-    const nextAt = (await $.clock.now()) + (args.delaySeconds ?? 60) * 1000
-    return update($, loopsA, m => ({ ...others(m), [sid]: { kind: 'wakeup' as const, nextAt, label: args.reason ?? '' } }))
-  }
-  if (tool === 'CronCreate') return update($, loopsA, m => ({ ...m, [sid]: { kind: 'cron' as const, nextAt: 0, label: args.cron ?? '' } }))
-  if (tool === 'CronDelete') return update($, loopsA, ({ [sid]: _, ...rest }) => rest)
+const LOOP_TOOLS = new Set(['ScheduleWakeup', 'CronCreate', 'CronDelete', 'Monitor', 'TaskStop'])
+
+/**
+ * A wakeup, a cron job or a monitor arms a loop in its stream; stopping or deleting it ends it. Read from the call's
+ * answer, not its request: the runtime clamps a wakeup's delay and names the cron's schedule and the monitor's task.
+ */
+async function noteLoop($: $, sid: string, input: Record<string, unknown>, r: { deny?: string; result?: unknown; isError?: boolean }) {
+  const tool = String(input.tool)
+  if (!LOOP_TOOLS.has(tool)) return
+  const now = await $.clock.now()
+  const result = r.deny === undefined ? r.result : undefined
+  const lastReply = tool === 'ScheduleWakeup' ? (await read($, rowsA)).findLast(x => x.streamId === sid && x.kind === 'reply')?.text : undefined
+  await update($, loopsA, m => afterCall(m, sid, { tool, input, result, isError: r.isError === true, now, lastReply }))
+  // A tick that changed nothing folds away in every view, its row marked so.
+  if (tool === 'ScheduleWakeup' && input.noop === true && result !== undefined) await update($, rowsA, rows => markQuiet(rows, sid))
 }
 
 export function wireFiling(on: On) {
@@ -144,14 +148,17 @@ export function wireFiling(on: On) {
 
   on('tool.call', async ($, e, next) => {
     const sid = await inStream($, e.agentId)
-    if (sid) await noteLoop($, sid, String(e.tool), e as unknown as LoopArgs).catch(() => {})
     const bump = (d: number) => (sid ? update($, inflightA, m => ({ ...m, [sid]: Math.max(0, (m[sid] ?? 0) + d) })) : Promise.resolve())
     await bump(1)
+    let r: Awaited<ReturnType<typeof next>>
     try {
-      return await next(e)
+      r = await next(e)
     } finally {
       await bump(-1).catch(() => {})
     }
+    // The call has run: noting its loop must not fail it.
+    if (sid) await noteLoop($, sid, e as unknown as Record<string, unknown>, r).catch(err => $.ui.log(`streams: could not note a loop: ${String(err)}`))
+    return r
   })
 
   on('session.append', async ($, e, next) => {

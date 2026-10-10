@@ -4,10 +4,11 @@ import type { EngineInterface, On, RenderElement } from 'claude-code'
 import type { ChatStyle, Stream } from '../../types'
 import { PANE, PANE_KEY, SAVED_ROWS, mem, storeKey, type PaneSaved, type Saved } from '../state'
 import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, type Fold } from '../classify'
-import { colorOf, lapsed, streamsNow, type Facts } from '../streams/model'
+import { colorOf, streamsNow, type Facts } from '../streams/model'
+import { foldQuiet, lapsed } from '../streams/loops'
 import { updateControl } from '../updates/control'
 import { FULL_ROWS, GLYPH, STATUS_WORD } from './look'
-import { badge, fullRow, loopBadge, workOf, type PaneView } from './rows'
+import { badge, fullRow, loopRows, workOf, workflowRows, type PaneView } from './rows'
 
 // The navigator pane: every stream as a card with its live work and latest rows, or one stream in full.
 
@@ -24,6 +25,8 @@ const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const loopsA = atom({ plugin: 'streams', key: 'loops' } as const, {})
+const workflowsA = atom({ plugin: 'streams', key: 'workflows' } as const, {})
+const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const tickA = atom({ plugin: 'streams', key: 'tick' } as const, 0)
 const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const showArchivedA = atom({ plugin: 'streams', key: 'showArchived' } as const, false)
@@ -77,7 +80,9 @@ async function openStream($: $, id: string) {
 }
 
 async function setArchived($: $, id: string, archived: boolean) {
-  await update($, streamsA, list => list.map(s => (s.id === id ? { ...s, archived } : s)))
+  // Restored by the person: auto-archive leaves it until it has been active again (streams/archive.ts).
+  const now = await $.clock.now()
+  await update($, streamsA, list => list.map(s => (s.id === id ? { ...s, archived, ...(archived ? {} : { restoredAt: now }) } : s)))
   if (archived) {
     if ((await read($, focusA)) === id) await focusOn($, '')
     if ((await read($, viewA)) === id) await update($, viewA, () => '')
@@ -88,7 +93,7 @@ async function setArchived($: $, id: string, archived: boolean) {
 
 /** The facts as of now; the tick is read so the pane redraws while clocks run. */
 async function factsOf($: $): Promise<Facts> {
-  const [busy, current, agents, inflight, outcome, rows, loops] = await Promise.all([
+  const [busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts] = await Promise.all([
     read($, busyA),
     read($, currentA),
     read($, agentsA),
@@ -96,9 +101,11 @@ async function factsOf($: $): Promise<Facts> {
     read($, outcomeA),
     read($, rowsA),
     read($, loopsA),
+    read($, workflowsA),
+    read($, verdictsA),
   ])
   await read($, tickA)
-  return { busy, current, agents, inflight, outcome, rows, loops, now: await $.clock.now() }
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now: await $.clock.now() }
 }
 
 export function wirePane(on: On) {
@@ -132,10 +139,25 @@ export function wirePane(on: On) {
       const width = Math.max(20, e.props.bodyColumns)
       const room = Math.max(3, (e.viewport?.rows ?? 30) - 8)
       const shown = streams.find(s => s.id === view)
-      const v: PaneView = { ui, width, now, current: facts.current, busy: facts.busy, turnStartedAt, outcome: facts.outcome, agents: facts.agents, loops }
+      const v: PaneView = { ui, width, now, current: facts.current, busy: facts.busy, turnStartedAt, outcome: facts.outcome, agents: facts.agents, loops, workflows: facts.workflows }
       const updates = updateControl(ui, await read($, updatesA), await read($, updatingA))
       // Docked beside the transcript, the pane folds away to a tab in the bar and comes back at its width.
       const hideButton = e.props.placement === 'dock' ? <Button key="collapse" plain dimColor label="⇥ hide" hotkey="h" onPress={() => collapsePane($)} /> : null
+      const style: ChatStyle = (await read($, chatStyleA)) || mem.defaultStyle
+      const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
+      // Both choices always drawn, the current one lit; `v` switches to the other (one button carries it, so the
+      // hotkey is the pane's once, as in a stream's own view). The list and a stream's view share the one style.
+      const styleButtons = (keyOf: (st: ChatStyle) => string, hasHotkey: boolean) =>
+        (['full', 'compact'] as const).map(st => (
+          <Button
+            key={keyOf(st)}
+            plain
+            dimColor={st !== style}
+            label={`${st === style ? '◉' : '○'} ${st}`}
+            {...(hasHotkey && st === nextStyle ? { hotkey: 'v' } : {})}
+            onPress={() => update($, chatStyleA, () => st)}
+          />
+        ))
       const archiveButton = (s: Stream) =>
         s.archived ? (
           <Button key={`restore:${s.id}`} plain dimColor label="restore" onPress={() => setArchived($, s.id, false)} />
@@ -146,10 +168,8 @@ export function wirePane(on: On) {
       if (shown) {
         const verdict = health[shown.id] ?? 'idle'
         const activity = workOf(v, shown, 8)
-        const style: ChatStyle = (await read($, chatStyleA)) || mem.defaultStyle
         // Full rows run several lines each, so fewer of them fit; the pane scrolls for the rest.
-        const own = rows.filter(r => r.streamId === shown.id).slice(style === 'full' ? -FULL_ROWS : -Math.max(3, room - activity.length * 2))
-        const nextStyle: ChatStyle = style === 'full' ? 'compact' : 'full'
+        const own = foldQuiet(rows.filter(r => r.streamId === shown.id)).slice(style === 'full' ? -FULL_ROWS : -Math.max(3, room - activity.length * 2))
         return (
           <Box flexDirection="column">
             <Box gap={2}>
@@ -162,24 +182,12 @@ export function wirePane(on: On) {
                 {shown.name}
               </Text>
               <Text dimColor>│ view</Text>
-              {(['full', 'compact'] as const).map(s => (
-                // Both choices always drawn, the current one lit: `v` switches to the other.
-                <Button
-                  key={`style:${s}`}
-                  plain
-                  dimColor={s !== style}
-                  label={`${s === style ? '◉' : '○'} ${s}`}
-                  {...(s === nextStyle ? { hotkey: 'v' } : {})}
-                  onPress={() => update($, chatStyleA, () => s)}
-                />
-              ))}
+              {styleButtons(st => `style:${st}`, true)}
               {archiveButton(shown)}
             </Box>
-            <Text wrap="truncate">
-              {badge(v, verdict, verdict.toUpperCase())}
-              {loops[shown.id] ? '  ' : ''}
-              {loopBadge(v, shown)}
-            </Text>
+            <Text wrap="truncate">{badge(v, verdict, verdict.toUpperCase())}</Text>
+            {loopRows(v, shown)}
+            {workflowRows(v, shown)}
             <Text dimColor wrap="truncate">{oneLine(shown.summary, width) || ' '}</Text>
             {activity}
             {own.length === 0 && <Text dimColor>Nothing recorded yet.</Text>}
@@ -206,7 +214,7 @@ export function wirePane(on: On) {
         const verdict = health[s.id] ?? 'idle'
         const f: Fold = isArchived ? 'none' : foldOf(s)
         const count = f === 'all' ? perStream : f === '10' ? 10 : f === '1' ? 1 : 0
-        const recent = count ? rows.filter(row => row.streamId === s.id).slice(-count) : []
+        const recent = count ? foldQuiet(rows.filter(row => row.streamId === s.id)).slice(-count) : []
         return (
           <Box key={s.id} flexDirection="column" marginTop={1}>
             <Box gap={1}>
@@ -219,33 +227,38 @@ export function wirePane(on: On) {
                 plain
                 dimColor={isArchived}
                 hover={{ color: colorOf(s), bold: true }}
-                label={`${s.name}${focus === s.id ? ' ◉' : ''}`}
+                // The header keeps one line at any width: fold, full/compact and ✕ take 24 columns plus the fold label,
+                // and the name gives way first.
+                label={isArchived ? `${s.name}${focus === s.id ? ' ◉' : ''}` : oneLine(`${s.name}${focus === s.id ? ' ◉' : ''}`, Math.max(6, width - 24 - FOLD_LABEL[f].length))}
                 onPress={() => openStream($, s.id)}
               />
               {isArchived ? null : (
                 <Button key={`fold:${s.id}`} plain dimColor label={FOLD_LABEL[f]} onPress={() => update($, foldA, m => ({ ...m, [s.id]: NEXT_FOLD[f] }))} />
               )}
+              {isArchived ? null : styleButtons(st => `style:${s.id}:${st}`, s.id === active[0]?.id)}
               {archiveButton(s)}
             </Box>
             <Text wrap="truncate">
               {isArchived ? <Text dimColor>{verdict}</Text> : badge(v, verdict, verdict.toUpperCase())}
-              {!isArchived && loops[s.id] ? '  ' : ''}
-              {isArchived ? null : loopBadge(v, s)}
               <Text dimColor>
                 {' '}
                 · {s.rows} rows · {s.agents} agents · {ago(now - s.lastAt)} ago
               </Text>
             </Text>
+            {isArchived ? null : loopRows(v, s)}
+            {isArchived ? null : workflowRows(v, s)}
             {f === 'none' ? null : (
               <Box flexDirection="column">
                 {s.summary ? <Text dimColor wrap="truncate">{oneLine(s.summary, width)}</Text> : null}
                 {workOf(v, s, f === '1' ? 2 : 5)}
-                {recent.map(row => (
-                  <Text key={row.id} color={row.kind === 'prompt' ? colorOf(s) : undefined} dimColor={row.kind !== 'prompt'} wrap="truncate">
-                    {'  '}
-                    {GLYPH[row.kind]} {oneLine(row.text, width - 4)}
-                  </Text>
-                ))}
+                {style === 'full'
+                  ? recent.map(row => fullRow(v, row, colorOf(s)))
+                  : recent.map(row => (
+                      <Text key={row.id} color={row.kind === 'prompt' ? colorOf(s) : undefined} dimColor={row.kind !== 'prompt'} wrap="truncate">
+                        {'  '}
+                        {GLYPH[row.kind]} {oneLine(row.text, width - 4)}
+                      </Text>
+                    ))}
               </Box>
             )}
           </Box>
