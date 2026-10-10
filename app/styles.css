@@ -329,6 +329,16 @@ main .slide.info > .usage, main .slide.info > .flowsum { background: none; borde
                     background: var(--glass); color: var(--text); font: inherit; font-size: 16px; line-height: 1.35; }
 .icon-btn { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: 0; border-radius: 50%; background: none; font-size: 18px; cursor: pointer; }
 .icon-btn.on { background: color-mix(in srgb, var(--error) 22%, transparent); }
+[data-mic] { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+[data-mic].on { animation: mic-pulse 1.2s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--error) 25%, transparent); } }
+/* Listening: a soundwave inside the input, moving with what the mic hears, while the words type themselves in. */
+.field { position: relative; flex: 1; min-width: 0; display: flex; }
+.field textarea { flex: 1; }
+.wave { display: none; position: absolute; right: 12px; bottom: 11px; height: 18px; align-items: center; gap: 3px; pointer-events: none; }
+.wave i { display: block; width: 3px; height: 18px; border-radius: 2px; background: var(--error); transform: scaleY(.15); transition: transform 80ms linear; }
+.compose-row.listening .wave { display: flex; }
+.compose-row.listening textarea { padding-right: 46px; border-color: color-mix(in srgb, var(--error) 60%, var(--glass-line-strong)); }
 .btn.send { flex: none; width: 40px; min-height: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 18px; }
 .attached { display: flex; gap: 6px; overflow-x: auto; margin: 0 4px 6px; }
 .attached:empty { display: none; }

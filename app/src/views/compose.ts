@@ -4,6 +4,7 @@
 import { isInFlight, streamKey, type State } from '../state'
 import type { Snapshot } from '../state'
 import { esc, limitColor, type Stream } from './util'
+import { WAVE_BARS } from '../voice'
 
 /** A file waiting to go with the next prompt: its name, and a preview for an image. */
 export type Attached = { name: string; preview?: string }
@@ -41,13 +42,13 @@ function composer(s: State, sessionKey: string, x: Snapshot, view: ComposeView):
   const name = streams.find(x => x.id === target)?.name
   const busy = isInFlight(s.taps[key])
   const mic = view.hasMic
-    ? `<button type="button" class="icon-btn ${view.isListening ? 'on' : ''}" data-mic aria-pressed="${view.isListening}" aria-label="${view.isListening ? 'Stop dictation' : 'Dictate'}">🎤</button>`
+    ? `<button type="button" class="icon-btn ${view.isListening ? 'on' : ''}" data-mic aria-pressed="${view.isListening}" aria-label="${view.isListening ? 'Stop dictation' : 'Dictate: hold to talk, or tap to start and stop'}">🎤</button>`
     : ''
   return `<div class="slide compose">
     <div class="to"><span class="target">→ ${name ? `<b>${esc(name)}</b>` : 'new prompt'}<span class="why" data-why>${view.why ? ` · ${esc(view.why)}` : ''}</span></span>${limitMarks(x)}</div>${attachedStrip(view.files)}
-    <div class="compose-row">
+    <div class="compose-row ${view.isListening ? 'listening' : ''}">
       ${clip(view.files.length)}
-      <textarea rows="1" placeholder="${name ? `Message ${esc(name)}…` : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea>${mic}
+      <div class="field"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(WAVE_BARS)}</span><textarea rows="1" placeholder="${name ? `Message ${esc(name)}…` : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea></div>${mic}
       <button class="btn send" data-send="${esc(key)}" ${busy ? 'disabled' : ''} aria-label="Send">${busy ? '…' : '↑'}</button>
     </div></div>`
 }

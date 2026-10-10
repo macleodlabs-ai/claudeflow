@@ -235,13 +235,59 @@ function grow(t: HTMLTextAreaElement) {
 }
 
 /** Dictation types into the composer, where the person can edit it before sending. */
-const voice = dictation(text => {
-  const t = document.querySelector<HTMLTextAreaElement>('[data-compose]')
-  if (!t) return
-  t.value = t.value ? `${t.value.replace(/\s+$/, '')} ${text}` : text
-  state = reduce(state, { type: 'draft', key: t.dataset.draft!, text: t.value })
+/** The composer's text before the phrase being heard: the heard words show after it as they change, live. */
+let heardBase = ''
+
+const composeBox = () => document.querySelector<HTMLTextAreaElement>('[data-compose]')
+const setCompose = (t: HTMLTextAreaElement, text: string) => {
+  t.value = text
+  state = reduce(state, { type: 'draft', key: t.dataset.draft!, text })
   grow(t)
-}, () => render())
+}
+const joined = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, '')} ${b}` : a || b)
+
+const voice = dictation({
+  onFinal(text) {
+    const t = composeBox()
+    if (!t) return
+    heardBase = joined(heardBase, text)
+    setCompose(t, heardBase)
+  },
+  onPartial(text) {
+    const t = composeBox()
+    if (t) setCompose(t, joined(heardBase, text))
+  },
+  // The soundwave in the input, drawn straight onto its bars each frame: no redraw.
+  onLevels(levels) {
+    document.querySelectorAll<HTMLElement>('.wave i').forEach((b, i) => (b.style.transform = `scaleY(${0.15 + 0.85 * (levels[i] ?? 0)})`))
+  },
+  onChange() {
+    const on = voice.isListening()
+    if (on) heardBase = composeBox()?.value ?? ''
+    document.querySelector('.compose-row')?.classList.toggle('listening', on)
+    const mic = document.querySelector<HTMLElement>('[data-mic]')
+    mic?.classList.toggle('on', on)
+    mic?.setAttribute('aria-pressed', String(on))
+  },
+})
+
+// 🎤: hold to talk (released, it stops), or tap to switch it on, and tap again to stop.
+const MIC_HOLD_MS = 350
+let micDown: { at: number; wasOn: boolean } | undefined
+document.addEventListener('pointerdown', e => {
+  if (!(e.target as Element).closest?.('[data-mic]')) return
+  e.preventDefault()
+  micDown = { at: Date.now(), wasOn: voice.isListening() }
+  if (!micDown.wasOn) voice.start()
+})
+const micUp = () => {
+  if (!micDown) return
+  const { at, wasOn } = micDown
+  micDown = undefined
+  if (wasOn || Date.now() - at >= MIC_HOLD_MS) voice.stop()
+}
+document.addEventListener('pointerup', micUp)
+document.addEventListener('pointercancel', micUp)
 
 /** A photo is being read and shrunk: Send waits for it, so a prompt never goes without the photo just added. */
 let isAttaching = false
@@ -444,7 +490,8 @@ document.addEventListener('click', e => {
       void go(key, tapFor(shown, key, { ...command, files: r.files }))
     })
   }
-  if (at('[data-mic]')) return voice.toggle()
+  // A keyboard's Enter or Space on 🎤 (no pointer) switches it; a tap is handled by the pointer above.
+  if (at('[data-mic]')) return void ((e as MouseEvent).detail === 0 && (voice.isListening() ? voice.stop() : voice.start()))
   if (at('[data-chat-style]')) return dispatch({ type: 'chat-style' }), render()
   const restore = at('[data-restore]')
   if (restore && shown) return void archiveTap(shown, restore.dataset.restore!, 'restore')
