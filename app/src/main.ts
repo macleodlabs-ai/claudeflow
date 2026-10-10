@@ -506,6 +506,15 @@ document.addEventListener('click', e => {
   const at = (sel: string) => (e.target as Element).closest<HTMLElement>(sel)
   // The click that ends a swipe or a hold on the header is not a tap on it.
   if (isGesture) return void (isGesture = false)
+  const forgetRoom = at('[data-forget-room]')
+  if (forgetRoom) {
+    // The account's pairing on this device only: the Mac and its other devices are untouched.
+    const { [forgetRoom.dataset.forgetRoom!]: _gone, ...kept } = rooms
+    rooms = kept
+    keep.set('cf:rooms', rooms)
+    history.replaceState(null, '', '/')
+    return location.reload()
+  }
   if (at('[data-scan]')) {
     isMenuOpen = false
     return void scanToPair()

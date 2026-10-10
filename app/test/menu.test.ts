@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { currentOf, initial, reduce, type Snapshot } from '../src/state'
 import { menuView, roleNote } from '../src/views/menu'
 import { page } from '../src/views/page'
+import { gates } from '../src/views/gates'
 
 const DAY = 86_400_000
 const snap = (extra: Partial<Snapshot> = {}): Snapshot => ({
@@ -52,5 +53,18 @@ describe('the ☰ menu and sharing', () => {
     const html = menuView(s, t, true, 0, { role: 'viewer', isBusy: false, link: 'https://relay.example/#r=x&k=y&s=z' })
     expect(html).toContain('value="https://relay.example/#r=x&amp;k=y&amp;s=z"')
     expect(html).toContain('data-share-link')
+  })
+})
+
+describe('accounts on this device', () => {
+  const view = (room: string, gate: 'open' | 'locked' | 'not-paired') =>
+    ({ room, gate, label: room, why: '', stage: { at: 'idle' }, isSlow: false, isCeremony: false, isOnline: true, canRepair: false }) as const
+  test('with an account open, a leftover that cannot pair is not shown over the streams', () => {
+    // A failed or old pairing attempt must not sit on top of a working app.
+    const html = gates([view('live', 'open'), view('old', 'not-paired')])
+    expect(html).not.toContain('Not paired')
+  })
+  test('a locked account among several can be forgotten on this device', () => {
+    expect(gates([view('live', 'open'), view('old', 'locked')])).toContain('data-forget-room="old"')
   })
 })

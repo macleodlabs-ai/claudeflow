@@ -35,17 +35,21 @@ function one(g: GateView, isMany: boolean): string {
     ? `<p class="slow" role="status">${SLOW_TEXT}</p><button class="btn ghost" data-gate="retry" data-room="${esc(g.room)}">Retry</button>`
     : ''
   const offline = g.isOnline ? '' : '<p class="meta">Connecting…</p>'
+  // An account this device no longer uses (an old pairing, a Mac set up again) can be forgotten here.
+  const forget = isMany ? `<button type="button" class="btn ghost small" data-forget-room="${esc(g.room)}">Forget this account</button>` : ''
   if (g.gate === 'pair')
     return `<div class="gate">${who}<h2>Pair this device</h2>
       <p>Create a passkey for Claudeflow. You'll use Face ID or your passcode to open it and to allow Claude's actions.</p>${why}${btn('pair', 'Create passkey')}${slow}${offline}</div>`
   if (g.gate === 'locked')
     return `<div class="gate">${who}<h2>Locked</h2><p>Unlock to see your streams.</p>${why}${btn('unlock', 'Unlock')}
-      ${g.canRepair ? ` ${btn('pair', 'Pair again')}` : ''}${slow}${offline}</div>`
-  return `<div class="gate">${who}<h2>Not paired</h2>${why}<p>${NOT_PAIRED}</p></div>`
+      ${g.canRepair ? ` ${btn('pair', 'Pair again')}` : ''}${slow}${offline}${forget}</div>`
+  return `<div class="gate">${who}<h2>Not paired</h2>${why}<p>${NOT_PAIRED}</p>${forget}</div>`
 }
 
 export function gates(views: GateView[]): string {
-  const shown = views.filter(g => g.gate !== 'open')
+  // With an account open, one that cannot pair (no code, never paired) is a leftover: it is not shown over the streams.
+  const hasOpen = views.some(g => g.gate === 'open')
+  const shown = views.filter(g => g.gate !== 'open' && !(hasOpen && g.gate === 'not-paired'))
   return shown.map(g => one(g, views.length > 1)).join('')
 }
 
