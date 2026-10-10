@@ -25,6 +25,7 @@ import {
   type State,
   type Tap,
 } from './state'
+import { startTheme } from './theme'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
 import { page, tabs } from './views/page'
@@ -129,6 +130,7 @@ if (hasPush)
     })
     .catch(() => {})
 
+startTheme()
 const el = (id: string) => document.getElementById(id)!
 /** From 820 px the Streams view is a list and a detail pane (styles.css uses the same breakpoint). */
 const wide = matchMedia('(min-width: 820px)')

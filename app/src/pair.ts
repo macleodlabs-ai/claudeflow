@@ -2,6 +2,7 @@
 // phone to scan. The fragment never reaches a server, and the code is drawn here, with nothing loaded from elsewhere.
 import qrcode from 'qrcode-generator'
 import { linkFragment, parseLink } from './links'
+import { startTheme } from './theme'
 
 /** The QR code as one SVG path of dark modules, with the four-module quiet zone scanners need. */
 export function qrSvg(text: string): string {
@@ -16,6 +17,7 @@ export function qrSvg(text: string): string {
 }
 
 const link = parseLink(location.hash)
+startTheme()
 const box = document.getElementById('qr')!
 const note = document.getElementById('note')!
 if (link?.secret) {

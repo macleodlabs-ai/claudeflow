@@ -36,7 +36,7 @@ export const color = (c: unknown, fallback = '#8a90c8'): string =>
 export const GLYPH: Record<string, string> = { running: '●', loop: '↻', waiting: '?', error: '✗', stalled: '◔', done: '✓', idle: '○' }
 /** The status tokens in styles.css, so the views and the stylesheet cannot drift apart. */
 export const STATE_COLOR: Record<string, string> = {
-  running: 'var(--running)', loop: 'var(--loop)', stalled: 'var(--stalled)', done: 'var(--done)', error: 'var(--error)', idle: 'var(--text-faint)', waiting: 'var(--waiting)',
+  running: 'var(--running-ink)', loop: 'var(--loop-ink)', stalled: 'var(--stalled-ink)', done: 'var(--done-ink)', error: 'var(--error-ink)', idle: 'var(--text-faint)', waiting: 'var(--waiting-ink)',
 }
 /** Kinds used in class names, so an unknown one cannot inject a class. */
 export const kindOf = (k: unknown): string => (typeof k === 'string' && k in GLYPH ? k : 'idle')
@@ -47,7 +47,7 @@ export const clock = (ms: number): string => {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : m ? `${m}m ${s}s` : `${s}s`
 }
 
-export const limitColor = (p: number): string => (p >= 80 ? 'var(--error)' : p >= 50 ? 'var(--running)' : 'var(--done)')
+export const limitColor = (p: number): string => (p >= 80 ? 'var(--error-ink)' : p >= 50 ? 'var(--running-ink)' : 'var(--done-ink)')
 
 /** A tap in progress. It stops turning when motion is reduced; the words beside it carry the state. */
 export const spinner = '<span class="spinner" aria-hidden="true"></span>'

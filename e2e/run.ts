@@ -2,7 +2,7 @@
 // app/build.sh), two headless Chrome devices with virtual passkeys, and a Claude Code session played by the plugin's
 // own pure remote core (hooks/remote/link.ts + seal.ts) posting to /v1/room/{room}/up with real fetch calls, on
 // the link's own polling cadence.
-// Run from the repo root with Node 22+ on PATH (wrangler needs it): bun e2e/run.ts [shots dir]
+// Run from the repo root with Node 22+ on PATH (wrangler needs it): bun e2e/run.ts [shots dir]; E2E_SCHEME=dark for dark.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -123,6 +123,8 @@ async function openDevice(name: string, port: number) {
     })
   await send('Runtime.enable')
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+  // The devices' colour scheme: light by default, E2E_SCHEME=dark to check the dark theme.
+  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: process.env.E2E_SCHEME === 'dark' ? 'dark' : 'light' }] })
   await send('WebAuthn.enable')
   const { authenticatorId } = await send('WebAuthn.addVirtualAuthenticator', {
     options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
