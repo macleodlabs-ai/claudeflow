@@ -230,6 +230,7 @@ function startSession() {
         loop: { kind: 'wakeup', nextAt: at + 250_000, reason: 'CI still running', noopStreak: 3, lastChange: { at: at - 600_000, text: 'PR #12 merged' } } },
     ],
     summary: { workflows: 1, agentsRunning: 2, failures: 1, nextTickAt: at + 250_000 },
+    archived: [{ id: 'st9', name: 'old chore', color: '#ff94d1' }],
     status: [{ id: 'g', area: 'main', state: 'clean', detail: '' }],
     limits: [],
     updates: [],
@@ -317,8 +318,8 @@ try {
       await d1.see('Create passkey')
       await d1.doubleTap('[data-gate="pair"]')
       await d2.tap('[data-gate="pair"]')
-      // The session polls at its idle pace until a device looks, so "Checking with your Mac…" shows for a while.
-      await d1.see('Checking with your Mac…')
+      // The session polls at its idle pace until a device looks, so "Syncing…" shows for a while.
+      await d1.see('Syncing…')
       check('Create passkey shows its pending state and is disabled while the Mac checks', await d1.isDisabled('[data-gate="pair"]'))
       await d1.shot('e2e-02a-device1-checking.png')
       await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?', POLL_WAIT_MS)))
@@ -345,6 +346,37 @@ try {
       const answer = await until('the answer command', () => s.commands.find(c => c.command.kind === 'answer'), POLL_WAIT_MS)
       check('device 1 taps Yes and the session receives "answer yes" from device 1',
         answer.device === id1 && answer.command.kind === 'answer' && answer.command.text === 'yes' && answer.command.streamId === 'st1', JSON.stringify(answer))
+
+      // A touch on the dock that never lifts (iOS cancels it when 📎 opens the photo picker) must not hold every redraw.
+      await d1.js(`document.querySelector('[data-slides]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`)
+      // A photo attached in the composer shows at once (thumbnail, green 📎), then goes as chunks before the prompt that
+      // names it. The file goes in through the input, as the photo picker hands it over.
+      await d1.js(`(async () => {
+        const c = document.createElement('canvas'); c.width = 64; c.height = 48
+        const g = c.getContext('2d'); g.fillStyle = '#7cc8ff'; g.fillRect(0, 0, 64, 48)
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'))
+        const dt = new DataTransfer(); dt.items.add(new File([blob], 'shot.png', { type: 'image/png' }))
+        const input = document.querySelector('[data-attach]'); input.files = dt.files
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })()`)
+      await until('the attached thumbnail', () => d1.js(`(() => { const i = document.querySelector('.attached img'); return !!i && i.complete && i.naturalWidth > 0 && !!document.querySelector('.clip.has') })()`))
+      check('an attached photo shows at once in the composer: a thumbnail, and 📎 green with a count', true)
+      await d1.shot('app-390-attached.png')
+      await d1.tap('[data-send]')
+      const sentPhoto = await until('the prompt with the photo', () => s.commands.find(c => c.command.kind === 'answer' && !!c.command.files?.length), POLL_WAIT_MS)
+      const chunks = s.commands.filter(c => c.command.kind === 'chunk')
+      check('the photo reaches the session as chunks before the prompt that names it',
+        sentPhoto.command.kind === 'answer' && chunks.length > 0 && chunks.every(c => c.command.kind === 'chunk' && sentPhoto.command.kind === 'answer' && c.command.blob === sentPhoto.command.files![0]!.blob) &&
+          s.commands.indexOf(chunks.at(-1)!) < s.commands.indexOf(sentPhoto),
+        JSON.stringify({ chunks: chunks.length, files: sentPhoto.command.kind === 'answer' ? sentPhoto.command.files : undefined }))
+
+      // The archived list opens from its heading, and ↺ restores a stream there.
+      await d1.tap('.archived-head')
+      await until('the archived list open', () => d1.js(`!!document.querySelector('.arow [data-restore]')`))
+      await d1.tap('[data-restore]')
+      const restored = await until('the restore command', () => s.commands.find(c => c.command.kind === 'restore'), POLL_WAIT_MS)
+      check('tapping Archived opens the list, and ↺ there reaches the session as restore for that stream',
+        restored.command.kind === 'restore' && restored.command.streamId === 'st9', JSON.stringify(restored))
 
       // A held permission reaches both devices; device 2 allows it with its passkey.
       s.permissions = [{ id: 'toolu_e2e', tool: 'Bash', summary: 'Bash: npx wrangler deploy', at: Date.now(), since: Date.now() }]

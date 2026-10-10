@@ -210,7 +210,8 @@ header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: no
 [data-swipe].swipe-ready::after { opacity: 1; }
 [data-swipe="archive"].swipe-ready { box-shadow: inset 0 0 0 2px var(--error); }
 [data-swipe="restore"].swipe-ready { box-shadow: inset 0 0 0 2px var(--done); }
-[data-swipe].gone { opacity: 0; transform: translateX(-30%); pointer-events: none; }
+[data-swipe].gone { opacity: 0; transform: translateX(-30%); pointer-events: none; height: 0 !important; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; overflow: hidden;
+  transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease), height 220ms var(--ease) 120ms, margin 220ms var(--ease) 120ms, padding 220ms var(--ease) 120ms; }
 [data-swipe="restore"].gone { transform: translateX(30%); }
 .archived { margin: 14px 0 4px; }
 .archived-head { display: flex; align-items: center; gap: 6px; padding: 8px 4px; color: var(--text-dim); font-size: var(--fs-sm); font-weight: 800; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
@@ -307,8 +308,10 @@ h2 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .08em; 
 body:has(.dock) { padding-bottom: calc(var(--dock-h, 0px) + 16px) !important; }
 main .dock { background: var(--glass-strong); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-top: 1px solid var(--glass-line-strong);
              box-shadow: 0 -12px 32px var(--shade); padding-bottom: env(safe-area-inset-bottom); }
-.slides { display: flex; align-items: flex-start; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.slides { display: flex; align-items: flex-end; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
 .slides::-webkit-scrollbar { display: none; }
+/* Eases to the landed slide's height once a swipe settles; never during the swipe. */
+.slides.settling { transition: height 180ms var(--ease); }
 .slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; }
 main .slide.info > .usage, main .slide.info > .flowsum { background: none; border-top: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; padding-bottom: 10px; }
 .slide-dots { display: flex; justify-content: center; gap: 5px; padding: 0 0 6px; }
@@ -328,6 +331,10 @@ main .slide.info > .usage, main .slide.info > .flowsum { background: none; borde
 .icon-btn.on { background: color-mix(in srgb, var(--error) 22%, transparent); }
 .btn.send { flex: none; width: 40px; min-height: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 18px; }
 .attached { display: flex; gap: 6px; overflow-x: auto; margin: 0 4px 6px; }
+.attached:empty { display: none; }
+.clip { position: relative; }
+.clip.has { background: color-mix(in srgb, var(--done) 22%, transparent); box-shadow: inset 0 0 0 1.5px var(--done); }
+.clip .count { position: absolute; top: -2px; right: -2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--done); color: #06210f; font-size: 11px; font-weight: 800; line-height: 16px; text-align: center; }
 .attached .file { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 4px; border-radius: 10px; background: var(--glass); border: 1px solid var(--glass-line); font-size: var(--fs-xs); }
 .attached img { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; }
 .attached .fname { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -11,6 +11,16 @@ export type Attached = { name: string; preview?: string }
 /** What the composer shows besides the state: files attached, whether dictation is on and offered. */
 export type ComposeView = { files: Attached[]; isListening: boolean; hasMic: boolean; why: string }
 
+/** The files waiting to go: a thumbnail (or 📄) each, with ✕. Drawn on its own too, the moment a file is added. */
+export const attachedStrip = (files: readonly Attached[]): string =>
+  `<div class="attached" data-attached>${files
+    .map((f, i) => `<span class="file">${f.preview ? `<img src="${esc(f.preview)}" alt="">` : '📄'}<span class="fname">${esc(f.name)}</span><button type="button" class="x" data-unattach="${i}" aria-label="Remove ${esc(f.name)}">✕</button></span>`)
+    .join('')}</div>`
+
+/** 📎, green with a count while files wait to go. */
+export const clip = (n: number): string =>
+  `<label class="icon-btn clip ${n ? 'has' : ''}" data-clip aria-label="${n ? `${n} attached; attach more` : 'Attach a photo or file'}"><input type="file" data-attach multiple hidden>📎${n ? `<span class="count">${n}</span>` : ''}</label>`
+
 /** The stream a prompt from the composer goes to: the last opened card of this session that still exists, else ''. */
 export function targetOf(s: State, sessionKey: string, streams: readonly Stream[]): string {
   for (let i = s.open.length - 1; i >= 0; i--) {
@@ -30,18 +40,13 @@ function composer(s: State, sessionKey: string, x: Snapshot, view: ComposeView):
   const key = composeKey(sessionKey, target)
   const name = streams.find(x => x.id === target)?.name
   const busy = isInFlight(s.taps[key])
-  const files = view.files.length
-    ? `<div class="attached">${view.files
-        .map((f, i) => `<span class="file">${f.preview ? `<img src="${esc(f.preview)}" alt="">` : '📄'}<span class="fname">${esc(f.name)}</span><button type="button" class="x" data-unattach="${i}" aria-label="Remove ${esc(f.name)}">✕</button></span>`)
-        .join('')}</div>`
-    : ''
   const mic = view.hasMic
     ? `<button type="button" class="icon-btn ${view.isListening ? 'on' : ''}" data-mic aria-pressed="${view.isListening}" aria-label="${view.isListening ? 'Stop dictation' : 'Dictate'}">🎤</button>`
     : ''
   return `<div class="slide compose">
-    <div class="to"><span class="target">→ ${name ? `<b>${esc(name)}</b>` : 'new prompt'}${view.why ? ` · <span class="why">${esc(view.why)}</span>` : ''}</span>${limitMarks(x)}</div>${files}
+    <div class="to"><span class="target">→ ${name ? `<b>${esc(name)}</b>` : 'new prompt'}<span class="why" data-why>${view.why ? ` · ${esc(view.why)}` : ''}</span></span>${limitMarks(x)}</div>${attachedStrip(view.files)}
     <div class="compose-row">
-      <label class="icon-btn" aria-label="Attach a photo or file"><input type="file" data-attach multiple hidden>📎</label>
+      ${clip(view.files.length)}
       <textarea rows="1" placeholder="${name ? `Message ${esc(name)}…` : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea>${mic}
       <button class="btn send" data-send="${esc(key)}" ${busy ? 'disabled' : ''} aria-label="Send">${busy ? '…' : '↑'}</button>
     </div></div>`
