@@ -29,7 +29,8 @@ import {
 } from './state'
 import { startTheme } from './theme'
 import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
-import { gates, unpaired, type GateView } from './views/gates'
+import { gates, scanButton, unpaired, type GateView } from './views/gates'
+import { scanPairing } from './scan'
 import { bell, page, switcher, tabs } from './views/page'
 import { attachOf, sendFiles, type Ready } from './upload'
 import { attachedStrip, clip } from './views/compose'
@@ -177,7 +178,9 @@ function render() {
       canRepair: !!l.pairing().secret,
     }
   })
-  el('gate').innerHTML = links.length ? gates(views) : unpaired()
+  // No account usable here (none paired, or every one refused): pairing by camera is offered under the gates.
+  const canScan = !links.length || views.every(v => v.gate === 'not-paired')
+  el('gate').innerHTML = (links.length ? gates(views) : unpaired(scanWhy)) + (links.length && canScan ? `<div class="gate">${scanButton(scanWhy)}</div>` : '')
   // A locked account shows nothing of its sessions, not even what arrived before it locked: only the Unlock above.
   const open = new Set(views.filter(v => v.gate === 'open').map(v => v.room))
   shownState = { ...state, sessions: Object.fromEntries(Object.entries(state.sessions).filter(([, h]) => open.has(h.room))) }
@@ -219,6 +222,22 @@ function fitDock(strip: HTMLElement) {
   const h = slides[i]?.offsetHeight
   if (h) strip.style.height = `${h}px`
   document.body.style.setProperty('--dock-h', `${strip.closest<HTMLElement>('.dock')?.offsetHeight ?? 0}px`)
+}
+
+/** Why the last scan did not pair, shown under the scan button. */
+let scanWhy = ''
+
+/** Scans a pairing code and pairs with it here: saved like a scanned link, then the app starts again, in place. */
+async function scanToPair() {
+  const r = await scanPairing(location.origin)
+  if (!r) return
+  if ('why' in r) {
+    scanWhy = r.why
+    return render()
+  }
+  rooms = withLink(rooms, r)
+  keep.set('cf:rooms', rooms)
+  location.reload()
 }
 
 /** Files waiting to go with the next prompt, read and sized on the phone. */
@@ -454,6 +473,7 @@ document.addEventListener('click', e => {
   const at = (sel: string) => (e.target as Element).closest<HTMLElement>(sel)
   // The click that ends a swipe or a hold on the header is not a tap on it.
   if (isGesture) return void (isGesture = false)
+  if (at('[data-scan]')) return void scanToPair()
   if (at('[data-mute]')) return dispatch({ type: 'mute' }), render()
   if (at('[data-switch]')) return dispatch({ type: 'switch', open: !state.isSwitchOpen }), render()
   // A tap anywhere off the open list closes it (a session in it is chosen below, which closes it too).

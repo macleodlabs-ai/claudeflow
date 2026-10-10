@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { PAIRING_MS, createLink, type Device, type Identity, type Pairing } from '../plugins/streams/hooks/remote/link'
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
 import type { Ack, PhoneCommand, Settled, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
+import { qrVideo } from './camera'
 
 const ROOT = join(import.meta.dir, '..')
 const SHOTS = process.argv[2] ?? join(ROOT, 'e2e', 'shots')
@@ -100,9 +101,9 @@ const fakePushApi = (sub: unknown) => `(() => {
 
 // ---- a device: one headless Chrome with its own profile and a virtual platform authenticator ----
 type Page = Awaited<ReturnType<typeof openDevice>>
-async function openDevice(name: string, port: number) {
+async function openDevice(name: string, port: number, extra: string[] = []) {
   const p = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(TMP, `chrome-${name}`)}`,
-    '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' })
+    '--no-first-run', '--no-default-browser-check', ...extra, 'about:blank'], { detached: true, stdio: 'ignore' })
   procs.push(p)
   const targets = await until(`${name} DevTools`, () =>
     fetch(`http://127.0.0.1:${port}/json`).then(r => r.json() as Promise<{ type: string; webSocketDebuggerUrl: string }[]>, () => undefined), 60_000)
@@ -307,7 +308,17 @@ try {
 
       const s = startSession()
       const link = `${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${s.pairing.secret}`
-      const [d1, d2, d3] = await Promise.all([openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343)])
+      // A fourth device has a camera that sees the Mac's pairing code: it pairs from inside the app, never leaving it.
+      qrVideo(join(TMP, 'pairing-code.y4m'), link)
+      const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${join(TMP, 'pairing-code.y4m')}`]
+      const [d1, d2, d3, d4] = await Promise.all([openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343), openDevice('scanner', 9344, camera)])
+      await d4.goto(`${ORIGIN}/`)
+      await d4.see('Not paired')
+      await d4.tap('[data-scan]')
+      await d4.see('Create passkey')
+      check('an unpaired app scans the pairing code with its camera and goes on to Create passkey, in the same app',
+        (await d4.js('location.pathname + location.hash')) === '/', String(await d4.js('location.href')))
+      await d4.shot('e2e-00-scanner-paired-in-app.png')
 
       // Both devices pair at the same time from the same link.
       await Promise.all([d1, d2].map(d => d.goto(link)))
