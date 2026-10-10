@@ -1285,7 +1285,7 @@ describe('acting from the phone', () => {
 describe('/streams and its verbs', () => {
   // Each verb is answered by the module that owns it, wired ahead of the pane: were the order wrong, the pane
   // would answer every verb by opening itself, and `/streams phone` would never reach the remote.
-  test('a bare /streams opens the pane, and phone asks for the relay address until one is set', ENGINE, async ($, on) => {
+  test('a bare /streams opens the pane, and phone asks for the relay address while the remote is off', { ...ENGINE, options: { relayUrl: '' } }, async ($, on) => {
     mock.clock(on)
     mock.store(on)
     watchStatus(on)
