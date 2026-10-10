@@ -152,7 +152,7 @@ describe('a prompt sent while a turn runs', () => {
 describe('the hooks', () => {
   test('a tagged prompt reaches the model untagged and becomes the current stream', ENGINE, async ($, on) => {
     mock.clock(on)
-    const status = watchStatus(on)
+    const shown = watchStatus(on)
     const seen: string[] = []
     on('prompt.submit', async (_$, e) => {
       seen.push(e.text)
@@ -160,39 +160,46 @@ describe('the hooks', () => {
     })
     await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
     expect(seen).toEqual(['why is the invoice total off?'])
-    expect(status.at(-1)).toBe('stream billing')
+    expect(shown.current).toBe('billing')
+    // The stream's name is in the bar above the prompt; repeating it in the footer was noise.
+    expect(shown.status.filter(Boolean)).toEqual([])
   })
 
   test("an untagged prompt goes where the model routes it", ENGINE, async ($, on) => {
     on('model.complete', async () => ({ value: { isAnswered: true, text: '{"new":"Flaky tests","summary":"CI flakes"}', usage: USAGE } }))
     mock.clock(on)
-    const status = watchStatus(on)
+    const shown = watchStatus(on)
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
     await $.prompt.submit({ text: 'why does the e2e suite fail one run in five?', wait: false, origin: { kind: 'composer' } })
-    expect(status.at(-1)).toBe('stream flaky-tests')
+    expect(shown.current).toBe('flaky-tests')
   })
 })
 
 const USAGE = { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
 
-/** The status line names the stream the main loop is on: what the person sees of a routing. */
-function watchStatus(on: On): (string | undefined)[] {
-  const seen: (string | undefined)[] = []
+/** What the plugin writes to the status line, and the stream it last made current or focused. */
+function watchStatus(on: On) {
+  const shown = { status: [] as (string | undefined)[], current: '', focus: '' }
   on('ui.status', async (_$, e) => {
-    seen.push(e.text)
+    shown.status.push(e.text)
     return { value: undefined }
   })
-  return seen
+  on('state.set', async (_$, e, next) => {
+    const w = e as unknown as { plugin?: string; key?: string; value: unknown }
+    if (w.plugin === 'streams' && (w.key === 'current' || w.key === 'focus')) shown[w.key] = String(w.value)
+    return next(e)
+  })
+  return shown
 }
 
 describe('the running turn', () => {
   test('keeps its stream when a prompt for another stream is sent into it', ENGINE, async ($, on) => {
     mock.clock(on)
-    const status = watchStatus(on)
+    const shown = watchStatus(on)
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
     await $.prompt.submit({ text: '#streams-mod build the mod', wait: false, origin: { kind: 'composer' } })
     await $.prompt.submit({ text: '#timezones how do I convert UTC to local time?', wait: false, origin: { kind: 'composer' }, turnId: 'turn-1' })
-    expect(status.at(-1)).toBe('stream streams-mod')
+    expect(shown.current).toBe('streams-mod')
   })
 })
 
@@ -260,16 +267,16 @@ describe('archiving', () => {
     mock.clock(on)
     mock.store(on)
     on('session.cwd', async () => ({ value: '/project' }))
-    const status = watchStatus(on)
+    const shown = watchStatus(on)
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
     await $.prompt.submit({ text: '#billing why is the invoice total off?', wait: false, origin: { kind: 'composer' } })
     const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
     await pane.press({ key: 'open:billing' })
-    expect(status.at(-1)).toBe('◉ stream billing')
+    expect(shown.focus).toBe('billing')
     expect(await pane.find({ key: 'back' })).toBeDefined()
     await pane.press({ key: 'back' })
-    expect(status.at(-1)).toBe('stream billing')
+    expect(shown.current).toBe('billing')
   })
 })
 
@@ -487,7 +494,7 @@ describe('finished streams do not swallow new work', () => {
     on('session.cwd', async () => ({ value: '/project' }))
     on('prompt.submit', async (_$, e) => ({ text: e.text }))
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
-    const status = watchStatus(on)
+    const shown = watchStatus(on)
     const asked: string[] = []
     on('model.complete', async (_$, e) => {
       asked.push(String((e as { prompt?: unknown }).prompt))
@@ -498,7 +505,7 @@ describe('finished streams do not swallow new work', () => {
     const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
     await pane.press({ key: 'archive:old-chore' })
     await $.prompt.submit({ text: 'and check the rounding in refunds as well', wait: false, origin: { kind: 'composer' } })
-    expect(status.at(-1)).toBe('stream billing')
+    expect(shown.current).toBe('billing')
     expect(asked.at(-1)).not.toContain('old-chore')
     await pane.press({ key: 'open:billing' })
     expect(await pane.find({ type: 'Text', text: 'why is the invoice total off?' })).toBeDefined()
