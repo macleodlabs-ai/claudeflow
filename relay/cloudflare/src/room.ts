@@ -168,7 +168,8 @@ export class Room extends DurableObject<Env> {
     }
     const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
     const message = new TextEncoder().encode(text).byteLength > DEVICE_MAX_BYTES ? null : parseDeviceMessage(text)
-    ws.serializeAttachment(message && 'here' in message ? { ...device, here: now } : device)
+    // `here: false`: put away or out of focus, so it stops counting as looking now rather than 30 s later.
+    ws.serializeAttachment(message && 'here' in message ? { ...device, here: message.here ? now : 0 } : device)
     if (!message || 'here' in message) return
     if ('push' in message) {
       // Kept per device, never logged; a new subscription replaces the old one and keeps the day's budget. Rows of

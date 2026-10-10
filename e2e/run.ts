@@ -125,6 +125,8 @@ async function openDevice(name: string, port: number) {
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
   // The devices' colour scheme: light by default, E2E_SCHEME=dark to check the dark theme.
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: process.env.E2E_SCHEME === 'dark' ? 'dark' : 'light' }] })
+  // Headless pages never have focus; a phone in the hand does, and only a focused page counts as looking.
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await send('WebAuthn.enable')
   const { authenticatorId } = await send('WebAuthn.addVirtualAuthenticator', {
     options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
@@ -153,7 +155,10 @@ async function openDevice(name: string, port: number) {
       writeFileSync(join(SHOTS, file), Buffer.from(s.data, 'base64'))
     },
     /** The app put away, as a phone in a pocket: the page is frozen, so it stops saying it is looking. */
-    freeze: () => send('Page.setWebLifecycleState', { state: 'frozen' }),
+    freeze: async () => {
+      await send('Emulation.setFocusEmulationEnabled', { enabled: false })
+      await send('Page.setWebLifecycleState', { state: 'frozen' })
+    },
     deviceId: async () => JSON.parse((await js(`localStorage.getItem('cf:device')`)) ?? '{}').id as string,
     /** The passkeys this device's authenticator holds: one per pairing ceremony that ran. */
     passkeys: async () => ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length,

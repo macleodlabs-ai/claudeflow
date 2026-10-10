@@ -392,12 +392,15 @@ setInterval(() => {
 }, 1_000)
 setInterval(() => links.forEach(l => l.ping()), PING_MS)
 // A phone wakes the page, or gets its network back, without a reconnect: check the line when it does.
+// Put away or out of focus, it says so at once, so sessions stop sending every change to it.
 const wake = () => {
-  if (document.visibilityState !== 'visible') return
+  if (document.visibilityState !== 'visible' || !document.hasFocus()) return void links.forEach(l => l.ping())
   links.forEach(l => l.wake())
   render()
 }
 document.addEventListener('visibilitychange', wake)
+addEventListener('focus', wake)
+addEventListener('blur', wake)
 addEventListener('online', wake)
 
 links.forEach(l => l.start())

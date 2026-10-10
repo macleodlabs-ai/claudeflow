@@ -62,14 +62,23 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     ws.send(JSON.stringify(f))
     return true
   }
+  /** Looking: on screen and in focus. Only then do sessions send every change; otherwise at most one every 30 s. */
+  const isLooking = () => document.visibilityState === 'visible' && document.hasFocus()
+  /** What this socket last told the relay: looking pings repeat (they lapse after 30 s), "put away" is said once. */
+  let saidHere: boolean | undefined
   const ping = () => {
-    if (document.visibilityState === 'visible' && core.isUnlocked() && ws?.readyState === WebSocket.OPEN) ws.send('{"here":true}')
+    if (!core.isUnlocked() || ws?.readyState !== WebSocket.OPEN) return
+    const here = isLooking()
+    if (!here && saidHere === false) return
+    saidHere = here
+    ws.send(JSON.stringify({ here }))
   }
 
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const sock = new WebSocket(`${proto}://${location.host}/v1/room/${p.room}/device?id=${device.id}`)
     ws = sock
+    saidHere = undefined
     sock.onopen = () => {
       retries = 0
       ev.changed()
@@ -158,7 +167,7 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       ws.send(JSON.stringify({ push: sub }))
       return true
     },
-    /** Back on screen: reconnect now rather than wait out the backoff. */
+    /** Back on screen or in focus: reconnect now rather than wait out the backoff. Put away: say so at once. */
     wake() {
       if (!ws) {
         retries = 0
