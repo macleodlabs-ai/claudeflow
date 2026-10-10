@@ -28,11 +28,15 @@ export const identityOf = (v: unknown): Identity | undefined => {
   const x = obj(v)
   return str(x.room) && str(x.token) && str(x.sk) ? { room: x.room, token: x.token, sk: x.sk } : undefined
 }
-export const devicesOf = (v: unknown): Device[] =>
-  (Array.isArray(v) ? v : []).filter((d): d is Device => {
+export const devicesOf = (v: unknown): Device[] => {
+  const valid = (Array.isArray(v) ? v : []).filter((d): d is Device => {
     const x = obj(d)
     return str(x.id) && str(x.pk) && str(x.credentialId, 1000) && str(x.credentialKey, 1000) && typeof x.label === 'string' && typeof x.pairedAt === 'number'
   })
+  // One entry per device, the latest pairing winning: a device that paired twice (a double tap, a retry on a slow
+  // network) holds only its newest passkey, and an older entry left first would refuse every unlock and Allow.
+  return valid.filter((d, i) => !valid.slice(i + 1).some(x => x.id === d.id))
+}
 export const pairingOf = (v: unknown): Pairing | undefined => {
   const x = obj(v)
   return str(x.secret) && typeof x.until === 'number' ? { secret: x.secret, until: x.until } : undefined
@@ -217,7 +221,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
         }
         if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey)) {
           devices.splice(0, devices.length, ...devices.filter(d => d.id !== admitted.id), admitted)
-          out.paired.push(admitted)
+          out.paired.splice(0, out.paired.length, ...out.paired.filter(d => d.id !== admitted.id), admitted)
         }
         out.send.push(welcome(h, admitted))
         poll.warmUntil = w.now + WARM_MS
