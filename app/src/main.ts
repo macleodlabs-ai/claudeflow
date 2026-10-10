@@ -206,8 +206,7 @@ async function go(key: string, tap: Tap) {
     dispatch({ type: 'tap', key, tap: { ...tap, stage: 'queued', at: Date.now(), why: undefined } })
     return render()
   }
-  const isAllow = c.kind === 'permission' && c.decision === 'allow'
-  dispatch({ type: 'tap', key, tap: { ...tap, stage: isAllow ? 'faceid' : 'sent', at: Date.now(), why: undefined } })
+  dispatch({ type: 'tap', key, tap: { ...tap, stage: 'sent', at: Date.now(), why: undefined } })
   render()
   const r = await link.send(tap.sessionId, c)
   const cur = state.taps[key]

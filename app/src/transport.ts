@@ -201,21 +201,13 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       setStage({ ...stage, since: Date.now() })
     },
     /**
-     * Seals a command for one session. An Allow asks for Face ID over that request first; sending the same command id
-     * again on this connection reuses it, so a Retry needs no second Face ID and the session sees one command.
+     * Seals a command for one session; sending the same command id again reuses it, so the session sees one command.
+     * Face ID is asked once, to unlock: the channel it opened carries every answer, an Allow included.
      */
     async send(session: string, command: PhoneCommand): Promise<Sent> {
       const offline: Sent = { ok: false, why: 'offline', isOffline: true }
       if (!core.hasChannel(session) || !p.credentialId || ws?.readyState !== WebSocket.OPEN) return offline
-      let c = sent.get(command.id) ?? command
-      if (c.kind === 'permission' && c.decision === 'allow' && !c.passkey) {
-        const challenge = core.allowChallenge(c.requestId)
-        if (!challenge) return offline
-        const passkey = await assertPasskey(p.credentialId, challenge)
-        if (!passkey.ok) return passkey
-        c = { ...c, passkey: passkey.value }
-      }
-      // The channel may have been replaced while Face ID was up; the command goes on the current one or not at all.
+      const c = sent.get(command.id) ?? command
       if (!post(core.seal(session, c))) return offline
       sent.set(c.id, c)
       return { ok: true }

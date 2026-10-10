@@ -363,7 +363,7 @@ try {
       await d2.shot('e2e-05a-device2-allow-sent.png')
       s.isLagging = false
       const allow = await until('the allow command', () => s.commands.find(c => c.command.kind === 'permission'))
-      check('device 2 taps Allow (passkey checked) and the session receives allow from device 2',
+      check('device 2 taps Allow (no second Face ID) and the session receives allow from device 2',
         allow.device === id2 && allow.command.kind === 'permission' && allow.command.decision === 'allow' && allow.command.requestId === 'toolu_e2e', JSON.stringify(allow.command))
       await d2.see('Allowed ✓')
       await d2.shot('e2e-05b-device2-allowed.png')
