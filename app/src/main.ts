@@ -147,7 +147,7 @@ side.addEventListener?.('change', () => render())
 
 function render() {
   // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
-  if (document.activeElement?.matches('textarea')) {
+  if (document.activeElement?.matches('textarea') || isDockMoving) {
     pendingRender = true
     return
   }
@@ -330,14 +330,44 @@ document.addEventListener('paste', e => {
 document.addEventListener('focusin', e => document.body.classList.toggle('composing', !!(e.target as Element).closest?.('[data-compose]')))
 document.addEventListener('focusout', () => document.body.classList.remove('composing'))
 // The dock's dots follow the slide in view.
+// Swiping the dock: its height follows the finger between the two slides' heights, and nothing else moves until the
+// swipe settles (no redraw, no page padding change, no snap from code), so it glides both ways.
+let isDockMoving = false
+let dockSettle: ReturnType<typeof setTimeout> | undefined
+document.addEventListener('pointerdown', e => {
+  if ((e.target as Element).closest?.('[data-slides]')) isDockMoving = true
+})
+document.addEventListener('pointerup', () => {
+  if (isDockMoving && dockSettle === undefined) dockSettle = setTimeout(settleDock, 160)
+})
 document.addEventListener('scroll', e => {
   const strip = e.target as HTMLElement
   if (!strip.matches?.('[data-slides]')) return
-  const i = Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth))
-  if (!document.body.classList.contains('composing')) dockSlide = i
-  strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === i))
-  fitDock(strip)
+  isDockMoving = true
+  const slides = [...strip.children] as HTMLElement[]
+  const at = strip.scrollLeft / Math.max(1, strip.clientWidth)
+  const i = Math.max(0, Math.min(slides.length - 1, Math.floor(at)))
+  const t = at - i
+  const a = slides[i]?.offsetHeight ?? 0
+  const b = slides[i + 1]?.offsetHeight ?? a
+  strip.style.height = `${Math.round(a + (b - a) * t)}px`
+  clearTimeout(dockSettle)
+  dockSettle = setTimeout(settleDock, 160)
 }, true)
+
+/** The swipe is over: note the slide, light its dot, let the page make room for it, and draw what waited. */
+function settleDock() {
+  dockSettle = undefined
+  isDockMoving = false
+  const strip = document.querySelector<HTMLElement>('[data-slides]')
+  if (strip) {
+    const i = Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth))
+    if (!document.body.classList.contains('composing')) dockSlide = i
+    strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === i))
+    fitDock(strip)
+  }
+  if (pendingRender) render()
+}
 document.addEventListener('focusout', () => setTimeout(() => pendingRender && render(), 0))
 
 document.addEventListener('click', e => {
