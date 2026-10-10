@@ -54,6 +54,10 @@ export type Snapshot = {
   permissions: PendingPermission[]
   /** The sticky summary: workflows running, agents running, failures shown, and the next loop tick. */
   summary?: Summary
+  /** For a device the project was shared with: what it may do, and when its access ends. Absent for the owner's. */
+  you?: { role: 'viewer' | 'contributor'; until: number }
+  /** For the owner's devices only: who this project is shared with. */
+  people?: Person[]
   /** Archived streams, newest last, for the phone's Archived list (swipe right to restore); absent from older sessions. */
   archived?: { id: string; name: string; color: string }[]
   /** Claude's questions with options (AskUserQuestion) waiting on an answer; absent from older sessions. */
@@ -83,6 +87,9 @@ export type PendingQuestion = { id: string; question: string; header: string; op
 /** How a held prompt or question ended. `label`: the option chosen, for a question. */
 export type Settled = { id: string; why: AckWhy; label?: string; at: number }
 
+/** Someone this project is shared with, as the owner's People list shows them. */
+export type Person = { id: string; label: string; role: 'viewer' | 'contributor'; until: number; pairedAt: number }
+
 /** A file sent with a prompt: its chunks (`chunk` commands under `blob`) came first. */
 export type PhoneFile = { blob: string; name: string; type: string }
 
@@ -94,6 +101,12 @@ export const CHUNK_B64 = 8_000
 export type PhoneCommand =
   /** A prompt: into `streamId`'s stream, or ('') a new one that routing files. */
   | { id: string; kind: 'answer'; streamId: string; text: string; files?: PhoneFile[] }
+  /** The owner shares this project: a one-time invite for `role`, its secret in the ack. */
+  | { id: string; kind: 'invite'; role: 'viewer' | 'contributor' }
+  /** The owner changes what a shared device may do, gives it SHARE_DAYS more, or removes it. */
+  | { id: string; kind: 'setRole'; deviceId: string; role: 'viewer' | 'contributor' }
+  | { id: string; kind: 'extend'; deviceId: string }
+  | { id: string; kind: 'forgetDevice'; deviceId: string }
   /** Archive a stream (a swipe left on the phone), or restore an archived one (a swipe right). */
   | { id: string; kind: 'archive'; streamId: string }
   | { id: string; kind: 'restore'; streamId: string }
@@ -117,20 +130,22 @@ export type PasskeyAssertion = { authenticatorData: string; clientDataJSON: stri
  * Why a command was or was not done, or how a held prompt ended. `allowed`, `denied`, `chosen`, `answered on Mac`,
  * `moved to Mac` (nobody answered, so the terminal asks) and `chose recommended` also answer a late tap.
  */
-export type AckWhy = 'allowed' | 'denied' | 'chosen' | 'answered on Mac' | 'moved to Mac' | 'chose recommended' | 'passkey not verified' | 'unknown request' | 'file missing'
-const ACK_WHY: readonly string[] = ['allowed', 'denied', 'chosen', 'answered on Mac', 'moved to Mac', 'chose recommended', 'passkey not verified', 'unknown request', 'file missing']
+export type AckWhy = 'allowed' | 'denied' | 'chosen' | 'answered on Mac' | 'moved to Mac' | 'chose recommended' | 'passkey not verified' | 'unknown request' | 'file missing' | 'read only'
+const ACK_WHY: readonly string[] = ['allowed', 'denied', 'chosen', 'answered on Mac', 'moved to Mac', 'chose recommended', 'passkey not verified', 'unknown request', 'file missing', 'read only']
 
 /**
  * The session's answer to one command (session → device, sealed like a snapshot): definite feedback for the phone on
  * a laggy network instead of a guess. `id` is the command's id. Older apps open it and ignore it.
  */
-export type Ack = { t: 'ack'; id: string; ok: boolean; why?: AckWhy }
+/** `secret`: an invite's, for the owner's phone to make the link from. */
+export type Ack = { t: 'ack'; id: string; ok: boolean; why?: AckWhy; secret?: string }
 
 /** An ack, if it is one: it comes out of a sealed box, but the phone still draws only what it knows. */
 export const ackOf = (v: unknown): Ack | undefined => {
   const x = (v ?? {}) as Record<string, unknown>
   if (x.t !== 'ack' || typeof x.id !== 'string' || x.id.length > 200 || typeof x.ok !== 'boolean') return undefined
-  return { t: 'ack', id: x.id, ok: x.ok, ...(typeof x.why === 'string' && ACK_WHY.includes(x.why) ? { why: x.why as AckWhy } : {}) }
+  const secret = typeof x.secret === 'string' && /^[\w-]{43}$/.test(x.secret) ? { secret: x.secret } : {}
+  return { t: 'ack', id: x.id, ok: x.ok, ...(typeof x.why === 'string' && ACK_WHY.includes(x.why) ? { why: x.why as AckWhy } : {}), ...secret }
 }
 
 /** Allows one request may try, each with its own command id and Face ID: a lost or slow one can be tapped again. */
@@ -212,6 +227,10 @@ export const commandOf = (c: unknown): PhoneCommand | undefined => {
   // Ids only, each its own field: the session acts only on a task or stream it shows (remote/index.tsx).
   if (k.kind === 'stopTask') return isId(k.taskId) ? { id: k.id, kind: 'stopTask', taskId: k.taskId } : undefined
   if (k.kind === 'stopLoop' || k.kind === 'runTick' || k.kind === 'archive' || k.kind === 'restore') return isId(k.streamId) ? { id: k.id, kind: k.kind, streamId: k.streamId } : undefined
+  const isRole = (r: unknown): r is 'viewer' | 'contributor' => r === 'viewer' || r === 'contributor'
+  if (k.kind === 'invite') return isRole(k.role) ? { id: k.id, kind: 'invite', role: k.role } : undefined
+  if (k.kind === 'setRole') return isId(k.deviceId) && isRole(k.role) ? { id: k.id, kind: 'setRole', deviceId: k.deviceId, role: k.role } : undefined
+  if (k.kind === 'extend' || k.kind === 'forgetDevice') return isId(k.deviceId) ? ({ id: k.id, kind: k.kind, deviceId: k.deviceId } as PhoneCommand) : undefined
   if (k.kind === 'choose') return typeof k.requestId === 'string' && typeof k.label === 'string' && k.label.length > 0 && k.label.length <= 400 ? (c as PhoneCommand) : undefined
   return undefined
 }

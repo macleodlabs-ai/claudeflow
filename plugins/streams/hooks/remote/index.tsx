@@ -5,7 +5,7 @@ import { SAVED_ROWS, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { PAIRING_MS, createLink, devicesOf, identityOf, originOf, pairingOf, relayArg, type Link } from './link'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, type Device, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import {
   HEARTBEAT_MS,
@@ -64,6 +64,8 @@ export const STORE = {
   devices: 'remote:devices',
   /** `{ secret, until }`: an open pairing, valid ten minutes for any number of devices. */
   pairing: 'remote:pairing',
+  /** `[{ secret, until, project, role, days }]`: shared invites not yet used, one device each. */
+  invites: 'remote:invites',
 } as const
 
 /** How often the session looks for news to send and commands to take while a device is active. */
@@ -76,6 +78,8 @@ export type RemoteOptions = {
 
 /** This session as the devices see it; set at session start. */
 let me: Snapshot['session'] | undefined
+/** This session's project, as shared invites name it: its working directory. */
+let myCwd = ''
 /** The sealed link to the devices, made once the account has an identity. */
 let link: Link | undefined
 /** A tick is running: the next one waits, so two posts never race on the same link. */
@@ -120,6 +124,7 @@ let options: RemoteOptions = { relayUrl: '' }
 async function remoteStart($: $, e: { cwd: string }) {
   const [id, configDir] = await Promise.all([$.session.id(), $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)])
   me = { id, account: accountOf(configDir ?? ''), project: e.cwd.split('/').pop() || e.cwd, busy: false }
+  myCwd = e.cwd
   $.clock.every(TICK_MS, () => void remoteTick($).catch(() => {}))
 }
 
@@ -134,18 +139,21 @@ async function remoteTick($: $) {
     const now = await $.clock.now()
     const note = await read($, remoteNoteA)
     if (note.text && now >= note.until) await update($, remoteNoteA, () => ({ text: '', until: 0 }))
-    const [identity, stored, pairing] = await Promise.all([
+    const [identity, stored, pairing, invites] = await Promise.all([
       $.store.get(STORE.identity).then(identityOf),
       $.store.get(STORE.devices).then(devicesOf),
       $.store.get(STORE.pairing).then(pairingOf),
+      $.store.get(STORE.invites).then(invitesOf),
     ])
     if (!identity) return
-    if (link?.room !== identity.room) link = createLink({ identity, session: me.id, origin: originOf(options.relayUrl) })
+    if (link?.room !== identity.room) link = createLink({ identity, session: me.id, origin: originOf(options.relayUrl), project: myCwd })
     let devices = stored
     // No device could answer, or the relay is backing off: no snapshot is made, and the relay is not asked.
-    if (link.isQuiet({ devices, pairing, now })) return
-    const snapshot = await snapshotNow($, me)
-    let post = link.next({ devices, pairing, now, snapshot, isHolding: held.size > 0 })
+    if (link.isQuiet({ devices, pairing, invites, now })) return
+    // The owner's devices also see who this project is shared with (the link keeps it from shared ones).
+    const people = devices.flatMap(d => (d.role && d.project === myCwd ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
+    const snapshot = { ...(await snapshotNow($, me)), ...(people.length ? { people } : {}) }
+    let post = link.next({ devices, pairing, invites, now, snapshot, isHolding: held.size > 0 })
     let hasAcked = false
     while (post) {
       const r = await $.http
@@ -162,6 +170,8 @@ async function remoteTick($: $) {
         devices = devicesOf([...fresh.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired])
         await $.store.set(STORE.devices, devices)
       }
+      // An invite works once: used, it is gone for every session.
+      if (got.used.length) await $.store.set(STORE.invites, invitesOf(await $.store.get(STORE.invites)).filter(i => !got.used.includes(i.secret)))
       for (const c of got.commands) {
         // Every command is acked, so the phone shows what came of it instead of guessing on a slow network.
         const done = await phoneCommand($, c.command).catch((): Omit<Ack, 't' | 'id'> => ({ ok: false }))
@@ -170,7 +180,7 @@ async function remoteTick($: $) {
       // The acks go in this tick, once: a phone waiting on Allow should not wait for the next one.
       const isAcking: boolean = got.commands.length > 0 && !hasAcked
       hasAcked ||= isAcking
-      post = got.again || isAcking ? link.next({ devices, pairing, now, snapshot, isHolding: held.size > 0 }) : undefined
+      post = got.again || isAcking ? link.next({ devices, pairing, invites, now, snapshot, isHolding: held.size > 0 }) : undefined
     }
   } finally {
     isTicking = false
@@ -411,6 +421,25 @@ async function saveFiles($: $, files: readonly PhoneFile[]): Promise<string[] | 
 }
 
 async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'>> {
+  // Sharing this project (the owner's devices only; the link refuses these from shared ones).
+  if (c.kind === 'invite') {
+    const now = await $.clock.now()
+    const secret = randomId(32)
+    const open = invitesOf(await $.store.get(STORE.invites)).filter(i => now < i.until)
+    await $.store.set(STORE.invites, [...open, { secret, until: now + INVITE_MS, project: myCwd, role: c.role, days: SHARE_DAYS }].slice(-20))
+    return { ok: true, secret }
+  }
+  if (c.kind === 'setRole' || c.kind === 'extend' || c.kind === 'forgetDevice') {
+    const now = await $.clock.now()
+    const devices = devicesOf(await $.store.get(STORE.devices))
+    // Only someone this project was shared with: never the owner's own devices, nor another project's people.
+    const d = devices.find(x => x.id === c.deviceId && x.role && x.project === myCwd)
+    if (!d) return { ok: false }
+    const changed: Device | undefined =
+      c.kind === 'setRole' ? { ...d, role: c.role } : c.kind === 'extend' ? { ...d, until: Math.max(now, d.until ?? 0) + SHARE_DAYS * DAY_MS } : undefined
+    await $.store.set(STORE.devices, changed ? devices.map(x => (x.id === d.id ? changed : x)) : devices.filter(x => x.id !== d.id))
+    return { ok: true }
+  }
   if (c.kind === 'chunk') {
     const now = await $.clock.now()
     for (const [blob, u] of uploads) if (now - u.at > UPLOAD_MS) uploads.delete(blob)
