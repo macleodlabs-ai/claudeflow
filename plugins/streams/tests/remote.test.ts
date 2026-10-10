@@ -336,6 +336,9 @@ describe('the session on the relay', () => {
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     on('tool.check', async () => ({ decision: 'ask' }) as never)
     const st = { isLooking: true, dialog: undefined as undefined | ((label: string) => void) }
+    // The prompt box takes a fill: no dialog holds the keys (the engine refuses one while a dialog does).
+    on('prompt.fill', async () => ({ isFilled: true, text: '' }) as never)
+    on('classic.PermissionRequest', async () => ({}) as never)
     on('tool.call', async (_$, e) => {
       const q = (e as unknown as { questions: { question: string }[] }).questions[0]!.question
       const label = await new Promise<string>(r => (st.dialog = r))
@@ -365,6 +368,26 @@ describe('the session on the relay', () => {
     }
     return { a, relay, clock, seen, acked, st, watch }
   }
+
+  /** A Bash call the mode's decider passed on to the person: tool.check said `ask`, then PermissionRequest fired. */
+  async function manualAsk($: Engine) {
+    await $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_1' } as never)
+    return $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'git push' } } as never) as Promise<{ decision?: { behavior: string; message?: string } }>
+  }
+
+  test('where no dialog shows while the hook runs, it steps aside at once: the terminal never waits on a phone', OPTIONS, async ($, on) => {
+    // The engine strips a hook's refusal, so a test cannot fake an open dialog: the box takes the fill, as with none.
+    const { clock, seen, watch } = await withPhone($, on)
+    const asked = watch(manualAsk($))
+    await clock.advance(2_000)
+    expect(asked.value).toEqual({})
+    expect(seen.at(-1)!.permissions).toEqual([])
+  })
+
+  test('tool.check verdicts pass through untouched, so auto mode and the rules decide as without a phone', OPTIONS, async ($, on) => {
+    await withPhone($, on)
+    expect(await $.tool.check({ tool: 'Bash', input: { command: 'ls' }, tool_use_id: 'toolu_2' } as never)).toEqual({ decision: 'ask' })
+  })
 
   const QUESTION = (options: string[]) => ({
     tool: 'AskUserQuestion',
