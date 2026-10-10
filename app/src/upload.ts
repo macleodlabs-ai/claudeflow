@@ -22,9 +22,17 @@ export const chunksOf = (b64: string): string[] => Array.from({ length: Math.max
 
 const tooLarge = (name: string) => ({ why: `${name} is too large to send (about ${Math.round((MAX_FILE_B64 * 3) / 4 / 1000)} KB at most)` })
 
+/** A photo decoded by an <img>, where createImageBitmap cannot (some Safari versions with HEIC). */
+async function viaImg(f: File): Promise<HTMLImageElement | undefined> {
+  const img = new Image()
+  img.src = URL.createObjectURL(f)
+  const ok = await img.decode().then(() => true, () => false)
+  return ok ? img : undefined
+}
+
 /** A photo redrawn as JPEG, smaller each try until it fits; undefined where the browser cannot draw it. */
 async function shrink(f: File): Promise<Blob | undefined> {
-  const img = await createImageBitmap(f).catch(() => undefined)
+  const img = (await createImageBitmap(f).catch(() => undefined)) ?? (await viaImg(f))
   if (!img) return undefined
   for (const [side, quality] of [[MAX_SIDE, 0.82], [1280, 0.72], [960, 0.65], [720, 0.6]] as const) {
     const scale = Math.min(1, side / Math.max(img.width, img.height))

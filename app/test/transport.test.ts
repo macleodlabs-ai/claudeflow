@@ -294,6 +294,18 @@ describe('on a slow network', () => {
     expect(acks).toEqual([{ t: 'ack', id: 'c1', ok: true, why: 'allowed' }])
   })
 
+  test('locking drops the connection keys: nothing can be sent or read until Face ID unlocks it again', async () => {
+    // The app locks itself when put away or left untouched; a locked phone must be as closed as a fresh one.
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    session(ws, 's1', { devices: [stored] }).tick()
+    expect(link.canSend('s1')).toBe(true)
+    link.lock()
+    expect(link.isUnlocked()).toBe(false)
+    expect(link.canSend('s1')).toBe(false)
+    expect(await link.send('s1', { id: 'c', kind: 'stop' })).toMatchObject({ ok: false })
+  })
+
   test('with the line down a command is not sent but reported offline, so the app can queue it', async () => {
     const { link, ws } = start(PAIRED)
     await link.unlock()

@@ -168,6 +168,12 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       return true
     },
     /** Back on screen or in focus: reconnect now rather than wait out the backoff. Put away: say so at once. */
+    /** Locks this account on this device: the connection's keys are dropped, so Face ID is needed to see it again. */
+    lock() {
+      if (!core.isUnlocked()) return
+      core.reset()
+      setStage({ at: 'idle' })
+    },
     wake() {
       if (!ws) {
         retries = 0

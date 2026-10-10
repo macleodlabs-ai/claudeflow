@@ -32,6 +32,7 @@ import { PING_MS, roomLink, type Device, type RoomLink } from './transport'
 import { gates, unpaired, type GateView } from './views/gates'
 import { bell, page, switcher, tabs } from './views/page'
 import { attachOf, sendFiles, type Ready } from './upload'
+import { attachedStrip, clip } from './views/compose'
 import { dictation } from './voice'
 
 /** Web storage can throw (private mode, blocked storage): the app then works for this visit only. */
@@ -242,14 +243,37 @@ const voice = dictation(text => {
   grow(t)
 }, () => render())
 
+/** A photo is being read and shrunk: Send waits for it, so a prompt never goes without the photo just added. */
+let isAttaching = false
+
 async function attach(files: Iterable<File>) {
+  isAttaching = true
   composeWhy = ''
   for (const f of files) {
     const r = await attachOf(f)
     if ('why' in r) composeWhy = r.why
     else attached.push(r)
   }
+  isAttaching = false
+  paintAttached()
   render()
+}
+
+/** Shows what is attached in the composer now, without waiting for a redraw (one may be held while the box has focus). */
+function paintAttached() {
+  const files = attached.map(f => ({ name: f.name, preview: f.preview }))
+  document.querySelector('[data-attached]')?.replaceWith(htmlOf(attachedStrip(files)))
+  document.querySelector('[data-clip]')?.replaceWith(htmlOf(clip(files.length)))
+  const why = document.querySelector('[data-why]')
+  if (why) why.textContent = composeWhy ? ` · ${composeWhy}` : ''
+  const strip = document.querySelector<HTMLElement>('[data-slides]')
+  if (strip) fitDock(strip)
+}
+
+const htmlOf = (html: string): Element => {
+  const t = document.createElement('template')
+  t.innerHTML = html.trim()
+  return t.content.firstElementChild!
 }
 
 /** A new tap on `key` for session `t`, carrying the Allow tries this request has already spent. */
@@ -330,16 +354,25 @@ document.addEventListener('paste', e => {
 document.addEventListener('focusin', e => document.body.classList.toggle('composing', !!(e.target as Element).closest?.('[data-compose]')))
 document.addEventListener('focusout', () => document.body.classList.remove('composing'))
 // The dock's dots follow the slide in view.
-// Swiping the dock: its height follows the finger between the two slides' heights, and nothing else moves until the
-// swipe settles (no redraw, no page padding change, no snap from code), so it glides both ways.
+// Swiping the dock: it stands as tall as the taller of the two slides in play, so each shows whole from the first
+// movement (growing with the finger clipped the usage panel's labels until late); nothing else moves until the swipe
+// settles (no redraw, no page padding change, no snap from code), when it eases to the slide it landed on.
 let isDockMoving = false
 let dockSettle: ReturnType<typeof setTimeout> | undefined
 document.addEventListener('pointerdown', e => {
-  if ((e.target as Element).closest?.('[data-slides]')) isDockMoving = true
+  const t = e.target as Element
+  if (!t.closest?.('[data-slides]') || t.closest('button, label, input, textarea, a')) return
+  isDockMoving = true
+  clearTimeout(dockSettle)
+  dockSettle = setTimeout(settleDock, 1_500)
 })
-document.addEventListener('pointerup', () => {
-  if (isDockMoving && dockSettle === undefined) dockSettle = setTimeout(settleDock, 160)
-})
+const dockLifted = () => {
+  if (!isDockMoving) return
+  clearTimeout(dockSettle)
+  dockSettle = setTimeout(settleDock, 160)
+}
+document.addEventListener('pointerup', dockLifted)
+document.addEventListener('pointercancel', dockLifted)
 document.addEventListener('scroll', e => {
   const strip = e.target as HTMLElement
   if (!strip.matches?.('[data-slides]')) return
@@ -347,10 +380,10 @@ document.addEventListener('scroll', e => {
   const slides = [...strip.children] as HTMLElement[]
   const at = strip.scrollLeft / Math.max(1, strip.clientWidth)
   const i = Math.max(0, Math.min(slides.length - 1, Math.floor(at)))
-  const t = at - i
   const a = slides[i]?.offsetHeight ?? 0
   const b = slides[i + 1]?.offsetHeight ?? a
-  strip.style.height = `${Math.round(a + (b - a) * t)}px`
+  strip.classList.remove('settling')
+  strip.style.height = `${Math.max(a, b)}px`
   clearTimeout(dockSettle)
   dockSettle = setTimeout(settleDock, 160)
 }, true)
@@ -364,6 +397,7 @@ function settleDock() {
     const i = Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth))
     if (!document.body.classList.contains('composing')) dockSlide = i
     strip.parentElement?.querySelectorAll('.slide-dots i').forEach((d, j) => d.classList.toggle('on', j === i))
+    strip.classList.add('settling')
     fitDock(strip)
   }
   if (pendingRender) render()
@@ -389,7 +423,7 @@ document.addEventListener('click', e => {
   if (sendBtn) {
     const key = sendBtn.dataset.send!
     const text = (state.drafts[key] ?? '').trim()
-    if ((!text && !attached.length) || !shown || isInFlight(state.taps[key])) return
+    if (isAttaching || (!text && !attached.length) || !shown || isInFlight(state.taps[key])) return
     const files = attached
     attached = []
     composeWhy = ''
@@ -417,7 +451,7 @@ document.addEventListener('click', e => {
   const unattach = at('[data-unattach]')
   if (unattach) {
     attached.splice(Number(unattach.dataset.unattach), 1)
-    return render()
+    return paintAttached()
   }
   const replyOpen = at('[data-reply-open]')
   if (replyOpen) {
@@ -562,7 +596,12 @@ header.addEventListener('pointercancel', () => {
 function archiveTap(shown: SessionTab, key: string, kind: 'archive' | 'restore') {
   const tapKey = `${key}|${kind}`
   if (isInFlight(state.taps[tapKey])) return
-  document.querySelector(`[data-stream="${CSS.escape(key)}"]`)?.classList.add('gone')
+  // It slides out and its space closes at once, so the streams below move up before the Mac's next snapshot.
+  const el = document.querySelector<HTMLElement>(`[data-stream="${CSS.escape(key)}"]`)
+  if (el) {
+    el.style.height = `${el.offsetHeight}px`
+    requestAnimationFrame(() => el.classList.add('gone'))
+  }
   void go(tapKey, tapFor(shown, tapKey, { id: randomId(), kind, streamId: streamIdOf(key) }))
 }
 
@@ -643,6 +682,26 @@ const wake = () => {
   render()
 }
 document.addEventListener('visibilitychange', wake)
+
+// The app locks itself: put away for LOCK_AWAY_MS, or on screen untouched for LOCK_IDLE_MS. Unlock is Face ID again.
+const LOCK_AWAY_MS = 5 * 60_000
+const LOCK_IDLE_MS = 15 * 60_000
+let awayAt = 0
+let touchedAt = Date.now()
+const lockAll = () => {
+  links.forEach(l => l.lock())
+  render()
+}
+for (const ev of ['pointerdown', 'keydown', 'input']) document.addEventListener(ev, () => (touchedAt = Date.now()), true)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') return void (awayAt = Date.now())
+  if (awayAt && Date.now() - awayAt >= LOCK_AWAY_MS) lockAll()
+  awayAt = 0
+  touchedAt = Date.now()
+})
+setInterval(() => {
+  if (document.visibilityState === 'visible' && Date.now() - touchedAt >= LOCK_IDLE_MS && links.some(l => l.isUnlocked())) lockAll()
+}, 30_000)
 addEventListener('focus', wake)
 addEventListener('blur', wake)
 addEventListener('online', wake)

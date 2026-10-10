@@ -1,6 +1,6 @@
 // The screens before a room's sessions: Pair this device (make a passkey), Locked (Unlock with it), Not paired.
 // One per room that needs something, so a device paired with several accounts unlocks each with its own Face ID.
-// While a passkey step runs its button says where it is (Face ID, then the Mac checking) and takes no second tap.
+// While a passkey step runs its button says where it is (Face ID, then syncing with the Mac) and takes no second tap.
 import type { Gate } from '../links'
 import type { GateStage } from '../transport'
 import { esc, SLOW_TEXT, spinner } from './util'
@@ -20,7 +20,7 @@ export type GateView = {
 }
 
 const NOT_PAIRED = 'Run <b>/streams phone</b> in Claude Code on your Mac and scan the code it shows.'
-const PENDING = { faceid: 'Waiting for Face ID…', checking: 'Checking with your Mac…' } as const
+const PENDING = { faceid: 'Waiting for Face ID…', checking: 'Syncing…' } as const
 
 function one(g: GateView, isMany: boolean): string {
   const who = isMany ? `<div class="meta">${esc(g.label)}</div>` : ''
