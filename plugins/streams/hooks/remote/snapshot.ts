@@ -40,10 +40,17 @@ export type PhoneStream = {
 }
 
 /** What one session sends each device: everything the phone draws for it, and nothing it would not show. */
+/**
+ * The phone-command set this plugin answers. A Claude session keeps the plugin it started with until it reloads, so
+ * the phone tells a command to an older session apart from a Mac that is not there.
+ */
+export const PROTO = 2
+
 export type Snapshot = {
   v: 1
   /** `model`: what the session runs on (e.g. claude-opus-5-5); absent from older sessions. */
-  session: { id: string; account: string; project: string; busy: boolean; model?: string }
+  /** `proto`: which phone commands this session answers (PROTO); a session started on an older plugin sends none. */
+  session: { id: string; account: string; project: string; busy: boolean; model?: string; proto?: number }
   at: number
   streams: PhoneStream[]
   /** Git and ticket rows, as the status card shows them. */

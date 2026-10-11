@@ -53,5 +53,9 @@ export const limitColor = (p: number): string => (p >= 80 ? 'var(--error-ink)' :
 export const spinner = '<span class="spinner" aria-hidden="true"></span>'
 /** The Mac has been quiet for state.ts SLOW_MS. */
 export const SLOW_TEXT = "Your Mac hasn't answered yet: is Claude Code running?"
+/** Said instead when the session runs a plugin from before its snapshots named what it answers. */
+export const OLD_TEXT = 'This Claude session runs an older Streams plugin and may not answer: run /reload-plugins in it on your Mac.'
+/** The slow line for a command to `session`: an older plugin is the likelier reason than a Mac that is away. */
+export const slowText = (session: { proto?: number } | undefined): string => (session && !session.proto ? OLD_TEXT : SLOW_TEXT)
 /** Where a tap is, read out as it changes; with a spinner while it waits. */
 export const stageLine = (text: string, isWaiting = true): string => `<p class="stage" role="status">${isWaiting ? spinner : ''}${esc(text)}</p>`

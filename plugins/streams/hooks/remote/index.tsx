@@ -23,6 +23,7 @@ import {
   type PhoneFile,
   type Settled,
   type Snapshot,
+  PROTO,
 } from './snapshot'
 
 // The session's side of the remote (ARCHITECTURE.md, "Protocol (v2)"), the engine half: the account's identity
@@ -37,6 +38,7 @@ type $ = EngineInterface
 const streamsA = atom({ plugin: 'streams', key: 'streams' } as const, [])
 const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
+const sourcesA = atom({ plugin: 'streams', key: 'sources' } as const, { since: 0, files: [] as string[] })
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
@@ -229,7 +231,7 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
   const card = cardOf(streamsNow(facts, streams), { git: git.lines, rateLimits: (await $.session.usage().catch(() => undefined))?.rateLimits })
   const model = await $.session.model().catch(() => undefined)
   return snapshotOf({
-    session: { ...session, busy, ...(model ? { model } : {}) },
+    session: { ...session, busy, proto: PROTO, ...(model ? { model } : {}) },
     lines: card.lines,
     streams,
     colorOf,
@@ -487,7 +489,7 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     if (archived && (await read($, focusA)) === c.streamId) await update($, focusA, () => '')
     if (archived && (await read($, viewA)) === c.streamId) await update($, viewA, () => '')
     const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-    await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
+    await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
     return { ok: true }
   }
   if (c.kind === 'stop') {

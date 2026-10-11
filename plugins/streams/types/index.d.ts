@@ -187,6 +187,8 @@ declare module 'claude-code' {
       importProgress: { label: string; done: number; total: number }
       /** This session's transcript file, as the prompt hook names it. */
       transcript: string
+      /** The transcripts this project's saved rows can be read back from (state.ts, Sources). */
+      sources: { since: number; files: string[] }
       /** Prompts sent into the running turn, still waiting for the reply that answers them. */
       folded: Folded[]
       rows: StreamRow[]

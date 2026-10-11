@@ -73,6 +73,22 @@ export function rowOf(item: HistoryItem, sid: string, at: number): StreamRow {
   return { ...base, kind: 'tool', text: toolLine(item.name, item.input), toolId: item.id, ...withCode(item.name, item.input) }
 }
 
+/** Said for a saved row whose transcript is gone (cleaned up, or no longer listed). */
+export const GONE_TEXT = '(no longer in the transcript)'
+
+/**
+ * Rows saved as keys alone (empty text) get their words back from the transcripts' items, by the same rule
+ * (rowOf) they were filed by. Rows found in none of them say so; rows with text are left as they are.
+ */
+export function withTexts(rows: readonly StreamRow[], items: readonly HistoryItem[]): StreamRow[] {
+  const byKey = new Map(items.map(it => [`${it.uuid}:${it.index}`, it]))
+  return rows.map(r => {
+    if (r.text) return r
+    const it = byKey.get(r.id)
+    return { ...r, text: it ? rowOf(it, r.streamId, r.at).text : GONE_TEXT }
+  })
+}
+
 /** A message's text: a string as it is, a list of blocks by its text blocks (a prompt with an image is one). */
 export const textOf = (content: unknown): string =>
   typeof content === 'string'

@@ -16,6 +16,7 @@ type $ = EngineInterface
 const streamsA = atom({ plugin: 'streams', key: 'streams' } as const, [])
 const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
+const sourcesA = atom({ plugin: 'streams', key: 'sources' } as const, { since: 0, files: [] as string[] })
 const foldedA = atom({ plugin: 'streams', key: 'folded' } as const, [])
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
@@ -37,7 +38,7 @@ async function touch($: $, id: string, patch?: (s: Stream) => Partial<Stream>) {
 
 async function save($: $) {
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
 
 async function inStream($: $, agentId: string | undefined): Promise<string> {

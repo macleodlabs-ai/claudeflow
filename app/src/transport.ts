@@ -32,8 +32,6 @@ const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
 const STALE_MS = 45_000
 /** A hello is signed for its minute and the Mac takes it for a few minutes only: older, Retry asks for Face ID again. */
 const HELLO_FRESH_MS = 3 * 60_000
-/** How long an unlocked line back on screen may stay silent before it is replaced. */
-const PROBE_MS = 15_000
 
 /**
  * Where a gate's passkey step is: Face ID up, or the hello sent and no session has answered yet (`checking`, until a
@@ -219,13 +217,9 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       } else if (Date.now() - heardAt > STALE_MS && stage.at === 'idle') {
         // Only between steps: the Face ID sheet itself blurs the page, and the focus coming back must not drop the
         // line the hello just went out on.
-        // Locked, a fresh line costs nothing. Unlocked, ask first: a looking device gets a snapshot within seconds,
-        // and only a line that stays silent is replaced (and Face ID asked again).
+        // Locked, a fresh line costs nothing. Unlocked, it is kept: a new one would cost a Face ID, and a Mac with
+        // nothing new can be quiet for 30 s; a line that really died closes, and that reconnects.
         if (!core.isUnlocked()) return reconnect()
-        const asked = heardAt
-        setTimeout(() => {
-          if (ws && heardAt === asked && stage.at === 'idle') reconnect()
-        }, PROBE_MS)
       }
       ping()
     },
