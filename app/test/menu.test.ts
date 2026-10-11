@@ -64,6 +64,11 @@ describe('accounts on this device', () => {
     const html = gates([view('live', 'open'), view('old', 'not-paired')])
     expect(html).not.toContain('Not paired')
   })
+  test('a refused unlock says why in plain words and offers a scan, so the person is never stuck on Locked', () => {
+    const html = gates([{ ...view('mac', 'locked'), why: 'not paired' }])
+    expect(html).toContain('no longer knows this device')
+    expect(html).toContain('data-scan')
+  })
   test('a locked account among several can be forgotten on this device', () => {
     expect(gates([view('live', 'open'), view('old', 'locked')])).toContain('data-forget-room="old"')
   })

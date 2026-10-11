@@ -161,12 +161,25 @@ describe('pairing and unlocking', () => {
     const a = phone(me, 'iPhone')
     const relay = room([a])
     const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
-    relay.from(a, a.hello({ now: T0 - 120_000 }))
-    relay.from(a, a.hello({ now: T0 + 60_000 }))
+    relay.from(a, a.hello({ now: T0 - 7 * 60_000 }))
+    relay.from(a, a.hello({ now: T0 + 2 * 60_000 }))
     relay.from(a, a.hello({ now: T0, origin: 'https://evil.example' }))
     relay.from(a, a.hello({ now: T0, key: p256.utils.randomSecretKey() }))
     const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
     expect(r.frames.map(f => f.data)).toEqual(Array(4).fill({ t: 'denied', why: 'passkey not verified' }))
+  })
+
+  test('a hello that waited in the room a few minutes, or comes from a phone clock a minute fast, still unlocks', () => {
+    // A phone back from the background, or a Mac waking or backing off, must not leave Face ID failing until re-paired.
+    const me = account()
+    for (const at of [T0 - 4 * 60_000, T0 + 60_000]) {
+      const a = phone(me, 'iPhone')
+      const relay = room([a])
+      const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
+      relay.from(a, a.hello({ now: at }))
+      const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
+      expect(r.frames.map(f => tOf(f))).toContain('welcome')
+    }
   })
 
   test('a forgotten device loses its channel at once', () => {
