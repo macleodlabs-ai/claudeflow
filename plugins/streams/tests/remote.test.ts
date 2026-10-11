@@ -648,6 +648,64 @@ function store(on: On, entries: Record<string, unknown> = {}, limit = Infinity):
   return m
 }
 
+describe('sharing through the session', () => {
+  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY } }
+
+  test('the owner invites, the guest joins and moves to the Home Screen app, then is removed and told so', OPTIONS, async ($, on) => {
+    // The whole share as index.tsx runs it, with $.store: what the owner and the guest each end up with.
+    const me = account()
+    const owner = phone(me, 'my iPhone')
+    const safari = phone(me, "Sam's iPhone")
+    const homeScreen = phone(me, "Sam's iPhone")
+    const clock = session(on)
+    // Another project's history fills the store to its limit: sharing must still be kept, history making way.
+    const other = storeKey('/work/other')
+    const full = { [STORE.identity]: me, [STORE.devices]: [owner.stored()], [other]: { streams: [], loopStream: {}, rows: Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, streamId: 'a', kind: 'reply', text: 'x'.repeat(1000), at: 0 })) } }
+    const kept = store(on, full, JSON.stringify(full).length + 100)
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const relay = room([owner, safari, homeScreen])
+    const read = new Map<string, unknown[]>()
+    on('http.fetch', async (_$, e) => {
+      const body = JSON.parse(String(e.init?.body)) as Up['body']
+      for (const [id, got] of relay.deliver(body.frames)) read.set(id, [...(read.get(id) ?? []), ...got])
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(relay.answer([owner, safari, homeScreen])) } } as never
+    })
+    const of = <T,>(id: string, t: string) => ((read.get(id) ?? []) as ({ t: string } & T)[]).filter(m => m?.t === t)
+    await $.session.start({ cwd: '/work/claudeflow', surface: 'terminal', isInteractive: true })
+    relay.from(owner, owner.hello({ now: T0 }))
+    await clock.advance(TICK_MS)
+    relay.from(owner, owner.command({ id: 'inv', kind: 'invite', role: 'viewer' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    const secret = of<{ ack: Ack }>(owner.id, 'ack').find(m => m.ack.id === 'inv')?.ack.secret
+    expect(secret).toBeDefined()
+
+    relay.from(safari, safari.hello({ now: T0, secret }))
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(safari.isUnlocked()).toBe(true)
+    relay.from(homeScreen, homeScreen.hello({ now: T0, secret }))
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(homeScreen.isUnlocked()).toBe(true)
+    // One person: the Home Screen app took Safari's place, and the invite still names them.
+    const stored = devicesOf(kept.get(STORE.devices))
+    expect(stored.map(d => d.id)).toEqual([owner.id, homeScreen.id])
+    expect(kept.has(other)).toBe(false)
+    await clock.advance(ACTIVE_POLL_MS)
+    const people = of<{ snapshot: Snapshot }>(owner.id, 'snapshot').at(-1)?.snapshot.people ?? []
+    expect(people.map(x => x.id)).toEqual([homeScreen.id])
+
+    relay.from(owner, owner.command({ id: 'rm', kind: 'forgetDevice', deviceId: homeScreen.id }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(of<{ ack: Ack }>(owner.id, 'ack').find(m => m.ack.id === 'rm')?.ack.ok).toBe(true)
+    relay.from(homeScreen, homeScreen.hello({ now: T0 + 3 * ACTIVE_POLL_MS }))
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(of<{ why: string }>(homeScreen.id, 'denied').map(m => m.why)).toContain('access removed')
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(of<{ snapshot: Snapshot }>(owner.id, 'snapshot').at(-1)?.snapshot.people).toBeUndefined()
+  })
+})
+
 describe('/streams phone', () => {
   const run = ($: Engine, args: string) =>
     $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never) as Promise<{ text: string }>

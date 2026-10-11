@@ -7,15 +7,17 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, type Device, type Identity, type Invite, type Pairing } from '../plugins/streams/hooks/remote/link'
+import { INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, withPaired, type Device, type Identity, type Invite, type Pairing } from '../plugins/streams/hooks/remote/link'
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
 import type { Ack, PhoneCommand, Settled, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
 import { qrVideo } from './camera'
 
 const ROOT = join(import.meta.dir, '..')
 const SHOTS = process.argv[2] ?? join(ROOT, 'e2e', 'shots')
-const TMP = join(tmpdir(), 'claudeflow-e2e')
-const PORT = 8791
+/** E2E_OFFSET moves every port and the temp folder, so two runs (two worktrees) never stop each other's processes. */
+const OFFSET = Number(process.env.E2E_OFFSET ?? 0)
+const TMP = join(tmpdir(), `claudeflow-e2e${OFFSET ? `-${OFFSET}` : ''}`)
+const PORT = 8791 + OFFSET
 // Pages load from localhost: a passkey needs a host name (not an IP) and a secure context, which localhost is.
 const ORIGIN = `http://localhost:${PORT}`
 const UP = `http://127.0.0.1:${PORT}`
@@ -26,6 +28,10 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
  * (ARCHITECTURE.md, "Polling budget").
  */
 const POLL_WAIT_MS = 45_000
+/** The app's state.ts SLOW_MS: how long a hello waits before the app says nobody has answered. */
+const SLOW_MS = 45_000
+/** Words that mean nothing to someone a project was shared with: they never set up Claude Code. */
+const JARGON = /\bMac\b|pair|\/streams|passkey|Claude Code/i
 
 const results: { name: string; ok: boolean; why?: string }[] = []
 const check = (name: string, ok: boolean, why = '') => {
@@ -49,7 +55,7 @@ async function startRelay() {
   const vapid = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])) as CryptoKeyPair
   const secret = Buffer.from(await crypto.subtle.exportKey('pkcs8', vapid.privateKey)).toString('base64url')
   const log = openSync(join(TMP, 'wrangler.log'), 'w')
-  const p = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `VAPID_PRIVATE_KEY:${secret}`], {
+  const p = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `VAPID_PRIVATE_KEY:${secret}`, ...(OFFSET ? ['--inspector-port', String(9229 + OFFSET)] : [])], {
     cwd: join(ROOT, 'relay/cloudflare'), detached: true, stdio: ['ignore', log, log],
   })
   procs.push(p)
@@ -57,7 +63,7 @@ async function startRelay() {
 }
 
 // ---- a push service on this Mac: headless Chrome has none, so the devices' subscriptions point here ----
-const PUSH_PORT = 8795
+const PUSH_PORT = 8795 + OFFSET
 const pushes: { path: string; authorization: string; body: Uint8Array }[] = []
 function startPushService() {
   return Bun.serve({
@@ -199,7 +205,7 @@ function startSession() {
   const s = {
     identity, pairing, pk: publicKeyOf(sk), id,
     devices: [] as Device[],
-    /** Shared invites not yet used, as index.tsx keeps them in $.store. */
+    /** Shared invites until they expire, as index.tsx keeps them in $.store. */
     invites: [] as Invite[],
     commands: [] as { device: string; command: PhoneCommand }[],
     denied: [] as { to: string; why: string }[],
@@ -262,7 +268,7 @@ function startSession() {
     while (s.isRunning) {
       const now = Date.now()
       // As index.tsx: the owner's devices see who the project is shared with.
-      const people = s.devices.flatMap(d => (d.role ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
+      const people = s.devices.flatMap(d => (d.role && !d.removed ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
       const known = () => ({ devices: s.devices, pairing, invites: s.invites, now, snapshot: { ...snapshot(), ...(people.length ? { people } : {}) }, isHolding: s.permissions.length > 0 })
       let post = s.isLagging ? undefined : link.next(known())
       let hasAcked = false
@@ -271,11 +277,8 @@ function startSession() {
         for (const f of post.frames) if ((f.data as { t: string }).t === 'denied') s.denied.push({ to: f.to, why: (f.data as { why: string }).why })
         const r = await fetch(`${UP}/v1/room/${identity.room}/up`, { method: 'POST', body: JSON.stringify(post) }).catch(() => undefined)
         const got = link.answered(r?.ok ? await r.text().catch(() => undefined) : undefined, now)
-        for (const d of got.paired) {
-          s.devices = [...s.devices.filter(x => x.id !== d.id), d]
-          s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
-        }
-        s.invites = s.invites.filter(i => !got.used.includes(i.secret))
+        for (const d of got.paired) s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
+        s.devices = withPaired(s.devices, got.paired)
         s.commands.push(...got.commands)
         // What index.tsx's phoneCommand answers, acked in the same tick.
         for (const { device, command: c } of got.commands) {
@@ -285,6 +288,8 @@ function startSession() {
             s.invites.push({ secret, until: Date.now() + INVITE_MS, project: '/work/claudeflow', role: c.role, days: SHARE_DAYS })
             done = { ok: true, secret }
           }
+          // As index.tsx: a removed guest is kept as removed, so its next unlock is told so.
+          if (c.kind === 'forgetDevice') s.devices = s.devices.map(d => (d.id === c.deviceId && d.role ? { ...d, removed: true, until: Date.now() } : d))
           if (c.kind === 'permission' || c.kind === 'choose') {
             const isHeld = c.kind === 'permission' ? s.permissions.some(p => p.id === c.requestId) : s.questions.some(q => q.id === c.requestId)
             if (isHeld) {
@@ -344,7 +349,7 @@ const stopLeftovers = () => {
 // ---- the run ----
 let failed = false
 try {
-  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets four minutes.
+  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets six minutes.
   await Promise.race([
     (async () => {
       const v = spawnSync('node', ['--version']).stdout?.toString().trim() ?? ''
@@ -364,7 +369,8 @@ try {
       qrVideo(join(TMP, 'pairing-code.y4m'), link)
       const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${join(TMP, 'pairing-code.y4m')}`]
       const [d1, d2, d3, d4, d5] = await Promise.all([
-        openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343), openDevice('scanner', 9344, camera), openDevice('guest', 9345),
+        openDevice('device1', 9341 + OFFSET), openDevice('device2', 9342 + OFFSET), openDevice('stranger', 9343 + OFFSET), openDevice('scanner', 9344 + OFFSET, camera),
+        openDevice('guest', 9345 + OFFSET),
       ])
       // Like a Home Screen app added from an old pairing link: its start address carries a stale code.
       await d4.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${randomId(32)}`)
@@ -534,13 +540,17 @@ try {
       await d1.tap('[data-menu]')
       await d1.tap('[data-invite="viewer"]')
       const inviteLink = String(await until('the invite link', () => d1.js(`document.querySelector('.invite-link')?.value || ''`), POLL_WAIT_MS))
-      check('the ☰ menu makes an invite link for this project', inviteLink.startsWith(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=`), inviteLink)
+      check('the ☰ menu makes an invite link for this project, naming it and who shares it',
+        inviteLink.startsWith(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=`) && inviteLink.endsWith('&p=claudeflow&o=e2e'), inviteLink)
       await d1.shot('app-390-share.png')
       // The guest's hello reaches an older session first, which refuses the invite it does not know; the current
       // session (held back until then) lets it in. The guest must never be told it is not paired meanwhile.
       s.isLagging = true
       await d5.goto(inviteLink)
-      await d5.see('Pair this device')
+      await d5.see('Join claudeflow')
+      check('the guest is asked to join the project by name, in words with no Mac, pairing or /streams', !JARGON.test(await d5.text()), await d5.text())
+      await d5.shot('app-390-guest-join.png')
+      await d5.js(`(() => { const i = document.querySelector('[data-guest-name]'); i.value = 'Sam'; i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
       await d5.tap('[data-gate="pair"]')
       await sleep(1000)
       const older = startOlderSession(s)
@@ -557,12 +567,61 @@ try {
       }, POLL_WAIT_MS)
       older.isRunning = false
       check("one older session's refusal is not shown: the guest pairs when the current session lets it in, with no pairing error on the way", !refusal, refusal)
-      check('the guest joins as a watcher of this project: role, project and an end date, the invite used up',
-        s.devices.some(d => d.id === id5 && d.role === 'viewer' && d.project === '/work/claudeflow' && (d.until ?? 0) > Date.now()) && s.invites.length === 0,
+      check('the guest joins as a watcher of this project under the name they gave: role, project, an end date, the invite',
+        s.devices.some(d => d.id === id5 && d.label === 'Sam' && d.role === 'viewer' && d.project === '/work/claudeflow' && (d.until ?? 0) > Date.now() && !!d.via),
         JSON.stringify(s.devices.find(d => d.id === id5)))
       check('a watcher sees the streams but no control: no Yes, no Stop, no composer',
         (await d5.text()).includes('relay deploy') && !(await d5.js(`[...document.querySelectorAll('[data-answer], [data-stop], .slide.compose')].some(e => e.offsetParent)`)))
       await d5.shot('app-390-watching.png')
+      check('inside the project the guest reads no Mac, pairing or /streams either', !JARGON.test(await d5.text()), (await d5.text()).match(JARGON)?.[0])
+
+      // Back in the app later: Unlock with Face ID, and the project is there again.
+      await d5.reload()
+      await d5.see('Unlock with Face ID')
+      check('a guest coming back is asked only to unlock, in plain words', !JARGON.test(await d5.text()), await d5.text())
+      await d5.tap('[data-gate="unlock"]')
+      await d5.see('Watching', POLL_WAIT_MS)
+      check('the guest unlocks again and sees the project', (await d5.text()).includes('relay deploy'))
+
+      // The owner is away (the session posts nothing): the guest is told the project is not online, and gets in once it is.
+      s.isLagging = true
+      await d5.reload()
+      await d5.tap('[data-gate="unlock"]')
+      await d5.see("isn't online right now", SLOW_MS + POLL_WAIT_MS)
+      const away = await d5.text()
+      check('with the owner away, the guest is told the project is not online and that it opens while e2e works on it',
+        away.includes('It opens while e2e is working on it') && !JARGON.test(away), away)
+      await d5.shot('app-390-guest-away.png')
+      s.isLagging = false
+      await d5.tap('[data-gate="retry"]')
+      await d5.see('Watching', POLL_WAIT_MS)
+      check('once the owner is back, the waiting guest gets in', (await d5.text()).includes('relay deploy'))
+
+      // The owner removes the guest from the ☰ menu: the guest's next unlock says so, and who to ask.
+      await until('the guest in the people list', () => d1.js(`!!document.querySelector('[data-arm-remove="${id5}"]')`), POLL_WAIT_MS)
+      await d1.tap(`[data-arm-remove="${id5}"]`)
+      await d1.tap(`[data-arm-remove="${id5}"]`)
+      await until('the guest removed', () => s.devices.some(d => d.id === id5 && d.removed), POLL_WAIT_MS)
+      await d1.tap('[data-menu-close]')
+      await d5.reload()
+      await d5.tap('[data-gate="unlock"]')
+      await d5.see('removed your access', POLL_WAIT_MS)
+      const removed = await d5.text()
+      check('a removed guest is told the owner removed their access, not that a Mac does not know the device',
+        removed.includes('e2e removed your access to claudeflow') && !JARGON.test(removed), removed)
+      await d5.shot('app-390-guest-removed.png')
+
+      // An invite opened after its day: turned away in plain words, with who to ask for a new one.
+      const old = { secret: randomId(32), until: Date.now() - 1000, project: '/work/claudeflow', role: 'viewer' as const, days: SHARE_DAYS }
+      s.invites.push(old)
+      await d3.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${old.secret}&p=claudeflow&o=e2e`)
+      await d3.reload()
+      await d3.see('Join claudeflow')
+      await d3.tap('[data-gate="pair"]')
+      await d3.see('This invite has expired', POLL_WAIT_MS)
+      const expired = await d3.text()
+      check('an expired invite says so and to ask e2e for a new link, with no Mac or pairing words', expired.includes('Ask e2e for a new link') && !JARGON.test(expired), expired)
+      await d3.shot('app-390-guest-expired.png')
 
       // Workflows and loops: the cards say where each is, and Stop workflow (two taps) reaches the session as stopTask.
       s.permissions = []
@@ -628,8 +687,8 @@ try {
       s.isRunning = false
       for (const d of [d1, d2, d3]) d.close()
     })(),
-    sleep(240_000).then(() => {
-      throw new Error('the run took over 4 minutes')
+    sleep(360_000).then(() => {
+      throw new Error('the run took over 6 minutes')
     }),
   ])
 } catch (e) {

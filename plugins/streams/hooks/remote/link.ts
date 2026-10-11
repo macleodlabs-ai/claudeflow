@@ -11,7 +11,8 @@ export type Identity = { room: string; token: string; sk: string }
 /**
  * A paired phone or tablet, as $.store keeps it. One paired with `/streams phone` is the owner's: every project, every
  * action. One that joined by a shared invite has a `role` (watch only, or contribute), the `project` (a cwd) it may
- * see, and `until`, when its access ends.
+ * see, `until`, when its access ends, and `via`, the invite it joined by. One the owner removed stays as `removed`,
+ * so it is told that rather than that it is unknown.
  */
 export type Device = {
   id: string
@@ -23,21 +24,35 @@ export type Device = {
   role?: Role
   project?: string
   until?: number
+  via?: string
+  removed?: boolean
 }
 /** What a shared device may do: watch only, or act as the owner does in that project. */
 export type Role = 'viewer' | 'contributor'
 /** An open pairing: the QR code's secret, and when it stops working. */
 export type Pairing = { secret: string; until: number }
-/** A shared invite: a one-time pairing secret for one project and role, and how many days the access lasts. */
+/**
+ * A shared invite: a pairing secret for one project and role, and how many days the access lasts. It is one person's:
+ * until it expires, using it again (the Home Screen app after Safari) moves their access to the new device.
+ */
 export type Invite = { secret: string; until: number; project: string; role: Role; days: number }
 
-/** How long a shared invite link works before it is used, and how long the access it gives lasts by default. */
+/** How long a shared invite link works, and how long the access it gives lasts by default. */
 export const INVITE_MS = 24 * 60 * 60_000
 export const SHARE_DAYS = 7
 export const DAY_MS = 24 * 60 * 60_000
 
 /** Whether a device may see this session: the owner's always; a shared one in its own project, until it expires. */
-export const mayAccess = (d: Device, project: string, now: number): boolean => !d.role || (d.project === project && (d.until ?? 0) > now)
+export const mayAccess = (d: Device, project: string, now: number): boolean => !d.role || (!d.removed && d.project === project && (d.until ?? 0) > now)
+
+/**
+ * The stored devices with those just paired: each replaces its own earlier entry and, when it joined by an invite,
+ * the device that invite admitted before (one person, one device).
+ */
+export const withPaired = (devices: Device[], paired: Device[]): Device[] => [
+  ...devices.filter(d => !paired.some(p => p.id === d.id || (!!p.via && p.via === d.via))),
+  ...paired,
+]
 
 /** A frame for the relay to pass to one device. */
 export type OutFrame = { to: string; data: unknown }
@@ -144,7 +159,7 @@ const OWNER_ONLY: readonly string[] = ['invite', 'setRole', 'extend', 'forgetDev
 /** One open, sealed connection with a device. */
 type Conn = { device: Device; ch: ReturnType<typeof channel>; peerEph: string; last: { body: string; at: number } }
 
-type Taken = { send: OutFrame[]; paired: Device[]; used: string[]; commands: { device: string; command: PhoneCommand }[] }
+type Taken = { send: OutFrame[]; paired: Device[]; commands: { device: string; command: PhoneCommand }[] }
 
 /** What the session knows of its devices on this tick, from $.store: the paired ones, and an open pairing. */
 export type Known = { devices: Device[]; pairing?: Pairing; invites?: Invite[]; now: number }
@@ -153,10 +168,8 @@ export type Known = { devices: Device[]; pairing?: Pairing; invites?: Invite[]; 
 export type UpBody = { token: string; session: string; since: number; frames: OutFrame[] } & Partial<Hint>
 
 export type Answered = {
-  /** Devices that paired with this post's hellos: the adapter adds them to $.store for every session. */
+  /** Devices that paired with this post's hellos: the adapter adds them to $.store (`withPaired`) for every session. */
   paired: Device[]
-  /** Invite secrets those pairings used up: the adapter removes them from $.store, so each works once. */
-  used: string[]
   /** Commands opened from sealed boxes, checked; an `allow` only with a verified passkey. */
   commands: { device: string; command: PhoneCommand }[]
   /**
@@ -227,7 +240,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   }
 
   /** The device this hello may connect as, a new one when it pairs, or why not. */
-  function admit(h: Hello, w: Known & { devices: Device[] }): { device: Device; invite?: Invite } | string | undefined {
+  function admit(h: Hello, w: Known & { devices: Device[] }): { device: Device } | string | undefined {
     const { devices, pairing, now } = w
     if (h.proof !== undefined) {
       const reg = obj(h.registration)
@@ -249,12 +262,16 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       if (client.type !== 'webauthn.create' || client.origin !== o.origin || client.challenge !== challenge) return 'bad registration'
       const label = typeof h.label === 'string' && h.label.trim() ? h.label.trim().slice(0, 60) : `device ${h.device.slice(0, 6)}`
       const device: Device = { id: h.device, pk: h.pk, credentialId: String(reg.credentialId), credentialKey: String(reg.publicKey), label, pairedAt: now }
-      return invite ? { device: { ...device, role: invite.role, project: invite.project, until: now + invite.days * DAY_MS }, invite } : { device }
+      if (!invite) return { device }
+      // Joined before by this invite: the same person on another device keeps the role and end date they have.
+      const was = devices.find(d => d.via === invite.secret && !d.removed)
+      return { device: { ...device, role: was?.role ?? invite.role, project: invite.project, until: was?.until ?? now + invite.days * DAY_MS, via: invite.secret } }
     }
     const d = devices.find(x => x.id === h.device)
     if (!d || d.pk !== h.pk) return 'not paired'
     // A shared device's other projects stay silent (their sessions are none of its business); its own says when it ended.
     if (d.role && d.project !== o.project) return undefined
+    if (d.removed) return 'access removed'
     if (!mayAccess(d, o.project, now)) return 'access expired'
     const passkey = assertionOf(h.passkey)
     const minute = Math.floor(now / 60_000)
@@ -292,7 +309,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
 
   /** Reads an `up` answer: hellos answered (pairing new devices), boxes opened into commands. */
   function take(r: UpResponse, w: Known): Taken {
-    const out: Taken = { send: [], paired: [], used: [], commands: [] }
+    const out: Taken = { send: [], paired: [], commands: [] }
     const before = connected
     // Anyone who knows the room id can open a socket there: only devices that may talk to this session count.
     const isPairing = (!!w.pairing && w.now < w.pairing.until) || (w.invites ?? []).some(i => i.project === o.project && w.now < i.until)
@@ -314,10 +331,9 @@ export function createLink(o: { identity: Identity; session: string; origin: str
           continue
         }
         const admitted = got.device
-        if (got.invite) out.used.push(got.invite.secret)
         if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey)) {
-          devices.splice(0, devices.length, ...devices.filter(d => d.id !== admitted.id), admitted)
-          out.paired.splice(0, out.paired.length, ...out.paired.filter(d => d.id !== admitted.id), admitted)
+          devices.splice(0, devices.length, ...withPaired(devices, [admitted]))
+          out.paired.splice(0, out.paired.length, ...withPaired(out.paired, [admitted]))
         }
         out.send.push(welcome(h, admitted))
         poll.warmUntil = w.now + WARM_MS
@@ -421,7 +437,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
           poll.retryAt = now + backoffMs(poll.fails)
         }
         round = 0
-        return { paired: [], used: [], commands: [], again: false }
+        return { paired: [], commands: [], again: false }
       }
       poll.fails = 0
       poll.lastBody = s.body
@@ -429,7 +445,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       const t = take(r, s.known)
       outbox = t.send
       round = outbox.length && round + 1 < MAX_ROUNDS ? round + 1 : 0
-      return { paired: t.paired, used: t.used, commands: t.commands, again: round > 0 }
+      return { paired: t.paired, commands: t.commands, again: round > 0 }
     },
   }
 }

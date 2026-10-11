@@ -253,15 +253,15 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       }
       ping()
     },
-    /** First pairing: a new passkey, and proof this device saw the QR code's secret. */
-    pair: () =>
+    /** First pairing: a new passkey, and proof this device saw the QR code's secret. `label`: a guest's own name. */
+    pair: (label?: string) =>
       gateStep('pair', async () => {
         const secret = p.secret
         if (!secret) return undefined
-        const reg = await createPasskey(p.room.slice(0, 6), core.pairChallenge())
+        const reg = await createPasskey(p.guest?.project ?? p.room.slice(0, 6), core.pairChallenge())
         if (!reg.ok) return reg.why
         set({ ...p, credentialId: reg.value.credentialId })
-        return core.pairHello(secret, reg.value)
+        return core.pairHello(secret, reg.value, label)
       }),
     /** One Face ID per connection: every session in the room checks the same assertion. */
     unlock: () =>

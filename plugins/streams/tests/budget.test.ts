@@ -168,7 +168,7 @@ describe('the polling budget', () => {
     expect(link.answered(JSON.stringify(relay.answer()), T0).again).toBe(true)
     const lost = link.next(known(T0)) as UpBody
     expect(lost.frames.map(tOf)).toEqual(['welcome', 'box'])
-    expect(link.answered(undefined, T0)).toEqual({ paired: [], used: [], commands: [], again: false })
+    expect(link.answered(undefined, T0)).toEqual({ paired: [], commands: [], again: false })
     expect(link.next(known(T0 + TICK_MS))).toBeUndefined()
     const retry = link.next(known(T0 + 4000)) as UpBody
     expect(retry.frames.map(tOf)).toEqual(['welcome', 'box'])

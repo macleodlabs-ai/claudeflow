@@ -37,10 +37,10 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
 
   const fresh = (): Keys => ({ eph: newIdentity(), nonce: randomId(32) })
 
-  function send(k: Keys, isPairing: boolean, extra: Record<string, unknown>): DeviceFrame {
+  function send(k: Keys, isPairing: boolean, extra: Record<string, unknown>, name = o.label): DeviceFrame {
     hello = { ...k, isPairing }
     channels.clear()
-    const label = o.label ? { label: o.label } : {}
+    const label = name ? { label: name } : {}
     return { to: '*', data: { t: 'hello', device: o.device.id, pk: o.device.pk, eph: k.eph.pk, nonce: k.nonce, ...label, ...extra } }
   }
 
@@ -51,9 +51,12 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
     /** What the pairing passkey signs: this pairing's room and this device, so the relay cannot reuse it elsewhere. */
     pairChallenge: () => passkeyChallenge('pair', o.room, o.device.id, o.device.pk),
 
-    /** The first hello: proof that this device saw the QR code's secret, covering everything the session stores. */
-    pairHello: (secret: string, reg: Registration): DeviceFrame =>
-      send(fresh(), true, { proof: pairingProof(secret, o.device.id, o.device.pk, reg.credentialId, reg.publicKey), registration: reg }),
+    /**
+     * The first hello: proof that this device saw the QR code's secret, covering everything the session stores.
+     * `label` is the name the owner sees for it (a guest's own name), when given.
+     */
+    pairHello: (secret: string, reg: Registration, label?: string): DeviceFrame =>
+      send(fresh(), true, { proof: pairingProof(secret, o.device.id, o.device.pk, reg.credentialId, reg.publicKey), registration: reg }, label || o.label),
 
     /** What Face ID signs to unlock: this room, a new connection key and the minute (`now`, ms). */
     unlockChallenge(now: number): string {

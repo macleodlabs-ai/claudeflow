@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 import { randomId } from '../hooks/remote/seal'
-import { DAY_MS, INVITE_MS, SHARE_DAYS, createLink, type Device, type Invite } from '../hooks/remote/link'
+import { DAY_MS, INVITE_MS, SHARE_DAYS, createLink, withPaired, type Device, type Invite } from '../hooks/remote/link'
 import type { Ack, Snapshot } from '../hooks/remote/snapshot'
 import { ORIGIN, SESSION, T0, account, cycle, phone, room } from './room'
 
@@ -26,12 +26,57 @@ const snapshotsTo = (read: Map<string, unknown[]>, id: string) =>
 const acksTo = (read: Map<string, unknown[]>, id: string) => ((read.get(id) ?? []) as { t: string; ack: Ack }[]).filter(m => m.t === 'ack').map(m => m.ack)
 
 describe('sharing a project', () => {
-  test('an invite pairs one device for this project, as a watcher by default, for SHARE_DAYS, and is used up', () => {
+  test('an invite pairs one device for this project, as a watcher by default, for SHARE_DAYS, bound to that invite', () => {
     const { friend, invite, first } = shared('viewer')
     const joined = first.paired.find(d => d.id === friend.id) as Device
-    expect(joined).toMatchObject({ role: 'viewer', project: PROJECT, until: T0 + SHARE_DAYS * DAY_MS })
-    expect(first.used).toEqual([invite.secret])
+    expect(joined).toMatchObject({ role: 'viewer', project: PROJECT, until: T0 + SHARE_DAYS * DAY_MS, via: invite.secret })
     expect(friend.isUnlocked()).toBe(true)
+  })
+
+  test('the guest opening the invite again (the Home Screen app after Safari) moves their access there: still one person', () => {
+    // On an iPhone the Home Screen app keeps its own storage, so it must join again. A one-use invite turned it away
+    // ("pairing expired") with no way back but a new invite from the owner.
+    const me = account()
+    const owner = phone(me, 'my iPhone')
+    const safari = phone(me, "Sam's iPhone")
+    const homeScreen = phone(me, "Sam's iPhone")
+    const relay = room([owner, safari, homeScreen])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const invite = inviteFor('contributor')
+    relay.from(safari, safari.hello({ now: T0, secret: invite.secret }))
+    const first = cycle(link, relay, { devices: [owner.stored()], invites: [invite], now: T0 })
+    const devices = withPaired([owner.stored()], first.paired)
+    // The owner made Sam a watcher meanwhile: the move keeps the role and the end date, it does not renew them.
+    const watching = devices.map(d => (d.id === safari.id ? { ...d, role: 'viewer' as const } : d))
+    relay.from(homeScreen, homeScreen.hello({ now: T0 + 60 * 60_000, secret: invite.secret }))
+    const again = cycle(link, relay, { devices: watching, invites: [invite], now: T0 + 60 * 60_000 })
+    expect(homeScreen.isUnlocked()).toBe(true)
+    const after = withPaired(watching, again.paired)
+    expect(after.map(d => d.id)).toEqual([owner.id, homeScreen.id])
+    expect(after[1]).toMatchObject({ role: 'viewer', until: T0 + SHARE_DAYS * DAY_MS, via: invite.secret })
+  })
+
+  test('an invite opened after its day is turned away as expired', () => {
+    const me = account()
+    const owner = phone(me, 'my iPhone')
+    const friend = phone(me, "Sam's iPhone")
+    const relay = room([owner, friend])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const invite = inviteFor('viewer')
+    relay.from(friend, friend.hello({ now: T0 + INVITE_MS, secret: invite.secret }))
+    const got = cycle(link, relay, { devices: [owner.stored()], invites: [invite], now: T0 + INVITE_MS })
+    expect(got.paired).toEqual([])
+    expect(got.read.get(friend.id)).toContainEqual({ t: 'denied', why: 'pairing expired', isPairing: true })
+  })
+
+  test('a guest the owner removed is told so, not that it is unknown, and no session posts for it', () => {
+    // "Not paired" sent a guest to instructions for the owner's Mac.
+    const { owner, friend, relay, link, first } = shared('viewer')
+    const removed: Device = { ...first.paired.find(d => d.id === friend.id)!, removed: true, until: T0 + 1000 }
+    relay.from(friend, friend.hello({ now: T0 + 2000 }))
+    const got = cycle(link, relay, { devices: [owner.stored(), removed], now: T0 + 2000 })
+    expect(got.read.get(friend.id)).toContainEqual({ t: 'denied', why: 'access removed', isPairing: false })
+    expect(link.isQuiet({ devices: [removed], now: T0 + 2000 })).toBe(true)
   })
 
   test('a watcher sees the project and is told it watches; the owner alone sees who it is shared with', () => {
