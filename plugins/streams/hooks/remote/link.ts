@@ -46,6 +46,8 @@ export type UpResponse = { frames: { seq: number; from: string; data: unknown }[
 
 /** How long a pairing secret works: long enough to find the phone, short enough that a leaked QR code expires. */
 export const PAIRING_MS = 10 * 60_000
+/** The minutes back from now a passkey hello may be signed for (-1: a phone clock a minute fast). */
+export const HELLO_MINUTES = [0, 1, -1, 2, 3, 4, 5]
 
 const str = (v: unknown, max = 200): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {})
@@ -252,8 +254,9 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     if (!mayAccess(d, o.project, now)) return 'access expired'
     const passkey = assertionOf(h.passkey)
     const minute = Math.floor(now / 60_000)
-    // The current or previous minute: a hello waits up to two minutes in the room, and clocks drift a little.
-    const isVerified = !!passkey && [minute, minute - 1].some(m => verifyPasskey(passkey, d.credentialKey, passkeyChallenge('hello', o.identity.room, h.eph, m), o.origin))
+    // From five minutes back to one ahead: a hello can wait in the room while this Mac backs off or wakes, and a
+    // phone's clock can run a little fast. A replayed hello gains nothing: its keys are the phone's own (eph).
+    const isVerified = !!passkey && HELLO_MINUTES.some(back => verifyPasskey(passkey, d.credentialKey, passkeyChallenge('hello', o.identity.room, h.eph, minute - back), o.origin))
     return isVerified ? { device: d } : 'passkey not verified'
   }
 

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { SAVED_ROWS, mem, storeKey, type Saved } from '../state'
+import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
@@ -120,6 +120,23 @@ function settle(id: string, why: AckWhy, at: number, label?: string) {
 
 let options: RemoteOptions = { relayUrl: '' }
 
+/**
+ * A pairing write must not lose to history: when the engine refuses it (the shared store is past 4 MiB), drop the
+ * largest other project's history and try again, a few times, before giving up.
+ */
+async function saveRemote($: $, key: string, value: unknown) {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await $.store.set(key, value)
+    } catch (err) {
+      const others = (await $.store.keys()).filter(k => k.startsWith(storeKey('')) && k !== storeKey(myCwd))
+      if (tries >= 5 || !others.length) throw err
+      const sizes = await Promise.all(others.map(async k => ({ k, size: JSON.stringify(await $.store.get(k)).length })))
+      await $.store.delete(sizes.sort((a, b) => b.size - a.size)[0]!.k)
+    }
+  }
+}
+
 /** At session start: note who this session is, and start the clock that keeps the devices current. */
 async function remoteStart($: $, e: { cwd: string }) {
   const [id, configDir] = await Promise.all([$.session.id(), $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)])
@@ -168,7 +185,7 @@ async function remoteTick($: $) {
         // Read fresh: another session may have paired a device meanwhile.
         const fresh = devicesOf(await $.store.get(STORE.devices))
         devices = devicesOf([...fresh.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired])
-        await $.store.set(STORE.devices, devices)
+        await saveRemote($, STORE.devices, devices)
       }
       // An invite works once: used, it is gone for every session.
       if (got.used.length) await $.store.set(STORE.invites, invitesOf(await $.store.get(STORE.invites)).filter(i => !got.used.includes(i.secret)))
@@ -470,7 +487,7 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     if (archived && (await read($, focusA)) === c.streamId) await update($, focusA, () => '')
     if (archived && (await read($, viewA)) === c.streamId) await update($, viewA, () => '')
     const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-    await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+    await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
     return { ok: true }
   }
   if (c.kind === 'stop') {
@@ -569,16 +586,16 @@ async function remotePair($: $, args: string[]): Promise<string> {
     const which = args[1] ?? ''
     const kept = which === 'all' ? [] : devices.filter(d => d.id !== which)
     if (kept.length === devices.length) return `No device "${which}" to forget. \`/streams phone devices\` lists them; \`/streams phone forget all\` forgets every one.`
-    await $.store.set(STORE.devices, kept)
+    await saveRemote($, STORE.devices, kept)
     return `Forgot ${devices.length - kept.length} of ${devices.length} devices. A forgotten device has to pair again with \`/streams phone\`.`
   }
   let identity = identityOf(await $.store.get(STORE.identity))
   if (!identity) {
     identity = { room: randomId(16), token: randomId(32), sk: newIdentity().sk }
-    await $.store.set(STORE.identity, identity)
+    await saveRemote($, STORE.identity, identity)
   }
   const secret = randomId(32)
-  await $.store.set(STORE.pairing, { secret, until: (await $.clock.now()) + PAIRING_MS })
+  await saveRemote($, STORE.pairing, { secret, until: (await $.clock.now()) + PAIRING_MS })
   // Everything after `#` stays in the browser: the relay never sees the secret.
   const url = `${relay}/pair#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}`
   const r = await $.process.run(['/usr/bin/open', url], { timeoutMs: 10_000 }).catch(() => undefined)

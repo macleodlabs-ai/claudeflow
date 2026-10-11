@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { AgentRun, Folded, Stream, StreamRow } from '../../types'
-import { keepRows, SAVED_ROWS, jobs, mem, storeKey, type Saved } from '../state'
+import { keepRows, savedOf, jobs, mem, storeKey, type Saved } from '../state'
 import { oneLine, rowKey, textKey } from '../classify'
 import { itemsOf, rowOf } from '../history'
 import { touched } from './model'
@@ -37,7 +37,7 @@ async function touch($: $, id: string, patch?: (s: Stream) => Partial<Stream>) {
 
 async function save($: $) {
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
 }
 
 async function inStream($: $, agentId: string | undefined): Promise<string> {

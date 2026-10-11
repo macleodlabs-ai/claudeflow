@@ -27,6 +27,45 @@ export function keepRows<T>(rows: readonly T[]): T[] {
   return rows.slice(from)
 }
 export const SAVED_ROWS = 400
+/**
+ * One $.store holds every project's history and the phone's pairing (identity, devices). The engine refuses any
+ * write once the store passes 4 MiB, and then a new pairing is never saved: so a project keeps at most this much
+ * history, each row's text cut to SAVED_ROW_CHARS, and the projects together at most STORE_HISTORY_BUDGET.
+ */
+export const SAVED_BUDGET = 150_000
+export const SAVED_ROW_CHARS = 4_000
+export const STORE_HISTORY_BUDGET = 2_000_000
+
+/** What a project keeps between sessions: its newest rows, cut to fit SAVED_ROWS and SAVED_BUDGET. */
+export function savedOf(streams: Stream[], rows: readonly StreamRow[], loopStream: Record<string, string>): Saved {
+  const kept: StreamRow[] = []
+  let size = JSON.stringify({ streams, loopStream }).length
+  for (let i = rows.length - 1; i >= 0 && kept.length < SAVED_ROWS; i--) {
+    const r = rows[i]!
+    const row = r.text.length > SAVED_ROW_CHARS ? { ...r, text: `${r.text.slice(0, SAVED_ROW_CHARS)}…` } : r
+    size += JSON.stringify(row).length + 1
+    if (size > SAVED_BUDGET) break
+    kept.push(row)
+  }
+  return { streams, rows: kept.reverse(), loopStream }
+}
+
+/**
+ * Which other projects' history to drop so all of it fits STORE_HISTORY_BUDGET: scratch folders first, then the
+ * largest. `sizes` is each `streams:v1:` key with its size in characters; `own` (this session's) is never dropped.
+ */
+export function historyToDrop(sizes: readonly { key: string; size: number }[], own: string): string[] {
+  const isScratch = (k: string) => /^streams:v1:\/(private\/)?tmp\//.test(k)
+  const order = sizes.filter(s => s.key !== own).sort((a, b) => Number(isScratch(b.key)) - Number(isScratch(a.key)) || b.size - a.size)
+  let total = sizes.reduce((n, s) => n + s.size, 0)
+  const drop: string[] = []
+  for (const s of order) {
+    if (!isScratch(s.key) && total <= STORE_HISTORY_BUDGET) break
+    drop.push(s.key)
+    total -= s.size
+  }
+  return drop
+}
 /** 2: rows keyed by rowKey (a uuid by its first four groups). Bump when the keys change. */
 export const KEY_VERSION = 2
 

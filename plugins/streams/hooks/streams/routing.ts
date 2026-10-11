@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Stream } from '../../types'
-import { keepRows, SAVED_ROWS, mem, storeKey, type Saved } from '../state'
+import { keepRows, savedOf, mem, storeKey, type Saved } from '../state'
 import { SYSTEM, buildPrompt, fallbackName, isFollowUp, loopKey, oneLine, parseTag, parseVerdict, rowKey, slug, textKey } from '../classify'
 import { colorOf, streamsNow, touched, uuidOf, withStream, type Facts } from './model'
 import { afterNotification, loopsAt } from './loops'
@@ -53,7 +53,7 @@ async function touch($: $, id: string, patch?: (s: Stream) => Partial<Stream>) {
 
 async function save($: $) {
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
 }
 
 async function factsOf($: $): Promise<Facts> {
