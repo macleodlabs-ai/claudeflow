@@ -37,17 +37,19 @@ export const SAVED_ROW_CHARS = 4_000
 export const STORE_HISTORY_BUDGET = 2_000_000
 
 /** What a project keeps between sessions: its newest rows, cut to fit SAVED_ROWS and SAVED_BUDGET. */
-export function savedOf(streams: Stream[], rows: readonly StreamRow[], loopStream: Record<string, string>): Saved {
+export function savedOf(streams: Stream[], rows: readonly StreamRow[], loopStream: Record<string, string>, sources?: Sources): Saved {
   const kept: StreamRow[] = []
-  let size = JSON.stringify({ streams, loopStream }).length
+  const canRef = !!sources?.since && sources.files.length > 0
+  let size = JSON.stringify({ streams, loopStream, sources }).length
   for (let i = rows.length - 1; i >= 0 && kept.length < SAVED_ROWS; i--) {
     const r = rows[i]!
-    const row = r.text.length > SAVED_ROW_CHARS ? { ...r, text: `${r.text.slice(0, SAVED_ROW_CHARS)}…` } : r
+    const isRef = canRef && kept.length >= KEEP_TEXT_ROWS && r.at >= sources!.since && !!refOf(r)
+    const row = isRef ? { ...r, text: '' } : r.text.length > SAVED_ROW_CHARS ? { ...r, text: `${r.text.slice(0, SAVED_ROW_CHARS)}…` } : r
     size += JSON.stringify(row).length + 1
     if (size > SAVED_BUDGET) break
     kept.push(row)
   }
-  return { streams, rows: kept.reverse(), loopStream }
+  return { streams, rows: kept.reverse(), loopStream, ...(sources ? { sources } : {}) }
 }
 
 /**
@@ -75,7 +77,28 @@ export type PaneSaved = { collapsed: boolean; columns: number }
 
 /** Where a project's streams are kept between sessions, and what is kept. */
 export const storeKey = (cwd: string) => `streams:v1:${cwd}`
-export type Saved = { streams: Stream[]; rows: StreamRow[]; loopStream: Record<string, string> }
+export type Saved = { streams: Stream[]; rows: StreamRow[]; loopStream: Record<string, string>; sources?: Sources }
+
+/**
+ * The transcripts a project's saved rows can be read back from, and since when they are all listed. A row filed
+ * since then from one of them is saved as its key alone (refOf), its text read back from the transcript when a
+ * session opens: the store keeps keys, the transcripts keep the words. Older rows keep their text.
+ */
+export type Sources = { since: number; files: string[] }
+/** The newest rows keep their text, so the pane and the phone have them before the transcripts are read. */
+export const KEEP_TEXT_ROWS = 30
+/** The most transcripts listed; the oldest go first, and their rows read back as gone. */
+export const MAX_SOURCES = 20
+
+/** A row's key into its transcript (message uuid and block index), or undefined when it has none to read back. */
+export const refOf = (row: StreamRow): string | undefined =>
+  !row.agentId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:\d+$/.test(row.id) ? row.id : undefined
+
+/** Sources with `file` listed last (newest), at most MAX_SOURCES. */
+export const withSource = (s: Sources, file: string, now: number): Sources => ({
+  since: s.since || now,
+  files: [...s.files.filter(f => f !== file), file].slice(-MAX_SOURCES),
+})
 
 /**
  * Slow work (model calls, the history import) cannot run in the hook that asks for it: the engine cuts a
@@ -84,6 +107,8 @@ export type Saved = { streams: Stream[]; rows: StreamRow[]; loopStream: Record<s
 export type Job =
   | { kind: 'route'; uuid: string; rowId: string; text: string; turnSid: string; folded: readonly Folded[] }
   | { kind: 'import'; path: string; isCurrent: boolean }
+  /** Rows loaded as keys alone get their words back from the project's transcripts. */
+  | { kind: 'texts' }
 export const jobs: Job[] = []
 
 /** What this load knows beside the state. Lost on reload, and that is fine: each only bridges a moment. */

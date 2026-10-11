@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Folded, Stream } from '../../types'
-import { KEY_VERSION, keepRows, PANE, savedOf, jobs, mem, storeKey, type Job, type Saved } from '../state'
+import { KEY_VERSION, keepRows, PANE, savedOf, withSource, jobs, mem, storeKey, type Job, type Saved } from '../state'
 import { REPLY_SYSTEM, ago, buildReplyPrompt, pickReplyStream, rowKey, slug, textKey } from '../classify'
-import { inParallel, readTranscript } from '../history'
+import { inParallel, readTranscript, withTexts, type HistoryItem } from '../history'
 import { importPlan } from './importPlan'
 import { colorOf, touched, uuidOf, withStream } from './model'
 import { loopsAt } from './loops'
@@ -17,6 +17,7 @@ type $ = EngineInterface
 const streamsA = atom({ plugin: 'streams', key: 'streams' } as const, [])
 const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
+const sourcesA = atom({ plugin: 'streams', key: 'sources' } as const, { since: 0, files: [] as string[] })
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
@@ -47,7 +48,7 @@ async function touch($: $, id: string, patch?: (s: Stream) => Partial<Stream>) {
 
 async function save($: $) {
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
 
 let draining = false
@@ -73,6 +74,7 @@ async function drain($: $) {
   try {
     for (let job = jobs.shift(); job; job = jobs.shift()) {
       if (job.kind === 'import') await importHistory($, job.path, job.isCurrent)
+      else if (job.kind === 'texts') await readTexts($)
       else await reroute($, job)
     }
   } finally {
@@ -122,6 +124,14 @@ async function readWhole($: $, path: string): Promise<string> {
   return parts.join('')
 }
 
+/** Words for the rows saved as keys alone, read back from each listed transcript still on disk. */
+async function readTexts($: $) {
+  const { files } = await read($, sourcesA)
+  const items: HistoryItem[] = []
+  for (const f of files) if (await $.fs.exists(f).catch(() => false)) items.push(...readTranscript(await readWhole($, f)))
+  await update($, rowsA, list => withTexts(list, items))
+}
+
 /** Model calls in flight at once while filing history. */
 const LANES = 5
 
@@ -157,6 +167,8 @@ async function importHistory($: $, path: string, isCurrent: boolean) {
     }
     const plan = step.value
     await progress($, 'filing rows', 0, 1)
+    // Its rows can be saved as keys: this transcript is where their words are read back from.
+    await update($, sourcesA, s => withSource(s, path, began))
     for (const s of plan.newStreams) await ensureStream($, s.name, s.summary)
     for (const [id, sid] of plan.marks) await fileAs($, id, sid)
     if (plan.skipped.length) mem.lastError = `skipped a row: ${plan.skipped[0]}`.slice(0, 600)
@@ -229,7 +241,11 @@ export function wireWorker(on: On) {
 
   // The prompt hook is the one place the transcript's path is named: keep it, and file the history once.
   on('classic.UserPromptSubmit', async ($, e, next) => {
-    if (e.transcript_path) await update($, transcriptA, () => e.transcript_path)
+    if (e.transcript_path) {
+      await update($, transcriptA, () => e.transcript_path)
+      const now = await $.clock.now()
+      await update($, sourcesA, s => (s.files.at(-1) === e.transcript_path ? s : withSource(s, e.transcript_path, now)))
+    }
     if (e.transcript_path && !(await read($, historyFiledA)) && !jobs.some(j => j.kind === 'import')) {
       work($, { kind: 'import', path: e.transcript_path, isCurrent: true })
     }

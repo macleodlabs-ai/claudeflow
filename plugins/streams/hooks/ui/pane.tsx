@@ -19,6 +19,7 @@ const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const focusA = atom({ plugin: 'streams', key: 'focus' } as const, '')
 const viewA = atom({ plugin: 'streams', key: 'view' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
+const sourcesA = atom({ plugin: 'streams', key: 'sources' } as const, { since: 0, files: [] as string[] })
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
@@ -86,7 +87,7 @@ async function setArchived($: $, id: string, archived: boolean) {
     if ((await read($, viewA)) === id) await update($, viewA, () => '')
   }
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
 
 /** The facts as of now; the tick is read so the pane redraws while clocks run. */
