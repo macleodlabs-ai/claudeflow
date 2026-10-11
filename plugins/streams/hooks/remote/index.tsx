@@ -5,7 +5,7 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, withPaired, type Device, type Link } from './link'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, type Device, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import {
   HEARTBEAT_MS,
@@ -187,7 +187,11 @@ async function remoteTick($: $) {
     // No device could answer, or the relay is backing off: no snapshot is made, and the relay is not asked.
     if (link.isQuiet({ devices, pairing, invites, now })) return
     // The owner's devices also see who this project is shared with (the link keeps it from shared ones).
-    const people = devices.flatMap(d => (d.role && !d.removed && d.project === myCwd ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
+    const people = devices.flatMap(d =>
+      d.role && !d.removed && d.project === myCwd
+        ? [{ id: d.id, label: d.label, role: roleOf(d)!, until: d.until ?? 0, pairedAt: d.pairedAt, ...(d.browserKey ? { browserKey: true } : {}) }]
+        : [],
+    )
     const snapshot = { ...(await snapshotNow($, me)), ...(people.length ? { people } : {}) }
     let post = link.next({ devices, pairing, invites, now, snapshot, isHolding: held.size > 0 })
     let hasAcked = false

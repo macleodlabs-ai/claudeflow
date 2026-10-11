@@ -109,13 +109,15 @@ const equalBytes = (a: Bytes, b: Bytes) => a.length === b.length && a.every((x, 
 
 /**
  * Checks a WebAuthn assertion (fields b64u) made by the paired passkey, for this challenge, on this origin, with the
- * user present and verified (Face ID). False on anything else, never throws.
+ * user present and verified (Face ID). False on anything else, never throws. `isVerified: false` is for a guest's
+ * browser key (no authenticator to verify the user): present is all it can say.
  */
 export function verifyPasskey(
   assertion: { authenticatorData: string; clientDataJSON: string; signature: string },
   credentialKeySpki: string,
   challenge: string,
   origin: string,
+  isVerified = true,
 ): boolean {
   try {
     const authData = fromB64u(assertion.authenticatorData)
@@ -125,7 +127,8 @@ export function verifyPasskey(
     const host = /^https?:\/\/([^/:?#]+)(:\d+)?$/.exec(origin)?.[1]
     if (!host || authData.length < 37) return false
     if (!equalBytes(authData.subarray(0, 32), sha256(utf8(host)))) return false
-    if ((authData[32]! & 0x05) !== 0x05) return false
+    const flags = isVerified ? 0x05 : 0x01
+    if ((authData[32]! & flags) !== flags) return false
     // WebAuthn does not ask authenticators for low-S signatures, so high S must verify too.
     return p256.verify(
       fromB64u(assertion.signature),

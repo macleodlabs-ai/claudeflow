@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { randomId } from '../hooks/remote/seal'
+import { passkeyChallenge, randomId, verifyPasskey } from '../hooks/remote/seal'
+import { authenticator } from './authenticator'
 import { DAY_MS, INVITE_MS, SHARE_DAYS, createLink, withPaired, type Device, type Invite } from '../hooks/remote/link'
 import type { Ack, Snapshot } from '../hooks/remote/snapshot'
-import { ORIGIN, SESSION, T0, account, cycle, phone, room } from './room'
+import { ORIGIN, SESSION, T0, account, cycle, phone, room, snapshot } from './room'
 
 const PROJECT = '/work/claudeflow'
 const inviteFor = (role: Invite['role'], project = PROJECT): Invite => ({ secret: randomId(32), until: T0 + INVITE_MS, project, role, days: SHARE_DAYS })
@@ -67,6 +68,79 @@ describe('sharing a project', () => {
     const got = cycle(link, relay, { devices: [owner.stored()], invites: [invite], now: T0 + INVITE_MS })
     expect(got.paired).toEqual([])
     expect(got.read.get(friend.id)).toContainEqual({ t: 'denied', why: 'pairing expired', isPairing: true })
+  })
+
+  test('a guest with no authenticator joins with a browser key, and only ever watches, whatever the invite said', () => {
+    // Linux or an old Windows: no passkey to make. The key its browser keeps proves the device, not the person, so it
+    // gets no say: its commands are refused and it is told it watches.
+    const me = account()
+    const owner = phone(me, 'my iPhone')
+    const laptop = phone(me, "Sam's laptop", { browser: true })
+    const relay = room([owner, laptop])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const invite = inviteFor('contributor')
+    relay.from(laptop, laptop.hello({ now: T0, secret: invite.secret }))
+    const first = cycle(link, relay, { devices: [owner.stored()], invites: [invite], now: T0 })
+    expect(first.paired.find(d => d.id === laptop.id)).toMatchObject({ browserKey: true, role: 'contributor' })
+    expect(laptop.isUnlocked()).toBe(true)
+    const devices = withPaired([owner.stored()], first.paired)
+    // Back later: it unlocks with the browser key (present, not verified), and what it sends is refused.
+    const again = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    relay.from(laptop, laptop.hello({ now: T0 + 60_000 }))
+    const back = cycle(again, relay, { devices, now: T0 + 60_000 })
+    expect(laptop.isUnlocked()).toBe(true)
+    expect(snapshotsTo(back.read, laptop.id).at(-1)?.you?.role).toBe('viewer')
+    relay.from(laptop, laptop.command({ id: 'c1', kind: 'answer', streamId: 'docs', text: 'ship it' }))
+    const got = cycle(again, relay, { devices, now: T0 + 61_000 })
+    expect(got.commands).toEqual([])
+  })
+
+  test("the owner's own devices cannot use a browser key: pairing needs a passkey", () => {
+    const me = account()
+    const laptop = phone(me, 'my laptop', { browser: true })
+    const relay = room([laptop])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const pairing = { secret: randomId(32), until: T0 + 60_000 }
+    relay.from(laptop, laptop.hello({ now: T0, secret: pairing.secret }))
+    const got = cycle(link, relay, { devices: [], pairing, now: T0 })
+    expect(got.paired).toEqual([])
+    expect(got.read.get(laptop.id)).toContainEqual({ t: 'denied', why: 'bad registration', isPairing: true })
+  })
+
+  test('the kind of key is in the proof: a relay cannot pass a passkey off as a browser key', () => {
+    const me = account()
+    const owner = phone(me, 'my iPhone')
+    const friend = phone(me, "Sam's iPhone")
+    const relay = room([owner, friend])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const invite = inviteFor('viewer')
+    const hello = friend.hello({ now: T0, secret: invite.secret }) as { registration: Record<string, unknown> }
+    relay.from(friend, { ...hello, registration: { ...hello.registration, browser: true } })
+    expect(cycle(link, relay, { devices: [owner.stored()], invites: [invite], now: T0 }).paired).toEqual([])
+  })
+
+  test("a browser key's signature (user present, not verified) opens only a device that joined with one", () => {
+    const key = authenticator(ORIGIN, 'k', true)
+    const challenge = passkeyChallenge('hello', 'room', 'eph', 1)
+    expect(verifyPasskey(key.assert(challenge), key.spki, challenge, ORIGIN)).toBe(false)
+    expect(verifyPasskey(key.assert(challenge), key.spki, challenge, ORIGIN, false)).toBe(true)
+  })
+
+  test("another project's news wakes the owner's devices, never a guest's", () => {
+    // A push says something needs you: a guest of one project must not be woken for the owner's other work.
+    const me = account()
+    const owner = phone(me, 'my iPhone')
+    const friend = phone(me, "Sam's iPhone")
+    const relay = room([owner, friend])
+    const elsewhere = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/other' })
+    const guestDevice: Device = { ...friend.stored(), role: 'contributor', project: PROJECT, until: T0 + DAY_MS }
+    const devices = [owner.stored(), guestDevice]
+    cycle(elsewhere, relay, { devices, now: T0, active: [] })
+    const ask = snapshot(T0 + 40_000, { permissions: [{ id: 'toolu_1', tool: 'Bash', summary: 'Bash: rm', at: T0 }] })
+    const got = cycle(elsewhere, relay, { devices, now: T0 + 40_000, snapshot: ask, active: [] })
+    const notified = got.posts.flatMap(p => p.notify ?? [])
+    expect(notified).toContain(owner.id)
+    expect(notified).not.toContain(friend.id)
   })
 
   test('a guest the owner removed is told so, not that it is unknown, and no session posts for it', () => {

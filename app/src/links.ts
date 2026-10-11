@@ -22,6 +22,8 @@ export type Pairing = {
   isPaired: boolean
   /** Joined by an invite to someone else's project. */
   guest?: Guest
+  /** Its key is one this browser keeps (no passkey could be made): it unlocks with no prompt, and only watches. */
+  browserKey?: boolean
 }
 
 const ROOM = /^[A-Za-z0-9_-]{16,64}$/

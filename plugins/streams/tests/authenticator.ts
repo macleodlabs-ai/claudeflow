@@ -13,8 +13,11 @@ const concat = (...parts: Uint8Array[]) => Uint8Array.from(parts.flatMap(p => [.
 /** A P-256 public key as WebAuthn gives it (SPKI, b64u). */
 export const spkiOf = (key: Uint8Array): string => b64u(concat(SPKI_HEADER, p256.getPublicKey(key, false)))
 
-/** A passkey on `origin`. Each call may sign as another origin or with another key, as an attacker would. */
-export function authenticator(origin: string, credentialId = b64u(p256.utils.randomSecretKey().slice(0, 16))) {
+/**
+ * A passkey on `origin`. Each call may sign as another origin or with another key, as an attacker would. `browser`: a
+ * guest's browser key instead, which registers as one and signs with the user present only (no one verified).
+ */
+export function authenticator(origin: string, credentialId = b64u(p256.utils.randomSecretKey().slice(0, 16)), browser = false) {
   const key = p256.utils.randomSecretKey()
   return {
     credentialId,
@@ -24,12 +27,13 @@ export function authenticator(origin: string, credentialId = b64u(p256.utils.ran
       credentialId,
       publicKey: spkiOf(key),
       clientDataJSON: b64u(utf8(JSON.stringify({ type: 'webauthn.create', challenge, origin: o.origin ?? origin }))),
+      ...(browser ? { browser: true as const } : {}),
     }),
     /** An assertion over `challenge`, as the authenticator signs it. */
     assert(challenge: string, o: { origin?: string; key?: Uint8Array } = {}): PasskeyAssertion {
       const on = o.origin ?? origin
       const clientDataJSON = utf8(JSON.stringify({ type: 'webauthn.get', challenge, origin: on, crossOrigin: false }))
-      const authData = concat(sha256(utf8(new URL(on).hostname)), Uint8Array.of(0x05), Uint8Array.of(0, 0, 0, 1))
+      const authData = concat(sha256(utf8(new URL(on).hostname)), Uint8Array.of(browser ? 0x01 : 0x05), Uint8Array.of(0, 0, 0, 1))
       const signature = p256.sign(concat(authData, sha256(clientDataJSON)), o.key ?? key, { prehash: true, format: 'der' })
       return { authenticatorData: b64u(authData), clientDataJSON: b64u(clientDataJSON), signature: b64u(signature) }
     },

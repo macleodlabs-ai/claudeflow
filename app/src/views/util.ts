@@ -64,7 +64,8 @@ export const slowText = (session: { proto?: number } | undefined): string => (se
 const GUEST_LINES: [string, string][] = [
   [OLD_TEXT, "{o} hasn't answered yet. It goes through once they're back."],
   [SLOW_TEXT, "{o} hasn't answered yet. It goes through once they're back."],
-  ['Face ID was not accepted. Answer on your Mac.', 'Face ID was not accepted.'],
+  ['Face ID was not accepted. Answer on your Mac.', '{a} was not accepted.'],
+  ['Face ID was not accepted. Tap Allow to try again.', '{a} was not accepted. Tap Allow to try again.'],
   ['Nothing flowing yet. Start Claude Code on your Mac.', 'Nothing flowing yet.'],
   ["Your Mac couldn't do that. Try again.", "That didn't go through. Try again."],
   ['Answered on your Mac', 'Answered by {o}'],
@@ -74,13 +75,13 @@ const GUEST_LINES: [string, string][] = [
   ['Your Mac', '{o}'],
 ]
 /**
- * A page (HTML) or line as a guest reads it: what it says of "your Mac" said of `owner`, the person who shared it.
- * Each line is found as written and as escaped into the page; the owner's name always goes in escaped.
+ * A page (HTML) or line as a guest reads it: what it says of "your Mac" said of `owner`, the person who shared it, and
+ * of Face ID said of this device's own sign-in (`term`, signin.ts). Each line is found as written and as escaped into
+ * the page; the names always go in escaped.
  */
-export const forGuest = (html: string, owner: string): string =>
-  GUEST_LINES.reduce(
-    (out, [from, to]) => out.replaceAll(esc(from), esc(to).replaceAll('{o}', esc(owner))).replaceAll(from, to.replaceAll('{o}', esc(owner))),
-    html,
-  )
+export const forGuest = (html: string, owner: string, term = 'Face ID'): string => {
+  const fill = (to: string) => to.replaceAll('{o}', esc(owner)).replace(/^\{a\}/, esc(term.charAt(0).toUpperCase() + term.slice(1))).replaceAll('{a}', esc(term))
+  return GUEST_LINES.reduce((out, [from, to]) => out.replaceAll(esc(from), fill(esc(to))).replaceAll(from, fill(to)), html)
+}
 /** Where a tap is, read out as it changes; with a spinner while it waits. */
 export const stageLine = (text: string, isWaiting = true): string => `<p class="stage" role="status">${isWaiting ? spinner : ''}${esc(text)}</p>`

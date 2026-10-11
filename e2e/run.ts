@@ -11,6 +11,7 @@ import { INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, withPaired, type Device,
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
 import type { Ack, PhoneCommand, Settled, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
 import { qrVideo } from './camera'
+import { linkFragment } from '../app/src/links'
 
 const ROOT = join(import.meta.dir, '..')
 const SHOTS = process.argv[2] ?? join(ROOT, 'e2e', 'shots')
@@ -32,6 +33,12 @@ const POLL_WAIT_MS = 45_000
 const SLOW_MS = 45_000
 /** Words that mean nothing to someone a project was shared with: they never set up Claude Code. */
 const JARGON = /\bMac\b|pair|\/streams|passkey|Claude Code/i
+const UA = {
+  iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+  android: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+  windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  linux: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+}
 
 const results: { name: string; ok: boolean; why?: string }[] = []
 const check = (name: string, ok: boolean, why = '') => {
@@ -107,7 +114,12 @@ const fakePushApi = (sub: unknown) => `(() => {
 
 // ---- a device: one headless Chrome with its own profile and a virtual platform authenticator ----
 type Page = Awaited<ReturnType<typeof openDevice>>
-async function openDevice(name: string, port: number, extra: string[] = []) {
+/**
+ * What a device is: its browser's user agent and screen, and its authenticator: built in (`internal`, Face ID or
+ * Windows Hello), only a security key or phone (`usb`, as on most Linux and some Windows), or no WebAuthn at all.
+ */
+type Kind = { ua?: string; width?: number; height?: number; isMobile?: boolean; auth?: 'internal' | 'usb' | 'none' }
+async function openDevice(name: string, port: number, extra: string[] = [], kind: Kind = {}) {
   const p = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(TMP, `chrome-${name}`)}`,
     '--no-first-run', '--no-default-browser-check', ...extra, 'about:blank'], { detached: true, stdio: 'ignore' })
   procs.push(p)
@@ -129,14 +141,20 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
       ws.send(JSON.stringify({ id, method, params }))
     })
   await send('Runtime.enable')
-  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+  await send('Emulation.setDeviceMetricsOverride', { width: kind.width ?? 390, height: kind.height ?? 844, deviceScaleFactor: kind.isMobile === false ? 1 : 2, mobile: kind.isMobile ?? true })
+  if (kind.ua) await send('Emulation.setUserAgentOverride', { userAgent: kind.ua })
+  // A browser with no WebAuthn: the page never sees one.
+  if (kind.auth === 'none') {
+    await send('Page.enable')
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: 'delete window.PublicKeyCredential; Object.defineProperty(Navigator.prototype, "credentials", { get: () => undefined })' })
+  }
   // The devices' colour scheme: light by default, E2E_SCHEME=dark to check the dark theme.
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: process.env.E2E_SCHEME === 'dark' ? 'dark' : 'light' }] })
   // Headless pages never have focus; a phone in the hand does, and only a focused page counts as looking.
   await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await send('WebAuthn.enable')
-  const { authenticatorId } = await send('WebAuthn.addVirtualAuthenticator', {
-    options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+  const { authenticatorId } = kind.auth === 'none' ? { authenticatorId: undefined } : await send('WebAuthn.addVirtualAuthenticator', {
+    options: { protocol: 'ctap2', transport: kind.auth ?? 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
   })
   const js = async (expression: string) =>
     (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture: true })).result?.value
@@ -182,7 +200,13 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
     },
     deviceId: async () => JSON.parse((await js(`localStorage.getItem('cf:device')`)) ?? '{}').id as string,
     /** The passkeys this device's authenticator holds: one per pairing ceremony that ran. */
-    passkeys: async () => ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length,
+    passkeys: async () => (authenticatorId ? ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length : 0),
+    /** Types `text` where the focus is, then presses Enter: a keyboard, not a tap. */
+    async typeAndEnter(sel: string, text: string) {
+      await js(`document.querySelector(${JSON.stringify(sel)}).focus()`)
+      await send('Input.insertText', { text })
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    },
     /** Two taps as fast as a thumb, the second landing before the redraw disables the button (as on a slow phone). */
     doubleTap: (sel: string) =>
       js(`(() => { const q = () => document.querySelector(${JSON.stringify(sel)}); q().click(); const b = q(); b.disabled = false; b.click(); return true })()`),
@@ -368,9 +392,14 @@ try {
       // A fourth device has a camera that sees the Mac's pairing code: it pairs from inside the app, never leaving it.
       qrVideo(join(TMP, 'pairing-code.y4m'), link)
       const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${join(TMP, 'pairing-code.y4m')}`]
-      const [d1, d2, d3, d4, d5] = await Promise.all([
+      const [d1, d2, d3, d4, d5, d6, d7, d8] = await Promise.all([
         openDevice('device1', 9341 + OFFSET), openDevice('device2', 9342 + OFFSET), openDevice('stranger', 9343 + OFFSET), openDevice('scanner', 9344 + OFFSET, camera),
-        openDevice('guest', 9345 + OFFSET),
+        openDevice('guest', 9345 + OFFSET, [], { ua: UA.iphone }),
+        // Guests on other devices: Android Chrome (screen lock built in), Windows with only a security key, Linux
+        // with no WebAuthn at all; the desktops at desktop sizes, with a keyboard.
+        openDevice('android', 9346 + OFFSET, [], { ua: UA.android, width: 412, height: 915, auth: 'internal' }),
+        openDevice('windows', 9347 + OFFSET, [], { ua: UA.windows, width: 1366, height: 768, isMobile: false, auth: 'usb' }),
+        openDevice('linux', 9348 + OFFSET, [], { ua: UA.linux, width: 1280, height: 800, isMobile: false, auth: 'none' }),
       ])
       // Like a Home Screen app added from an old pairing link: its start address carries a stale code.
       await d4.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${randomId(32)}`)
@@ -614,14 +643,65 @@ try {
       // An invite opened after its day: turned away in plain words, with who to ask for a new one.
       const old = { secret: randomId(32), until: Date.now() - 1000, project: '/work/claudeflow', role: 'viewer' as const, days: SHARE_DAYS }
       s.invites.push(old)
+      // A fresh load of the link: only the fragment differs from the page it is on, which would not reload.
+      await d3.goto('about:blank')
+      await until('the stranger on a blank page', () => d3.js("location.href === 'about:blank'"))
       await d3.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${old.secret}&p=claudeflow&o=e2e`)
-      await d3.reload()
       await d3.see('Join claudeflow')
       await d3.tap('[data-gate="pair"]')
       await d3.see('This invite has expired', POLL_WAIT_MS)
       const expired = await d3.text()
       check('an expired invite says so and to ask e2e for a new link, with no Mac or pairing words', expired.includes('Ask e2e for a new link') && !JARGON.test(expired), expired)
       await d3.shot('app-390-guest-expired.png')
+
+      // Guests on other devices, each with their own invite. None is told about Face ID, a Mac or pairing.
+      const inviteLinkFor = (role: Invite['role']) => {
+        const invite = { secret: randomId(32), until: Date.now() + INVITE_MS, project: '/work/claudeflow', role, days: SHARE_DAYS }
+        s.invites.push(invite)
+        return `${ORIGIN}/${linkFragment({ room: s.identity.room, pk: s.pk, secret: invite.secret, guest: { project: 'claudeflow', owner: 'e2e' } })}`
+      }
+      const plain = (t: string) => !JARGON.test(t) && !t.includes('Face ID')
+      // Nothing wider than the window, and a gate a readable card rather than a stretched band.
+      const fits = (d: Page) => d.js(`(() => { const g = document.querySelector('#gate .gate'); return document.documentElement.scrollWidth <= innerWidth && (!g || g.getBoundingClientRect().width <= 800) })()`)
+
+      // Android Chrome: its screen lock, named so.
+      await d6.goto(inviteLinkFor('viewer'))
+      await d6.see('Join with your screen lock')
+      check('on Android the guest is asked for their screen lock, not Face ID', plain(await d6.text()), await d6.text())
+      await d6.js(`(() => { const i = document.querySelector('[data-guest-name]'); i.value = 'Pia'; i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+      await d6.tap('[data-gate="pair"]')
+      await d6.see('Watching', POLL_WAIT_MS)
+      check('the Android guest gets in and reads only guest words', plain(await d6.text()) && (await d6.text()).includes('relay deploy'), (await d6.text()).match(JARGON)?.[0])
+      await d6.shot('app-412-android-guest.png')
+
+      // Windows with no Hello, only a security key: the key it is, joined by keyboard, as a contributor.
+      await d7.goto(inviteLinkFor('contributor'))
+      await d7.see('Join with your phone or security key')
+      check('on a desktop with nothing built in, the guest is offered a phone or security key, or this browser', plain(await d7.text()) && (await d7.js(`!!document.querySelector('[data-gate="pair-browser"]')`)), await d7.text())
+      check('the desktop join screen fits the window', await fits(d7))
+      await d7.shot('app-1366-windows-guest-join.png')
+      await d7.typeAndEnter('[data-guest-name]', 'Wes')
+      await d7.see('Contributing', POLL_WAIT_MS)
+      const wes = s.devices.find(d => d.label === 'Wes')
+      check('the Windows guest joined with the security key, by keyboard, and may contribute', !!wes && !wes.browserKey && wes.role === 'contributor' && (await d7.passkeys()) === 1, JSON.stringify(wes))
+      check('the desktop app fits the window and reads only guest words', (await fits(d7)) && plain(await d7.text()), (await d7.text()).match(JARGON)?.[0])
+      await d7.shot('app-1366-windows-guest.png')
+
+      // Linux with no WebAuthn at all: a key kept in this browser, watch only whatever the invite said.
+      await d8.goto(inviteLinkFor('contributor'))
+      await d8.see('Join on this browser')
+      check('with no passkeys at all, the guest is offered only this browser, and told it then only watches',
+        plain(await d8.text()) && (await d8.text()).includes('watch, not act') && !(await d8.js(`!!document.querySelector('[data-gate="pair"]')`)), await d8.text())
+      await d8.typeAndEnter('[data-guest-name]', 'Lin')
+      await d8.see('Watching', POLL_WAIT_MS)
+      const lin = s.devices.find(d => d.label === 'Lin')
+      check('the Linux guest joined with a browser key and only watches, though invited to contribute', !!lin && !!lin.browserKey && (await d8.text()).includes('relay deploy') && !(await d8.js(`!!document.querySelector('.slide.compose')?.offsetParent`)), JSON.stringify(lin))
+      await d8.reload()
+      await d8.see('Open it to see it')
+      await d8.tap('[data-gate="unlock"]')
+      await d8.see('Watching', POLL_WAIT_MS)
+      check('back later, the browser key opens the project with no prompt', plain(await d8.text()) && (await fits(d8)), await d8.text())
+      await d8.shot('app-1280-linux-guest.png')
 
       // Workflows and loops: the cards say where each is, and Stop workflow (two taps) reaches the session as stopTask.
       s.permissions = []
@@ -685,7 +765,7 @@ try {
       check('device 1, looking, gets no push, and device 2 no second one', !pushes.some(p => p.path === '/device1') && pushes.filter(p => p.path === '/device2').length === 1, JSON.stringify(pushes.map(p => p.path)))
       pushService.stop(true)
       s.isRunning = false
-      for (const d of [d1, d2, d3]) d.close()
+      for (const d of [d1, d2, d3, d4, d5, d6, d7, d8]) d.close()
     })(),
     sleep(360_000).then(() => {
       throw new Error('the run took over 6 minutes')

@@ -107,6 +107,8 @@ body.read-only :is([data-answer], [data-reply-open], [data-perm], [data-choose],
 .menu-section h3 { margin: 0 0 8px; font-size: var(--fs-sm); color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; }
 .menu-section .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .invite-made { margin-top: 10px; }
+/* Said under Join on this browser: what a browser key costs. */
+.gate .browser-note { font-size: var(--fs-sm); margin: 10px auto 0; }
 /* A guest's name on joining: 16px so iOS does not zoom into it. */
 .guest-name { display: block; width: 100%; max-width: 20em; margin: 0 auto 16px; padding: 12px 14px; border-radius: var(--r-sm); border: 1px solid var(--glass-line-strong);
               background: var(--glass); color: var(--text); font: 16px/1.3 var(--font-ui); text-align: center; }

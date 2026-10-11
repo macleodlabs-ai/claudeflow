@@ -25,10 +25,14 @@ function people(s: State, t: SessionTab, now: number, invite: InviteView | undef
   const list = (t.snapshot.people ?? [])
     .map(p => {
       const removeKey = `remove:${p.id}`
-      return `<div class="person"><div class="who"><b>${esc(p.label)}</b><span class="meta">${ROLE_WORD[p.role]} · ${leftOf(p.until, now)}</span></div>
-        <div class="seg" role="group" aria-label="Role">
+      // Joined on a browser with no passkey: it can only watch, so there is no role to switch.
+      const role = p.browserKey
+        ? '<span class="meta">Watch only: joined without a passkey</span>'
+        : `<div class="seg" role="group" aria-label="Role">
           <button type="button" class="${p.role === 'viewer' ? 'on' : ''}" data-people-role="${esc(p.id)}" data-role="viewer">Watch</button>
-          <button type="button" class="${p.role === 'contributor' ? 'on' : ''}" data-people-role="${esc(p.id)}" data-role="contributor">Contribute</button></div>
+          <button type="button" class="${p.role === 'contributor' ? 'on' : ''}" data-people-role="${esc(p.id)}" data-role="contributor">Contribute</button></div>`
+      return `<div class="person"><div class="who"><b>${esc(p.label)}</b><span class="meta">${ROLE_WORD[p.role]} · ${leftOf(p.until, now)}</span></div>
+        ${role}
         <button type="button" class="btn ghost small" data-people-extend="${esc(p.id)}">+7d</button>
         <button type="button" class="btn ghost small danger" data-arm-remove="${esc(p.id)}">${isArmed(s, removeKey, now) ? 'Tap again' : 'Remove'}</button></div>`
     })

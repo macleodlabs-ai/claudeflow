@@ -3,6 +3,7 @@
 // While a passkey step runs its button says where it is (Face ID, then syncing with the Mac) and takes no second tap.
 // A guest (invited to someone else's project) gets its own words: the project and who shared it, never the Mac.
 import type { Gate, Guest } from '../links'
+import type { SignIn } from '../signin'
 import type { GateStage } from '../transport'
 import { esc, SLOW_TEXT, spinner } from './util'
 
@@ -22,6 +23,10 @@ export type GateView = {
   guest?: Guest
   /** The name the guest has typed so far, kept across redraws. */
   name?: string
+  /** How this device signs in, for a guest's words and ways in. */
+  signIn?: SignIn
+  /** The room's key is this browser's own (no passkey): it opens with no prompt. */
+  isBrowserKey?: boolean
 }
 
 const NOT_PAIRED = 'Open the invite link you were sent. Or, to see your own Claude Code: run <b>/streams phone</b> on your Mac and scan the code it shows.'
@@ -33,38 +38,60 @@ const WHY_TEXT: Record<string, string> = {
 const PENDING = { faceid: 'Waiting for Face ID…', checking: 'Syncing…' } as const
 
 /** A refusal or a line from the connection, as a guest reads it: what happened to their access, and who to ask. */
-function guestWhy(why: string, { project, owner }: Guest): string {
+function guestWhy(why: string, { project, owner }: Guest, term: string): string {
   if (why === 'access removed') return `${owner} removed your access to ${project}. Ask them if you need it back.`
   if (why === 'access expired') return `Your access to ${project} has ended. Ask ${owner} to extend it.`
   if (why === 'not paired') return `You no longer have access to ${project}. Ask ${owner} for a new invite.`
   if (why === 'pairing expired' || why === 'bad pairing proof') return `This invite has expired or was already used. Ask ${owner} for a new link.`
-  if (why === 'passkey not verified') return "Face ID couldn't be checked. Tap Unlock to try again."
-  if (why === 'bad registration') return 'Setting up Face ID went wrong. Try again.'
-  return /\bMac\b|pair|passkey/i.test(why) ? `Couldn't reach ${project}. Try again in a moment.` : why
+  if (why === 'passkey not verified') return `${cap(term)} couldn't be checked. Try Unlock again.`
+  if (why === 'bad registration') return `Setting up ${term} went wrong. Try again.`
+  // passkey.ts's words, said for this device.
+  if (/already has that passkey/.test(why)) return 'This device is already set up for it. Try again.'
+  if (/can't use passkeys/.test(why)) return `This browser can't do that. Choose "Join on this browser" instead.`
+  if (/https address/.test(why)) return 'Open the link exactly as it was sent to you.'
+  if (/\bMac\b|pair|passkey/i.test(why)) return `Couldn't reach ${project}. Try again in a moment.`
+  return why.replaceAll('Face ID', term).replace(/^your /, 'Your ').replace(/^this /, 'This ')
 }
 
-/** The gates of a project someone shared: join with a name and Face ID, unlock, or why it cannot open. */
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/**
+ * The gates of a project someone shared: join with a name and the device's sign-in (Face ID, Windows Hello, the
+ * screen lock, a phone or security key), unlock, or why it cannot open. With nothing built in, a guest may keep a key
+ * in this browser instead, and is told it then only watches.
+ */
 function guestOne(g: GateView, guest: Guest): string {
   const { project, owner } = guest
-  const why = g.why && g.stage.at === 'idle' ? `<p class="why" role="status">${esc(guestWhy(g.why, guest))}</p>` : ''
+  const signIn = g.signIn ?? { term: 'Face ID', canPasskey: true, hasPlatform: true }
+  const term = g.isBrowserKey ? 'this browser' : signIn.term
+  const why = g.why && g.stage.at === 'idle' ? `<p class="why" role="status">${esc(guestWhy(g.why, guest, term))}</p>` : ''
   const isBusy = g.stage.at !== 'idle'
-  const btn = (kind: 'pair' | 'unlock', text: string) => {
-    const isMine = g.stage.at !== 'idle' && g.stage.kind === kind
-    const label = isMine && g.stage.at !== 'idle' ? `${spinner}${g.stage.at === 'faceid' ? 'Waiting for Face ID…' : `Opening ${esc(project)}…`}` : text
-    return `<button class="btn yes" data-gate="${kind}" data-room="${esc(g.room)}" ${isBusy || g.isCeremony || !g.isOnline ? 'disabled' : ''} ${isMine ? 'aria-busy="true"' : ''}>${label}</button>`
+  const btn = (kind: 'pair' | 'pair-browser' | 'unlock', text: string, look = 'yes') => {
+    const isMine = g.stage.at !== 'idle' && g.stage.kind === (kind === 'pair-browser' ? 'pair' : kind)
+    const label = isMine && g.stage.at !== 'idle' ? `${spinner}${g.stage.at === 'faceid' ? `Waiting for ${esc(term)}…` : `Opening ${esc(project)}…`}` : text
+    return `<button class="btn ${look}" data-gate="${kind}" data-room="${esc(g.room)}" ${isBusy || g.isCeremony || !g.isOnline ? 'disabled' : ''} ${isMine ? 'aria-busy="true"' : ''}>${label}</button>`
   }
   // Not open now: the project is there while its owner works in it, and the hello waits for it.
   const slow = g.isSlow
     ? `<p class="slow" role="status">${esc(project)} isn't online right now. It opens while ${esc(owner)} is working on it.</p><button class="btn ghost" data-gate="retry" data-room="${esc(g.room)}">Try again</button>`
     : ''
   const offline = g.isOnline ? '' : '<p class="meta">Connecting…</p>'
-  if (g.gate === 'pair')
+  if (g.gate === 'pair') {
+    // The way in this browser has, then the browser key where nothing is built in (said plainly what it costs).
+    const browserNote = '<p class="browser-note">On this browser you can watch, not act. Anyone who uses this browser can open it.</p>'
+    const ways = !signIn.canPasskey
+      ? `${btn('pair-browser', 'Join on this browser')}${browserNote}`
+      : `${btn('pair', `Join with ${esc(signIn.term)}`)}${signIn.hasPlatform ? '' : `${btn('pair-browser', 'Join on this browser instead', 'ghost')}${browserNote}`}`
+    const how = signIn.canPasskey ? `then use ${esc(signIn.term)} to keep it yours` : 'and this browser will keep it yours'
     return `<div class="gate guest"><h2>Join ${esc(project)}</h2>
-      <p>${esc(owner)} shared <b>${esc(project)}</b> with you. Add your name so they know it's you, then use Face ID to keep it yours.</p>
+      <p>${esc(owner)} shared <b>${esc(project)}</b> with you. Add your name so they know it's you, ${how}.</p>
       <input class="guest-name" data-guest-name maxlength="40" autocomplete="name" placeholder="Your name" aria-label="Your name" value="${esc(g.name ?? '')}">
-      ${why}${btn('pair', 'Join with Face ID')}${slow}${offline}</div>`
-  if (g.gate === 'locked')
-    return `<div class="gate guest"><h2>${esc(project)}</h2><p>Shared with you by ${esc(owner)}. Unlock with Face ID to see it.</p>${why}${btn('unlock', 'Unlock')}${slow}${offline}</div>`
+      ${why}${ways}${slow}${offline}</div>`
+  }
+  if (g.gate === 'locked') {
+    const how = g.isBrowserKey ? 'Open it to see it.' : `Unlock with ${esc(term)} to see it.`
+    return `<div class="gate guest"><h2>${esc(project)}</h2><p>Shared with you by ${esc(owner)}. ${how}</p>${why}${btn('unlock', g.isBrowserKey ? 'Open' : 'Unlock')}${slow}${offline}</div>`
+  }
   return `<div class="gate guest"><h2>${esc(project)}</h2>${why || `<p class="why">This invite has expired or was already used. Ask ${esc(owner)} for a new link.</p>`}</div>`
 }
 
