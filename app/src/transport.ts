@@ -4,7 +4,7 @@
 import { createDevice, type DeviceFrame, type DeviceKeys } from '../../plugins/streams/hooks/remote/device'
 import type { Ack, PhoneCommand, Snapshot } from '../../plugins/streams/hooks/remote/snapshot'
 import { paired, refused, type Pairing } from './links'
-import { assertPasskey, createPasskey, isCeremonyBusy } from './passkey'
+import { assertBrowserKey, assertPasskey, createBrowserKey, createPasskey, isCeremonyBusy } from './passkey'
 import type { PushSub } from './push'
 
 /** This device: one id and X25519 key pair for every room; each room has its own passkey. */
@@ -253,21 +253,24 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       }
       ping()
     },
-    /** First pairing: a new passkey, and proof this device saw the QR code's secret. */
-    pair: () =>
+    /**
+     * First pairing: a new passkey, and proof this device saw the QR code's secret. `label`: a guest's own name.
+     * `isBrowserKey`: a guest with no way to make a passkey keeps a key in this browser instead (watch only).
+     */
+    pair: (label?: string, isBrowserKey = false) =>
       gateStep('pair', async () => {
         const secret = p.secret
         if (!secret) return undefined
-        const reg = await createPasskey(p.room.slice(0, 6), core.pairChallenge())
+        const reg = isBrowserKey ? await createBrowserKey(core.pairChallenge()) : await createPasskey(p.guest?.project ?? p.room.slice(0, 6), core.pairChallenge())
         if (!reg.ok) return reg.why
-        set({ ...p, credentialId: reg.value.credentialId })
-        return core.pairHello(secret, reg.value)
+        set({ ...p, credentialId: reg.value.credentialId, browserKey: isBrowserKey || undefined })
+        return core.pairHello(secret, reg.value, label)
       }),
     /** One Face ID per connection: every session in the room checks the same assertion. */
     unlock: () =>
       gateStep('unlock', async () => {
         if (!p.credentialId) return undefined
-        const passkey = await assertPasskey(p.credentialId, core.unlockChallenge(Date.now()))
+        const passkey = await (p.browserKey ? assertBrowserKey : assertPasskey)(p.credentialId, core.unlockChallenge(Date.now()))
         return passkey.ok ? core.unlockHello(passkey.value) : passkey.why
       }),
     /**

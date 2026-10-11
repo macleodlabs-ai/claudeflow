@@ -60,7 +60,7 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
   const x = t.snapshot
   // Shared access that has run out shows nothing of the project (its sessions have stopped sending anyway).
   if (x.you && now >= x.you.until)
-    return `<div class="gate"><h2>Access ended</h2><p>Your access to <b>${x.session.project}</b> has ended. Ask whoever shared it to give you more time.</p></div>`
+    return `<div class="gate"><h2>Access ended</h2><p>Your access to <b>${esc(x.session.project)}</b> has ended. Ask whoever shared it to give you more time.</p></div>`
   const streams = x.streams ?? []
   const isStopping = isInFlight(s.taps[stopKey(t.key)])
   const stop =

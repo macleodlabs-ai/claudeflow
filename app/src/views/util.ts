@@ -57,5 +57,31 @@ export const SLOW_TEXT = "Your Mac hasn't answered yet. Check it's awake with Cl
 export const OLD_TEXT = 'This Claude session runs an older Streams plugin and may not answer: run /reload-plugins in it on your Mac.'
 /** The slow line for a command to `session`: an older plugin is the likelier reason than a Mac that is away. */
 export const slowText = (session: { proto?: number } | undefined): string => (session && !session.proto ? OLD_TEXT : SLOW_TEXT)
+/**
+ * The lines that speak of the owner's Mac, as a guest reads them: someone shared this project with them, and they
+ * know that person, not their computer. `{o}` is who shared it. The longest first, then any "your Mac" left.
+ */
+const GUEST_LINES: [string, string][] = [
+  [OLD_TEXT, "{o} hasn't answered yet. It goes through once they're back."],
+  [SLOW_TEXT, "{o} hasn't answered yet. It goes through once they're back."],
+  ['Face ID was not accepted. Answer on your Mac.', '{a} was not accepted.'],
+  ['Face ID was not accepted. Tap Allow to try again.', '{a} was not accepted. Tap Allow to try again.'],
+  ['Nothing flowing yet. Start Claude Code on your Mac.', 'Nothing flowing yet.'],
+  ["Your Mac couldn't do that. Try again.", "That didn't go through. Try again."],
+  ['Answered on your Mac', 'Answered by {o}'],
+  ['Moved to your Mac', 'Left for {o} to answer'],
+  ['open on your Mac', 'open for {o}'],
+  ['your Mac', '{o}'],
+  ['Your Mac', '{o}'],
+]
+/**
+ * A page (HTML) or line as a guest reads it: what it says of "your Mac" said of `owner`, the person who shared it, and
+ * of Face ID said of this device's own sign-in (`term`, signin.ts). Each line is found as written and as escaped into
+ * the page; the names always go in escaped.
+ */
+export const forGuest = (html: string, owner: string, term = 'Face ID'): string => {
+  const fill = (to: string) => to.replaceAll('{o}', esc(owner)).replace(/^\{a\}/, esc(term.charAt(0).toUpperCase() + term.slice(1))).replaceAll('{a}', esc(term))
+  return GUEST_LINES.reduce((out, [from, to]) => out.replaceAll(esc(from), fill(esc(to))).replaceAll(from, fill(to)), html)
+}
 /** Where a tap is, read out as it changes; with a spinner while it waits. */
 export const stageLine = (text: string, isWaiting = true): string => `<p class="stage" role="status">${isWaiting ? spinner : ''}${esc(text)}</p>`

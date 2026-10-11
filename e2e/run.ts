@@ -7,15 +7,18 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, type Device, type Identity, type Invite, type Pairing } from '../plugins/streams/hooks/remote/link'
+import { INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, withPaired, type Device, type Identity, type Invite, type Pairing } from '../plugins/streams/hooks/remote/link'
 import { newIdentity, publicKeyOf, randomId } from '../plugins/streams/hooks/remote/seal'
 import type { Ack, PhoneCommand, Settled, Snapshot } from '../plugins/streams/hooks/remote/snapshot'
 import { qrVideo } from './camera'
+import { linkFragment } from '../app/src/links'
 
 const ROOT = join(import.meta.dir, '..')
 const SHOTS = process.argv[2] ?? join(ROOT, 'e2e', 'shots')
-const TMP = join(tmpdir(), 'claudeflow-e2e')
-const PORT = 8791
+/** E2E_OFFSET moves every port and the temp folder, so two runs (two worktrees) never stop each other's processes. */
+const OFFSET = Number(process.env.E2E_OFFSET ?? 0)
+const TMP = join(tmpdir(), `claudeflow-e2e${OFFSET ? `-${OFFSET}` : ''}`)
+const PORT = 8791 + OFFSET
 // Pages load from localhost: a passkey needs a host name (not an IP) and a secure context, which localhost is.
 const ORIGIN = `http://localhost:${PORT}`
 const UP = `http://127.0.0.1:${PORT}`
@@ -26,6 +29,18 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
  * (ARCHITECTURE.md, "Polling budget").
  */
 const POLL_WAIT_MS = 45_000
+/** A refusal shows once no other session has let the device in for transport.ts DENY_GRACE_MS (35 s). */
+const DENIAL_WAIT_MS = POLL_WAIT_MS + 35_000
+/** The app's state.ts SLOW_MS: how long a hello waits before the app says nobody has answered. */
+const SLOW_MS = 45_000
+/** Words that mean nothing to someone a project was shared with: they never set up Claude Code. */
+const JARGON = /\bMac\b|pair|\/streams|passkey|Claude Code/i
+const UA = {
+  iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+  android: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+  windows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  linux: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+}
 
 const results: { name: string; ok: boolean; why?: string }[] = []
 const check = (name: string, ok: boolean, why = '') => {
@@ -49,7 +64,7 @@ async function startRelay() {
   const vapid = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'])) as CryptoKeyPair
   const secret = Buffer.from(await crypto.subtle.exportKey('pkcs8', vapid.privateKey)).toString('base64url')
   const log = openSync(join(TMP, 'wrangler.log'), 'w')
-  const p = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `VAPID_PRIVATE_KEY:${secret}`], {
+  const p = spawn('npx', ['wrangler', 'dev', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `VAPID_PRIVATE_KEY:${secret}`, ...(OFFSET ? ['--inspector-port', String(9229 + OFFSET)] : [])], {
     cwd: join(ROOT, 'relay/cloudflare'), detached: true, stdio: ['ignore', log, log],
   })
   procs.push(p)
@@ -57,7 +72,7 @@ async function startRelay() {
 }
 
 // ---- a push service on this Mac: headless Chrome has none, so the devices' subscriptions point here ----
-const PUSH_PORT = 8795
+const PUSH_PORT = 8795 + OFFSET
 const pushes: { path: string; authorization: string; body: Uint8Array }[] = []
 function startPushService() {
   return Bun.serve({
@@ -101,7 +116,12 @@ const fakePushApi = (sub: unknown) => `(() => {
 
 // ---- a device: one headless Chrome with its own profile and a virtual platform authenticator ----
 type Page = Awaited<ReturnType<typeof openDevice>>
-async function openDevice(name: string, port: number, extra: string[] = []) {
+/**
+ * What a device is: its browser's user agent and screen, and its authenticator: built in (`internal`, Face ID or
+ * Windows Hello), only a security key or phone (`usb`, as on most Linux and some Windows), or no WebAuthn at all.
+ */
+type Kind = { ua?: string; width?: number; height?: number; isMobile?: boolean; auth?: 'internal' | 'usb' | 'none' }
+async function openDevice(name: string, port: number, extra: string[] = [], kind: Kind = {}) {
   const p = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(TMP, `chrome-${name}`)}`,
     '--no-first-run', '--no-default-browser-check', ...extra, 'about:blank'], { detached: true, stdio: 'ignore' })
   procs.push(p)
@@ -123,14 +143,20 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
       ws.send(JSON.stringify({ id, method, params }))
     })
   await send('Runtime.enable')
-  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
+  await send('Emulation.setDeviceMetricsOverride', { width: kind.width ?? 390, height: kind.height ?? 844, deviceScaleFactor: kind.isMobile === false ? 1 : 2, mobile: kind.isMobile ?? true })
+  if (kind.ua) await send('Emulation.setUserAgentOverride', { userAgent: kind.ua })
+  // A browser with no WebAuthn: the page never sees one.
+  if (kind.auth === 'none') {
+    await send('Page.enable')
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: 'delete window.PublicKeyCredential; Object.defineProperty(Navigator.prototype, "credentials", { get: () => undefined })' })
+  }
   // The devices' colour scheme: light by default, E2E_SCHEME=dark to check the dark theme.
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: process.env.E2E_SCHEME === 'dark' ? 'dark' : 'light' }] })
   // Headless pages never have focus; a phone in the hand does, and only a focused page counts as looking.
   await send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await send('WebAuthn.enable')
-  const { authenticatorId } = await send('WebAuthn.addVirtualAuthenticator', {
-    options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+  const { authenticatorId } = kind.auth === 'none' ? { authenticatorId: undefined } : await send('WebAuthn.addVirtualAuthenticator', {
+    options: { protocol: 'ctap2', transport: kind.auth ?? 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
   })
   const js = async (expression: string) =>
     (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture: true })).result?.value
@@ -143,7 +169,7 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
     /** A tap, as a person makes it: with a user gesture, so WebAuthn may run. */
     tap: (sel: string) => until(`${name}: ${sel}`, () => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true })()`)),
     see: (what: string, ms?: number) => until(`${name} to show "${what}"`, async () => String((await js('document.body.innerText')) ?? '').includes(what), ms),
-    width: 390,
+    width: kind.width ?? 390,
     /** Phone (390), tablet (820) or Mac (1280): the app picks its layout from the width, as on the real device. */
     async resize(width: number, height: number) {
       this.width = width
@@ -176,7 +202,13 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
     },
     deviceId: async () => JSON.parse((await js(`localStorage.getItem('cf:device')`)) ?? '{}').id as string,
     /** The passkeys this device's authenticator holds: one per pairing ceremony that ran. */
-    passkeys: async () => ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length,
+    passkeys: async () => (authenticatorId ? ((await send('WebAuthn.getCredentials', { authenticatorId })).credentials as unknown[]).length : 0),
+    /** Types `text` where the focus is, then presses Enter: a keyboard, not a tap. */
+    async typeAndEnter(sel: string, text: string) {
+      await js(`document.querySelector(${JSON.stringify(sel)}).focus()`)
+      await send('Input.insertText', { text })
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    },
     /** Two taps as fast as a thumb, the second landing before the redraw disables the button (as on a slow phone). */
     doubleTap: (sel: string) =>
       js(`(() => { const q = () => document.querySelector(${JSON.stringify(sel)}); q().click(); const b = q(); b.disabled = false; b.click(); return true })()`),
@@ -199,7 +231,7 @@ function startSession() {
   const s = {
     identity, pairing, pk: publicKeyOf(sk), id,
     devices: [] as Device[],
-    /** Shared invites not yet used, as index.tsx keeps them in $.store. */
+    /** Shared invites until they expire, as index.tsx keeps them in $.store. */
     invites: [] as Invite[],
     commands: [] as { device: string; command: PhoneCommand }[],
     denied: [] as { to: string; why: string }[],
@@ -262,7 +294,7 @@ function startSession() {
     while (s.isRunning) {
       const now = Date.now()
       // As index.tsx: the owner's devices see who the project is shared with.
-      const people = s.devices.flatMap(d => (d.role ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
+      const people = s.devices.flatMap(d => (d.role && !d.removed ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
       const known = () => ({ devices: s.devices, pairing, invites: s.invites, now, snapshot: { ...snapshot(), ...(people.length ? { people } : {}) }, isHolding: s.permissions.length > 0 })
       let post = s.isLagging ? undefined : link.next(known())
       let hasAcked = false
@@ -271,11 +303,8 @@ function startSession() {
         for (const f of post.frames) if ((f.data as { t: string }).t === 'denied') s.denied.push({ to: f.to, why: (f.data as { why: string }).why })
         const r = await fetch(`${UP}/v1/room/${identity.room}/up`, { method: 'POST', body: JSON.stringify(post) }).catch(() => undefined)
         const got = link.answered(r?.ok ? await r.text().catch(() => undefined) : undefined, now)
-        for (const d of got.paired) {
-          s.devices = [...s.devices.filter(x => x.id !== d.id), d]
-          s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
-        }
-        s.invites = s.invites.filter(i => !got.used.includes(i.secret))
+        for (const d of got.paired) s.pairings.set(d.id, (s.pairings.get(d.id) ?? 0) + 1)
+        s.devices = withPaired(s.devices, got.paired)
         s.commands.push(...got.commands)
         // What index.tsx's phoneCommand answers, acked in the same tick.
         for (const { device, command: c } of got.commands) {
@@ -285,6 +314,8 @@ function startSession() {
             s.invites.push({ secret, until: Date.now() + INVITE_MS, project: '/work/claudeflow', role: c.role, days: SHARE_DAYS })
             done = { ok: true, secret }
           }
+          // As index.tsx: a removed guest is kept as removed, so its next unlock is told so.
+          if (c.kind === 'forgetDevice') s.devices = s.devices.map(d => (d.id === c.deviceId && d.role ? { ...d, removed: true, until: Date.now() } : d))
           if (c.kind === 'permission' || c.kind === 'choose') {
             const isHeld = c.kind === 'permission' ? s.permissions.some(p => p.id === c.requestId) : s.questions.some(q => q.id === c.requestId)
             if (isHeld) {
@@ -344,7 +375,7 @@ const stopLeftovers = () => {
 // ---- the run ----
 let failed = false
 try {
-  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets four minutes.
+  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets eight minutes.
   await Promise.race([
     (async () => {
       const v = spawnSync('node', ['--version']).stdout?.toString().trim() ?? ''
@@ -363,8 +394,14 @@ try {
       // A fourth device has a camera that sees the Mac's pairing code: it pairs from inside the app, never leaving it.
       qrVideo(join(TMP, 'pairing-code.y4m'), link)
       const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${join(TMP, 'pairing-code.y4m')}`]
-      const [d1, d2, d3, d4, d5] = await Promise.all([
-        openDevice('device1', 9341), openDevice('device2', 9342), openDevice('stranger', 9343), openDevice('scanner', 9344, camera), openDevice('guest', 9345),
+      const [d1, d2, d3, d4, d5, d6, d7, d8] = await Promise.all([
+        openDevice('device1', 9341 + OFFSET), openDevice('device2', 9342 + OFFSET), openDevice('stranger', 9343 + OFFSET), openDevice('scanner', 9344 + OFFSET, camera),
+        openDevice('guest', 9345 + OFFSET, [], { ua: UA.iphone }),
+        // Guests on other devices: Android Chrome (screen lock built in), Windows with only a security key, Linux
+        // with no WebAuthn at all; the desktops at desktop sizes, with a keyboard.
+        openDevice('android', 9346 + OFFSET, [], { ua: UA.android, width: 412, height: 915, auth: 'internal' }),
+        openDevice('windows', 9347 + OFFSET, [], { ua: UA.windows, width: 1366, height: 768, isMobile: false, auth: 'usb' }),
+        openDevice('linux', 9348 + OFFSET, [], { ua: UA.linux, width: 1280, height: 800, isMobile: false, auth: 'none' }),
       ])
       // Like a Home Screen app added from an old pairing link: its start address carries a stale code.
       await d4.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${randomId(32)}`)
@@ -534,13 +571,17 @@ try {
       await d1.tap('[data-menu]')
       await d1.tap('[data-invite="viewer"]')
       const inviteLink = String(await until('the invite link', () => d1.js(`document.querySelector('.invite-link')?.value || ''`), POLL_WAIT_MS))
-      check('the ☰ menu makes an invite link for this project', inviteLink.startsWith(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=`), inviteLink)
+      check('the ☰ menu makes an invite link for this project, naming it and who shares it',
+        inviteLink.startsWith(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=`) && inviteLink.endsWith('&p=claudeflow&o=e2e'), inviteLink)
       await d1.shot('app-390-share.png')
       // The guest's hello reaches an older session first, which refuses the invite it does not know; the current
       // session (held back until then) lets it in. The guest must never be told it is not paired meanwhile.
       s.isLagging = true
       await d5.goto(inviteLink)
-      await d5.see('Pair this device')
+      await d5.see('Join claudeflow')
+      check('the guest is asked to join the project by name, in words with no Mac, pairing or /streams', !JARGON.test(await d5.text()), await d5.text())
+      await d5.shot('app-390-guest-join.png')
+      await d5.js(`(() => { const i = document.querySelector('[data-guest-name]'); i.value = 'Sam'; i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
       await d5.tap('[data-gate="pair"]')
       await sleep(1000)
       const older = startOlderSession(s)
@@ -557,12 +598,112 @@ try {
       }, POLL_WAIT_MS)
       older.isRunning = false
       check("one older session's refusal is not shown: the guest pairs when the current session lets it in, with no pairing error on the way", !refusal, refusal)
-      check('the guest joins as a watcher of this project: role, project and an end date, the invite used up',
-        s.devices.some(d => d.id === id5 && d.role === 'viewer' && d.project === '/work/claudeflow' && (d.until ?? 0) > Date.now()) && s.invites.length === 0,
+      check('the guest joins as a watcher of this project under the name they gave: role, project, an end date, the invite',
+        s.devices.some(d => d.id === id5 && d.label === 'Sam' && d.role === 'viewer' && d.project === '/work/claudeflow' && (d.until ?? 0) > Date.now() && !!d.via),
         JSON.stringify(s.devices.find(d => d.id === id5)))
       check('a watcher sees the streams but no control: no Yes, no Stop, no composer',
         (await d5.text()).includes('relay deploy') && !(await d5.js(`[...document.querySelectorAll('[data-answer], [data-stop], .slide.compose')].some(e => e.offsetParent)`)))
       await d5.shot('app-390-watching.png')
+      check('inside the project the guest reads no Mac, pairing or /streams either', !JARGON.test(await d5.text()), (await d5.text()).match(JARGON)?.[0])
+
+      // Back in the app later: Unlock with Face ID, and the project is there again.
+      await d5.reload()
+      await d5.see('Unlock with Face ID')
+      check('a guest coming back is asked only to unlock, in plain words', !JARGON.test(await d5.text()), await d5.text())
+      await d5.tap('[data-gate="unlock"]')
+      await d5.see('Watching', POLL_WAIT_MS)
+      check('the guest unlocks again and sees the project', (await d5.text()).includes('relay deploy'))
+
+      // The owner is away (the session posts nothing): the guest is told the project is not online, and gets in once it is.
+      s.isLagging = true
+      await d5.reload()
+      await d5.tap('[data-gate="unlock"]')
+      await d5.see("isn't online right now", SLOW_MS + POLL_WAIT_MS)
+      const away = await d5.text()
+      check('with the owner away, the guest is told the project is not online and that it opens while e2e works on it',
+        away.includes('It opens while e2e is working on it') && !JARGON.test(away), away)
+      await d5.shot('app-390-guest-away.png')
+      s.isLagging = false
+      await d5.tap('[data-gate="retry"]')
+      await d5.see('Watching', POLL_WAIT_MS)
+      check('once the owner is back, the waiting guest gets in', (await d5.text()).includes('relay deploy'))
+
+      // The owner removes the guest from the ☰ menu: the guest's next unlock says so, and who to ask.
+      await until('the guest in the people list', () => d1.js(`!!document.querySelector('[data-arm-remove="${id5}"]')`), POLL_WAIT_MS)
+      await d1.tap(`[data-arm-remove="${id5}"]`)
+      await d1.tap(`[data-arm-remove="${id5}"]`)
+      await until('the guest removed', () => s.devices.some(d => d.id === id5 && d.removed), POLL_WAIT_MS)
+      await d1.tap('[data-menu-close]')
+      await d5.reload()
+      await d5.tap('[data-gate="unlock"]')
+      await d5.see('removed your access', DENIAL_WAIT_MS)
+      const removed = await d5.text()
+      check('a removed guest is told the owner removed their access, not that a Mac does not know the device',
+        removed.includes('e2e removed your access to claudeflow') && !JARGON.test(removed), removed)
+      await d5.shot('app-390-guest-removed.png')
+
+      // An invite opened after its day: turned away in plain words, with who to ask for a new one.
+      const old = { secret: randomId(32), until: Date.now() - 1000, project: '/work/claudeflow', role: 'viewer' as const, days: SHARE_DAYS }
+      s.invites.push(old)
+      // A fresh load of the link: only the fragment differs from the page it is on, which would not reload.
+      await d3.goto('about:blank')
+      await until('the stranger on a blank page', () => d3.js("location.href === 'about:blank'"))
+      await d3.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${old.secret}&p=claudeflow&o=e2e`)
+      await d3.see('Join claudeflow')
+      await d3.tap('[data-gate="pair"]')
+      await d3.see('This invite has expired', DENIAL_WAIT_MS)
+      const expired = await d3.text()
+      check('an expired invite says so and to ask e2e for a new link, with no Mac or pairing words', expired.includes('Ask e2e for a new link') && !JARGON.test(expired), expired)
+      await d3.shot('app-390-guest-expired.png')
+
+      // Guests on other devices, each with their own invite. None is told about Face ID, a Mac or pairing.
+      const inviteLinkFor = (role: Invite['role']) => {
+        const invite = { secret: randomId(32), until: Date.now() + INVITE_MS, project: '/work/claudeflow', role, days: SHARE_DAYS }
+        s.invites.push(invite)
+        return `${ORIGIN}/${linkFragment({ room: s.identity.room, pk: s.pk, secret: invite.secret, guest: { project: 'claudeflow', owner: 'e2e' } })}`
+      }
+      const plain = (t: string) => !JARGON.test(t) && !t.includes('Face ID')
+      // Nothing wider than the window, and a gate a readable card rather than a stretched band.
+      const fits = (d: Page) => d.js(`(() => { const g = document.querySelector('#gate .gate'); return document.documentElement.scrollWidth <= innerWidth && (!g || g.getBoundingClientRect().width <= 800) })()`)
+
+      // Android Chrome: its screen lock, named so.
+      await d6.goto(inviteLinkFor('viewer'))
+      await d6.see('Join with your screen lock')
+      check('on Android the guest is asked for their screen lock, not Face ID', plain(await d6.text()), await d6.text())
+      await d6.js(`(() => { const i = document.querySelector('[data-guest-name]'); i.value = 'Pia'; i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+      await d6.tap('[data-gate="pair"]')
+      await d6.see('Watching', POLL_WAIT_MS)
+      check('the Android guest gets in and reads only guest words', plain(await d6.text()) && (await d6.text()).includes('relay deploy'), (await d6.text()).match(JARGON)?.[0])
+      await d6.shot('app-412-android-guest.png')
+
+      // Windows with no Hello, only a security key: the key it is, joined by keyboard, as a contributor.
+      await d7.goto(inviteLinkFor('contributor'))
+      await d7.see('Join with your phone or security key')
+      check('on a desktop with nothing built in, the guest is offered a phone or security key, or this browser', plain(await d7.text()) && (await d7.js(`!!document.querySelector('[data-gate="pair-browser"]')`)), await d7.text())
+      check('the desktop join screen fits the window', await fits(d7))
+      await d7.shot('app-1366-windows-guest-join.png')
+      await d7.typeAndEnter('[data-guest-name]', 'Wes')
+      await d7.see('Contributing', POLL_WAIT_MS)
+      const wes = s.devices.find(d => d.label === 'Wes')
+      check('the Windows guest joined with the security key, by keyboard, and may contribute', !!wes && !wes.browserKey && wes.role === 'contributor' && (await d7.passkeys()) === 1, JSON.stringify(wes))
+      check('the desktop app fits the window and reads only guest words', (await fits(d7)) && plain(await d7.text()), (await d7.text()).match(JARGON)?.[0])
+      await d7.shot('app-1366-windows-guest.png')
+
+      // Linux with no WebAuthn at all: a key kept in this browser, watch only whatever the invite said.
+      await d8.goto(inviteLinkFor('contributor'))
+      await d8.see('Join on this browser')
+      check('with no passkeys at all, the guest is offered only this browser, and told it then only watches',
+        plain(await d8.text()) && (await d8.text()).includes('watch, not act') && !(await d8.js(`!!document.querySelector('[data-gate="pair"]')`)), await d8.text())
+      await d8.typeAndEnter('[data-guest-name]', 'Lin')
+      await d8.see('Watching', POLL_WAIT_MS)
+      const lin = s.devices.find(d => d.label === 'Lin')
+      check('the Linux guest joined with a browser key and only watches, though invited to contribute', !!lin && !!lin.browserKey && (await d8.text()).includes('relay deploy') && !(await d8.js(`!!document.querySelector('.slide.compose')?.offsetParent`)), JSON.stringify(lin))
+      await d8.reload()
+      await d8.see('Open it to see it')
+      await d8.tap('[data-gate="unlock"]')
+      await d8.see('Watching', POLL_WAIT_MS)
+      check('back later, the browser key opens the project with no prompt', plain(await d8.text()) && (await fits(d8)), await d8.text())
+      await d8.shot('app-1280-linux-guest.png')
 
       // Workflows and loops: the cards say where each is, and Stop workflow (two taps) reaches the session as stopTask.
       s.permissions = []
@@ -626,10 +767,10 @@ try {
       check('device 1, looking, gets no push, and device 2 no second one', !pushes.some(p => p.path === '/device1') && pushes.filter(p => p.path === '/device2').length === 1, JSON.stringify(pushes.map(p => p.path)))
       pushService.stop(true)
       s.isRunning = false
-      for (const d of [d1, d2, d3]) d.close()
+      for (const d of [d1, d2, d3, d4, d5, d6, d7, d8]) d.close()
     })(),
-    sleep(240_000).then(() => {
-      throw new Error('the run took over 4 minutes')
+    sleep(480_000).then(() => {
+      throw new Error('the run took over 8 minutes')
     }),
   ])
 } catch (e) {

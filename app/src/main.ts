@@ -4,7 +4,7 @@
 // and settles when the session acks it or its snapshot shows the outcome.
 import { newIdentity, randomId } from '../../plugins/streams/hooks/remote/seal'
 import type { PhoneCommand } from '../../plugins/streams/hooks/remote/snapshot'
-import { gateOf, linkFragment, parseLink, withLink, type Pairing } from './links'
+import { gateOf, linkFragment, parseLink, withLink, type Guest, type Pairing } from './links'
 import { isCeremonyBusy } from './passkey'
 import { notifyState, subOf, turnOff, turnOn, type PushDeps, type PushSub } from './push'
 import {
@@ -33,6 +33,8 @@ import { gates, scanButton, unpaired, type GateView } from './views/gates'
 import { scanPairing } from './scan'
 import { menuView, type InviteView } from './views/menu'
 import { bell, page, switcher, tabs } from './views/page'
+import { forGuest } from './views/util'
+import { detectSignIn, signInOf, type SignIn } from './signin'
 import { attachOf, sendFiles, type Ready } from './upload'
 import { attachedStrip, clip } from './views/compose'
 import { lockOf, swipeGoes } from './swipe'
@@ -109,7 +111,9 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
       const asked = invitesSent.get(ack.id)
       if (asked && invite) {
         invitesSent.delete(ack.id)
-        invite = ack.ok && ack.secret ? { ...invite, isBusy: false, link: `${location.origin}/#r=${asked.room}&k=${asked.pk}&s=${ack.secret}` } : { ...invite, isBusy: false, why: 'The Mac could not make the invite.' }
+        invite = ack.ok && ack.secret
+          ? { ...invite, isBusy: false, link: `${location.origin}/${linkFragment({ room: asked.room, pk: asked.pk, secret: ack.secret, guest: asked.guest })}` }
+          : { ...invite, isBusy: false, why: 'Your Mac could not make the invite. Try again.' }
       }
       render()
     },
@@ -124,6 +128,10 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
   }),
 )
 const linkOf = (room: string) => links.find(l => l.room() === room)
+
+/** How this device signs in (signin.ts), in a guest's words: Face ID until the browser has said. */
+let signIn: SignIn = signInOf(navigator.userAgent, navigator.maxTouchPoints ?? 0, true, true)
+void detectSignIn().then(s => ((signIn = s), render()))
 
 // "Notify me" (push.ts): the browser parts, and what this browser has. iOS offers Push only to Home Screen apps.
 const hasPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
@@ -168,7 +176,7 @@ let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isO
 function render() {
   // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
   // Nor mid-swipe: a redraw would replace the card under the finger, and it would spring back.
-  if (document.activeElement?.matches('textarea') || isDockMoving || drag?.isOn) {
+  if (document.activeElement?.matches('textarea, [data-guest-name]') || isDockMoving || drag?.isOn) {
     pendingRender = true
     return
   }
@@ -195,6 +203,7 @@ function render() {
       isCeremony: isCeremonyBusy(),
       isOnline: l.isOpen(),
       canRepair: !!l.pairing().secret,
+      ...(l.pairing().guest ? { guest: l.pairing().guest, name: guestName, signIn, isBrowserKey: !!l.pairing().browserKey } : {}),
     }
   })
   // No account usable here (none paired, or every one refused): pairing by camera is offered under the gates.
@@ -207,7 +216,11 @@ function render() {
   el('page-name').innerHTML = switcher(shownState, now)
   el('bell').innerHTML = bell(shownState, now)
   const compose = { files: attached.map(f => ({ name: f.name, preview: f.preview })), isListening: voice.isListening(), hasMic: voice.isOffered, why: composeWhy }
-  el('main').innerHTML = page(shownState, now, open.size > 0, wide.matches, notifyView(), compose)
+  // A project shared with this device is read in the guest's words: the owner by name, never "your Mac".
+  const guestTab = currentOf(shownState, now)
+  const guestOwner = guestTab && (rooms[guestTab.room]?.guest?.owner ?? (guestTab.snapshot.you ? guestTab.snapshot.session.account : undefined))
+  const html = page(shownState, now, open.size > 0, wide.matches, notifyView(), compose)
+  el('main').innerHTML = guestOwner ? forGuest(html, guestOwner, guestTab && rooms[guestTab.room]?.browserKey ? 'this browser' : signIn.term) : html
   // On a Mac the sidebar holds plan usage and the runs-and-loops line right under the session tabs; the composer stays.
   const dock = el('main').querySelector<HTMLElement>('.dock')
   if (dock && side.matches) {
@@ -251,7 +264,7 @@ function fitDock(strip: HTMLElement) {
 let isMenuOpen = false
 let invite: InviteView | undefined
 /** Invite commands on their way, by command id: the session's ack carries the secret the link is made from. */
-const invitesSent = new Map<string, { room: string; pk: string }>()
+const invitesSent = new Map<string, { room: string; pk: string; guest: Guest }>()
 
 /** Sends an owner's sharing command for the shown project, acked like any tap. */
 function shareTap(command: PhoneCommand) {
@@ -260,6 +273,21 @@ function shareTap(command: PhoneCommand) {
   const key = `${shown.key}|share:${command.id}`
   void go(key, tapFor(shown, key, command))
 }
+
+/** The name a guest types while joining: the owner sees it in their list of people. */
+let guestName = ''
+document.addEventListener('input', e => {
+  if ((e.target as Element).matches?.('[data-guest-name]')) guestName = (e.target as HTMLInputElement).value
+})
+// On a keyboard, Enter in the name joins as the first button would.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !(e.target as Element).matches?.('[data-guest-name]')) return
+  e.preventDefault()
+  const join = (e.target as Element).closest('.gate')?.querySelector<HTMLButtonElement>('[data-gate^="pair"]:not([disabled])')
+  // Out of the box first: the page waits to redraw while it has focus, and it should show the join going on.
+  ;(e.target as HTMLElement).blur()
+  join?.click()
+})
 
 /** Why the last scan did not pair, shown under the scan button. */
 let scanWhy = ''
@@ -536,7 +564,8 @@ document.addEventListener('click', e => {
     const id = randomId()
     const link = linkOf(inviteTab.room)
     if (!link) return
-    invitesSent.set(id, { room: inviteTab.room, pk: link.pairing().pk })
+    const { project, account } = inviteTab.snapshot.session
+    invitesSent.set(id, { room: inviteTab.room, pk: link.pairing().pk, guest: { project, owner: account } })
     invite = { role, isBusy: true }
     render()
     return shareTap({ id, kind: 'invite', role })
@@ -653,7 +682,8 @@ document.addEventListener('click', e => {
   if (gateBtn) {
     const link = linkOf(gateBtn.dataset.room!)
     const kind = gateBtn.dataset.gate
-    return void (kind === 'pair' ? link?.pair() : kind === 'unlock' ? link?.unlock() : link?.retry())
+    if (kind === 'pair' || kind === 'pair-browser') return void link?.pair(guestName.trim(), kind === 'pair-browser')
+    return void (kind === 'unlock' ? link?.unlock() : link?.retry())
   }
   if (at('[data-stop]') && shown) {
     const now = Date.now()

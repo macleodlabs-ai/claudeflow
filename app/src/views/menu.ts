@@ -25,16 +25,20 @@ function people(s: State, t: SessionTab, now: number, invite: InviteView | undef
   const list = (t.snapshot.people ?? [])
     .map(p => {
       const removeKey = `remove:${p.id}`
-      return `<div class="person"><div class="who"><b>${esc(p.label)}</b><span class="meta">${ROLE_WORD[p.role]} · ${leftOf(p.until, now)}</span></div>
-        <div class="seg" role="group" aria-label="Role">
+      // Joined on a browser with no passkey: it can only watch, so there is no role to switch.
+      const role = p.browserKey
+        ? '<span class="meta">Watch only: joined without a passkey</span>'
+        : `<div class="seg" role="group" aria-label="Role">
           <button type="button" class="${p.role === 'viewer' ? 'on' : ''}" data-people-role="${esc(p.id)}" data-role="viewer">Watch</button>
-          <button type="button" class="${p.role === 'contributor' ? 'on' : ''}" data-people-role="${esc(p.id)}" data-role="contributor">Contribute</button></div>
+          <button type="button" class="${p.role === 'contributor' ? 'on' : ''}" data-people-role="${esc(p.id)}" data-role="contributor">Contribute</button></div>`
+      return `<div class="person"><div class="who"><b>${esc(p.label)}</b><span class="meta">${ROLE_WORD[p.role]} · ${leftOf(p.until, now)}</span></div>
+        ${role}
         <button type="button" class="btn ghost small" data-people-extend="${esc(p.id)}">+7d</button>
         <button type="button" class="btn ghost small danger" data-arm-remove="${esc(p.id)}">${isArmed(s, removeKey, now) ? 'Tap again' : 'Remove'}</button></div>`
     })
     .join('')
   const made = invite?.link
-    ? `<div class="invite-made"><p>Anyone with this link can join <b>${esc(t.snapshot.session.project)}</b> as ${invite.role === 'viewer' ? 'a watcher' : 'a contributor'} once, within 24 hours, for 7 days:</p>
+    ? `<div class="invite-made"><p>Send this to one person. Within 24 hours they can join <b>${esc(t.snapshot.session.project)}</b> as ${invite.role === 'viewer' ? 'a watcher' : 'a contributor'}, on one device, for 7 days:</p>
       <input class="invite-link" readonly value="${esc(invite.link)}" aria-label="Invite link">
       <div class="actions"><button type="button" class="btn" data-share-link>Share…</button><button type="button" class="btn ghost" data-copy-link>Copy</button></div></div>`
     : invite?.isBusy
@@ -55,6 +59,6 @@ export function menuView(s: State, t: SessionTab | undefined, isOpen: boolean, n
   return `<div class="sheet-backdrop" data-menu-close></div><div class="sheet" role="dialog" aria-label="Menu">
     <div class="sheet-head"><b>Menu</b><button type="button" class="icon-btn" data-menu-close aria-label="Close">✕</button></div>
     ${share}
-    <section class="menu-section"><h3>Devices</h3><div class="actions"><button type="button" class="btn ghost" data-scan>📷 Pair this device by code</button>
+    <section class="menu-section"><h3>${t?.snapshot.you ? 'This device' : 'Devices'}</h3><div class="actions">${t?.snapshot.you ? '' : '<button type="button" class="btn ghost" data-scan>📷 Pair this device by code</button>'}
       <button type="button" class="btn ghost" data-lock>🔒 Lock now</button></div></section></div>`
 }

@@ -8,8 +8,11 @@ import { ackOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapsho
 
 /** This device's keys: one id and X25519 key pair for every room. */
 export type DeviceKeys = { id: string; sk: string; pk: string }
-/** A passkey made at pairing (fields b64u): its id, its public key as SPKI, and the ceremony's client data. */
-export type Registration = { credentialId: string; publicKey: string; clientDataJSON: string }
+/**
+ * A passkey made at pairing (fields b64u): its id, its public key as SPKI, and the ceremony's client data. `browser`:
+ * not a passkey but a key this browser keeps (a guest whose device has no authenticator), so watch only.
+ */
+export type Registration = { credentialId: string; publicKey: string; clientDataJSON: string; browser?: true }
 /** A frame for the relay: `*` for every session of the room, or one session's id. */
 export type DeviceFrame = { to: string; data: Record<string, unknown> }
 
@@ -22,6 +25,10 @@ export type Received =
   | { t: 'ack'; ack: Ack }
 
 type Keys = { eph: { sk: string; pk: string }; nonce: string }
+
+/** What a pairing proof covers: all the session stores for the device, a browser key's kind included. */
+export const proofParts = (device: { id: string; pk: string }, reg: { credentialId: string; publicKey: string; browser?: unknown }): string[] =>
+  [device.id, device.pk, reg.credentialId, reg.publicKey, ...(reg.browser === true ? ['browser'] : [])]
 
 /**
  * The device in one room: `accountPk` is the account's public key from the pairing link. A connection starts with
@@ -37,10 +44,10 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
 
   const fresh = (): Keys => ({ eph: newIdentity(), nonce: randomId(32) })
 
-  function send(k: Keys, isPairing: boolean, extra: Record<string, unknown>): DeviceFrame {
+  function send(k: Keys, isPairing: boolean, extra: Record<string, unknown>, name = o.label): DeviceFrame {
     hello = { ...k, isPairing }
     channels.clear()
-    const label = o.label ? { label: o.label } : {}
+    const label = name ? { label: name } : {}
     return { to: '*', data: { t: 'hello', device: o.device.id, pk: o.device.pk, eph: k.eph.pk, nonce: k.nonce, ...label, ...extra } }
   }
 
@@ -51,9 +58,12 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
     /** What the pairing passkey signs: this pairing's room and this device, so the relay cannot reuse it elsewhere. */
     pairChallenge: () => passkeyChallenge('pair', o.room, o.device.id, o.device.pk),
 
-    /** The first hello: proof that this device saw the QR code's secret, covering everything the session stores. */
-    pairHello: (secret: string, reg: Registration): DeviceFrame =>
-      send(fresh(), true, { proof: pairingProof(secret, o.device.id, o.device.pk, reg.credentialId, reg.publicKey), registration: reg }),
+    /**
+     * The first hello: proof that this device saw the QR code's secret, covering everything the session stores.
+     * `label` is the name the owner sees for it (a guest's own name), when given.
+     */
+    pairHello: (secret: string, reg: Registration, label?: string): DeviceFrame =>
+      send(fresh(), true, { proof: pairingProof(secret, ...proofParts(o.device, reg)), registration: reg }, label || o.label),
 
     /** What Face ID signs to unlock: this room, a new connection key and the minute (`now`, ms). */
     unlockChallenge(now: number): string {
