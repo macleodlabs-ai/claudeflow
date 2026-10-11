@@ -136,8 +136,9 @@ describe('the polling budget', () => {
     expect(link.next({ ...known, pairing: { secret: randomId(32), until: T0 } })).toBeUndefined()
   })
 
-  test('a relay that is down is retried 4 s later, then less and less often, never more than five minutes apart', () => {
-    // Not even a held permission makes it hammer a relay that fails.
+  test('a relay that is down is retried 4 s later, then less often, but never more than a heartbeat apart', () => {
+    // Not even a held permission makes it hammer a relay that fails. Nor does it go quiet for minutes: a phone that
+    // opens while this session is backed off would wait that long, and say the Mac is not answering.
     const me = account()
     const a = phone(me, 'iPhone')
     const relay = room([a])
@@ -145,14 +146,14 @@ describe('the polling budget', () => {
     let now = T0
     const tries = (at: number) => cycle(link, relay, { devices: [a.stored()], now: at, isDown: true }).posts.length
     expect(tries(now)).toBe(1)
-    for (const gap of [4000, 8000, 16_000, 32_000, 64_000, 128_000, 256_000, 300_000, 300_000]) {
+    for (const gap of [4000, 8000, 16_000, HEARTBEAT_MS, HEARTBEAT_MS, HEARTBEAT_MS]) {
       expect(tries(now + gap - TICK_MS)).toBe(0)
       now += gap
       expect(tries(now)).toBe(1)
     }
     // Back up: the next post goes through, and the one after it waits for nothing but its cadence.
-    expect(cycle(link, relay, { devices: [a.stored()], now: now + 300_000 }).posts).toHaveLength(1)
-    expect(cycle(link, relay, { devices: [a.stored()], now: now + 300_000 + TICK_MS }).posts).toHaveLength(1)
+    expect(cycle(link, relay, { devices: [a.stored()], now: now + HEARTBEAT_MS }).posts).toHaveLength(1)
+    expect(cycle(link, relay, { devices: [a.stored()], now: now + HEARTBEAT_MS + TICK_MS }).posts).toHaveLength(1)
   })
 
   test('a failed post keeps its welcomes for the retry and seals the snapshot afresh', () => {

@@ -166,8 +166,12 @@ export type Answered = {
   again: boolean
 }
 
-/** How long to wait before trying the relay again after `fails` failures in a row: 4 s doubling, at most 5 min. */
-const backoffMs = (fails: number): number => Math.min(5 * 60_000, 2000 * 2 ** Math.max(1, fails))
+/**
+ * How long to wait before trying the relay again after `fails` failures in a row: 4 s doubling, at most one
+ * heartbeat. A session backed off any longer cannot answer a phone that opens meanwhile, and the phone says the Mac
+ * is not answering; one post per 30 s while the relay is down costs no more than a quiet session's heartbeat.
+ */
+const backoffMs = (fails: number): number => Math.min(HEARTBEAT_MS, 2000 * 2 ** Math.max(1, fails))
 
 /** How often a session posts while a device looks and nothing waits on it: every third 2 s tick. */
 export const ACTIVE_POLL_MS = 6000
@@ -401,7 +405,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     /**
      * Reads what the relay answered the last post: its body when the post succeeded, undefined when it failed. A
      * failure keeps the welcomes and denials to send again, drops the sealed snapshots (they are sealed afresh next
-     * time, on the channel's next counter) and backs off: 4 s, doubling, at most 5 min.
+     * time, on the channel's next counter) and backs off: 4 s, doubling, at most one heartbeat (30 s).
      */
     answered(text: string | undefined, now: number): Answered {
       const s = sent

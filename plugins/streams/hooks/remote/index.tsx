@@ -86,6 +86,18 @@ let myCwd = ''
 let link: Link | undefined
 /** A tick is running: the next one waits, so two posts never race on the same link. */
 let isTicking = false
+/** When the running tick began: one still running after TICK_STUCK_MS is given up on (see remoteTick). */
+let tickAt = 0
+/**
+ * $.http.fetch has no timeout of its own: a request on a connection that died under it (the Mac slept, the network
+ * changed) may never settle. Past this it counts as failed, and the link backs off and posts again.
+ */
+export const FETCH_MS = 20_000
+/**
+ * A tick that has run this long is stuck on something that will not settle; the next tick goes ahead without it,
+ * or this session would never post again and every phone would find the Mac gone until Claude restarts.
+ */
+export const TICK_STUCK_MS = 60_000
 
 /** A phone's Run now is taken at most once in this long per loop. */
 const RUN_NOW_GAP_MS = 30_000
@@ -152,10 +164,12 @@ async function remoteStart($: $, e: { cwd: string }) {
  * taking back hellos and commands. Only the effects are here: $.store, the post itself, and the commands.
  */
 async function remoteTick($: $) {
-  if (!options.relayUrl || !me || isTicking) return
+  if (!options.relayUrl || !me) return
+  const now = await $.clock.now()
+  if (isTicking && now - tickAt < TICK_STUCK_MS) return
   isTicking = true
+  tickAt = now
   try {
-    const now = await $.clock.now()
     const note = await read($, remoteNoteA)
     if (note.text && now >= note.until) await update($, remoteNoteA, () => ({ text: '', until: 0 }))
     const [identity, stored, pairing, invites] = await Promise.all([
@@ -175,13 +189,16 @@ async function remoteTick($: $) {
     let post = link.next({ devices, pairing, invites, now, snapshot, isHolding: held.size > 0 })
     let hasAcked = false
     while (post) {
-      const r = await $.http
-        .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/room/${identity.room}/up`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(post),
-        })
-        .catch(() => undefined)
+      const r = await Promise.race([
+        $.http
+          .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/room/${identity.room}/up`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(post),
+          })
+          .catch(() => undefined),
+        $.clock.sleep(FETCH_MS).then(() => undefined, () => undefined),
+      ])
       const got = link.answered(r?.ok ? r.text : undefined, now)
       if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
@@ -190,7 +207,7 @@ async function remoteTick($: $) {
         await saveRemote($, STORE.devices, devices)
       }
       // An invite works once: used, it is gone for every session.
-      if (got.used.length) await $.store.set(STORE.invites, invitesOf(await $.store.get(STORE.invites)).filter(i => !got.used.includes(i.secret)))
+      if (got.used.length) await saveRemote($, STORE.invites, invitesOf(await $.store.get(STORE.invites)).filter(i => !got.used.includes(i.secret)))
       for (const c of got.commands) {
         // Every command is acked, so the phone shows what came of it instead of guessing on a slow network.
         const done = await phoneCommand($, c.command).catch((): Omit<Ack, 't' | 'id'> => ({ ok: false }))
@@ -445,7 +462,7 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     const now = await $.clock.now()
     const secret = randomId(32)
     const open = invitesOf(await $.store.get(STORE.invites)).filter(i => now < i.until)
-    await $.store.set(STORE.invites, [...open, { secret, until: now + INVITE_MS, project: myCwd, role: c.role, days: SHARE_DAYS }].slice(-20))
+    await saveRemote($, STORE.invites, [...open, { secret, until: now + INVITE_MS, project: myCwd, role: c.role, days: SHARE_DAYS }].slice(-20))
     return { ok: true, secret }
   }
   if (c.kind === 'setRole' || c.kind === 'extend' || c.kind === 'forgetDevice') {
@@ -456,7 +473,7 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     if (!d) return { ok: false }
     const changed: Device | undefined =
       c.kind === 'setRole' ? { ...d, role: c.role } : c.kind === 'extend' ? { ...d, until: Math.max(now, d.until ?? 0) + SHARE_DAYS * DAY_MS } : undefined
-    await $.store.set(STORE.devices, changed ? devices.map(x => (x.id === d.id ? changed : x)) : devices.filter(x => x.id !== d.id))
+    await saveRemote($, STORE.devices, changed ? devices.map(x => (x.id === d.id ? changed : x)) : devices.filter(x => x.id !== d.id))
     return { ok: true }
   }
   if (c.kind === 'chunk') {
@@ -489,7 +506,8 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     if (archived && (await read($, focusA)) === c.streamId) await update($, focusA, () => '')
     if (archived && (await read($, viewA)) === c.streamId) await update($, viewA, () => '')
     const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-    await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
+    // Kept for the next session when the store has room; the archive itself holds either way.
+    await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA))).catch(() => undefined)
     return { ok: true }
   }
   if (c.kind === 'stop') {
