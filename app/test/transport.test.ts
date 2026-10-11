@@ -304,6 +304,17 @@ describe('on a slow network', () => {
     expect(FakeSocket.last).not.toBe(ws)
   })
 
+  test('focus coming back after the Face ID sheet keeps the line the hello went out on, so the unlock completes', async () => {
+    // A locked phone hears nothing for minutes; Face ID blurs the page, and its focus event must not drop the hello.
+    const { link, ws } = start(PAIRED)
+    setSystemTime(new Date(Date.now() + 5 * 60_000))
+    await link.unlock()
+    link.wake()
+    expect(FakeSocket.last).toBe(ws)
+    session(ws, 's1', { devices: [stored] }).tick()
+    expect(link.isUnlocked()).toBe(true)
+  })
+
   test('back on screen after a short time away, the line is kept', async () => {
     const { link, ws } = start(PAIRED)
     ws.onopen?.()

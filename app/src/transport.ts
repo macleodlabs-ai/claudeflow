@@ -216,13 +216,15 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       if (!ws) {
         retries = 0
         connect()
-      } else if (Date.now() - heardAt > STALE_MS && stage.at !== 'faceid') {
+      } else if (Date.now() - heardAt > STALE_MS && stage.at === 'idle') {
+        // Only between steps: the Face ID sheet itself blurs the page, and the focus coming back must not drop the
+        // line the hello just went out on.
         // Locked, a fresh line costs nothing. Unlocked, ask first: a looking device gets a snapshot within seconds,
         // and only a line that stays silent is replaced (and Face ID asked again).
         if (!core.isUnlocked()) return reconnect()
         const asked = heardAt
         setTimeout(() => {
-          if (ws && heardAt === asked) reconnect()
+          if (ws && heardAt === asked && stage.at === 'idle') reconnect()
         }, PROBE_MS)
       }
       ping()
