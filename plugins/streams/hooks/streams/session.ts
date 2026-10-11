@@ -131,6 +131,28 @@ async function beat($: $) {
   }
 }
 
+/** How often a session trims the shared store of history that sessions on older plugins keep writing back. */
+export const TRIM_MS = 2 * 60_000
+
+/**
+ * Keeps the shared store well under the engine's 4 MiB, whichever session wrote it: cuts every project's history to
+ * what savedOf keeps, and drops scratch folders and the largest others while all of it is over budget. `own` (this
+ * session's project) is cut but never dropped.
+ */
+async function trimStore($: $, own: string): Promise<void> {
+  const sizes: { key: string; size: number }[] = []
+  for (const key of (await $.store.keys()).filter(k => k.startsWith(storeKey('')))) {
+    const old = (await $.store.get(key)) as Saved | undefined
+    if (!old?.rows) continue
+    const size = JSON.stringify(old).length
+    const cut = savedOf(old.streams, old.rows, old.loopStream, old.sources)
+    const cutSize = JSON.stringify(cut).length
+    if (cutSize < size) await $.store.set(key, cut)
+    sizes.push({ key, size: cutSize })
+  }
+  for (const key of historyToDrop(sizes, own)) await $.store.delete(key)
+}
+
 export function wireSession(on: On, opts: { autoArchiveHours: number }) {
   archiveHours = opts.autoArchiveHours
   on('session.start', async ($, e, next) => {
@@ -143,19 +165,9 @@ export function wireSession(on: On, opts: { autoArchiveHours: number }) {
       // Rows saved as keys alone: the worker reads their words back from the transcripts.
       if (saved.rows.some(r => !r.text)) jobs.push({ kind: 'texts' })
     }
-    // Keep the shared store well under the engine's 4 MiB: cut other projects' history saved by older versions
-    // to what savedOf keeps, and drop scratch folders and the largest when all of it is still over budget.
-    const sizes: { key: string; size: number }[] = []
-    for (const key of (await $.store.keys()).filter(k => k.startsWith(storeKey('')))) {
-      const old = (await $.store.get(key)) as Saved | undefined
-      if (!old?.rows) continue
-      const size = JSON.stringify(old).length
-      const cut = savedOf(old.streams, old.rows, old.loopStream, old.sources)
-      const cutSize = JSON.stringify(cut).length
-      if (cutSize < size) await $.store.set(key, cut)
-      sizes.push({ key, size: cutSize })
-    }
-    for (const key of historyToDrop(sizes, storeKey(e.cwd))) await $.store.delete(key)
+    await trimStore($, storeKey(e.cwd)).catch(() => {})
+    // Again every few minutes: a session still on an older plugin rewrites its whole history whenever it saves.
+    $.clock.every(TRIM_MS, () => void trimStore($, storeKey(e.cwd)).catch(() => {}))
     await $.command.register({ name: 'streams', description: 'Open the streams navigator' })
     await $.command.register({
       name: 'stream',

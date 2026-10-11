@@ -6,7 +6,9 @@ import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
 import { ACTIVE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
-import { STORE, TICK_MS } from '../hooks/remote/index'
+import { FETCH_MS, STORE, TICK_MS, TICK_STUCK_MS } from '../hooks/remote/index'
+import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
+import { TRIM_MS } from '../hooks/streams/session'
 import { spkiOf } from './authenticator'
 import { ORIGIN, RELAY, SESSION, T0, account, cycle, phone, room, snapshot, tOf } from './room'
 
@@ -276,6 +278,7 @@ function session(on: On) {
   on('command.register', async () => ({ value: undefined }) as never)
   on('fs.read', async () => ({ value: '{}' }) as never)
   on('prompt.submit', async (_$, e) => {
+    if (promptHangs) return new Promise<never>(() => {})
     submitted.push(e.text)
     return { text: e.text }
   })
@@ -283,6 +286,8 @@ function session(on: On) {
 }
 /** Prompts the session submitted, in order (reset by each test that reads it). */
 const submitted: string[] = []
+/** While set, a prompt the session submits never comes back, as one the terminal holds. */
+let promptHangs = false
 
 type Up = { url: string; body: { token: string; session: string; since: number; frames: OutFrame[] } }
 
@@ -344,6 +349,41 @@ describe('the session on the relay', () => {
     expect(sent).toHaveLength(5)
   })
 
+  test('a request to the relay that never comes back does not silence the session: it posts again', OPTIONS, async ($, on) => {
+    // After the Mac sleeps, or the network changes, a request can hang on a dead connection with no error. Waiting
+    // on it forever, the session would never post again and every phone would find the Mac gone until a restart.
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    mock.store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    let posts = 0
+    on('http.fetch', async () => {
+      if (++posts === 1) return new Promise<never>(() => {})
+      return { value: { status: 200, ok: true, headers: {}, text: '{"frames":[],"devices":[]}' } } as never
+    })
+    await $.session.start({ cwd: '/work/[vault:master/CLAUDE_BIN]flow', surface: 'terminal', isInteractive: true })
+    await clock.advance(TICK_MS)
+    expect(posts).toBe(1)
+    await clock.advance(FETCH_MS + HEARTBEAT_MS + TICK_MS)
+    expect(posts).toBeGreaterThan(1)
+  })
+
+  test('a phone command that never finishes does not silence the session: it keeps posting', OPTIONS, async ($, on) => {
+    // Whatever a command waits on (a prompt the terminal holds, a tool), the phone must keep hearing from the Mac.
+    const { a, relay, clock, seen } = await withPhone($, on)
+    promptHangs = true
+    try {
+      relay.from(a, a.command({ id: 'c1', kind: 'answer', streamId: '', text: 'go' }))
+      await clock.advance(ACTIVE_POLL_MS)
+      const before = seen.length
+      await clock.advance(TICK_STUCK_MS + 2 * HEARTBEAT_MS)
+      expect(seen.length).toBeGreaterThan(before)
+    } finally {
+      promptHangs = false
+    }
+  })
+
   test('an account with nothing paired and no pairing open never calls the relay', OPTIONS, async ($, on) => {
     // Every session of every account runs this; one that no device could answer must spend nothing.
     const clock = session(on)
@@ -363,11 +403,11 @@ describe('the session on the relay', () => {
    * A session with one paired phone that unlocks at once. The phone reads what it is sent (`seen`, `acked`) and is
    * looking while `st.isLooking`; the terminal's own AskUserQuestion dialog is `st.dialog`, answered by the test.
    */
-  async function withPhone($: Engine, on: On) {
+  async function withPhone($: Engine, on: On, o: { limit?: number } = {}) {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
-    mock.store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    const kept = store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] }, o.limit)
     const runs: string[][] = []
     const written: Record<string, string> = {}
     // Making a folder and decoding a file work; anything else (git, open) fails, as on a machine without them.
@@ -411,8 +451,41 @@ describe('the session on the relay', () => {
       void p.then(v => (box.value = v))
       return box
     }
-    return { a, relay, clock, seen, acked, st, watch, runs, written }
+    return { a, relay, clock, seen, acked, st, watch, runs, written, kept }
   }
+
+  /** History an older session wrote back, the way plugins before 1.3 kept it: 400 long rows. */
+  const oldHistory = (size: number): Saved => ({
+    streams: [],
+    loopStream: {},
+    rows: Array.from({ length: 400 }, (_, i) => ({ id: `r${i}`, streamId: 's', kind: 'reply' as const, text: 'x'.repeat(Math.floor(size / 400)), at: i })),
+  })
+
+  test("an invite made from the phone is saved even when older sessions have filled the store with history", OPTIONS, async ($, on) => {
+    // The store is shared by every session of the account. Sessions on older plugins keep writing back whole
+    // histories after this one started; the invite must still be kept, or the friend's phone is never let in.
+    const { a, relay, clock, acked, kept } = await withPhone($, on, { limit: STORE_LIMIT })
+    kept.set(storeKey('/work/old'), oldHistory(STORE_LIMIT - 20_000))
+    relay.from(a, a.command({ id: 'c1', kind: 'invite', role: 'viewer' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    const ack = acked.find(x => x.id === 'c1')
+    expect(ack).toMatchObject({ ok: true })
+    expect((kept.get(STORE.invites) as { secret: string }[]).map(i => i.secret)).toEqual([ack!.secret!])
+    expect(kept.has(STORE.identity) && kept.has(STORE.devices)).toBe(true)
+  })
+
+  test('history an older session writes back after this one started is cut down within minutes, so the store never fills', OPTIONS, async ($, on) => {
+    const { clock, kept } = await withPhone($, on, { limit: STORE_LIMIT })
+    for (const name of ['a', 'b', 'c']) kept.set(storeKey(`/work/${name}`), oldHistory(1_000_000))
+    await clock.advance(TRIM_MS + TICK_MS)
+    const history = [...kept.entries()].filter(([k]) => k.startsWith(storeKey(''))).reduce((n, [, v]) => n + JSON.stringify(v).length, 0)
+    expect(history).toBeLessThanOrEqual(STORE_HISTORY_BUDGET)
+    for (const name of ['a', 'b', 'c']) {
+      const v = kept.get(storeKey(`/work/${name}`))
+      if (v) expect(JSON.stringify(v).length).toBeLessThanOrEqual(SAVED_BUDGET)
+    }
+  })
 
   test('a photo sent in chunks is saved on the Mac and the prompt names its path, for Claude to read', OPTIONS, async ($, on) => {
     // A plugin's prompt cannot carry an image, so the file goes to disk and the prompt points at it.
@@ -550,12 +623,21 @@ describe('the session on the relay', () => {
   })
 })
 
-/** The plugin's $.store in memory, readable by the test (mock.store keeps its own out of reach). */
-function store(on: On, entries: Record<string, unknown> = {}): Map<string, unknown> {
+/** The engine's limit on a plugin's whole $.store, as compact JSON. */
+const STORE_LIMIT = 4 * 1024 * 1024
+
+/**
+ * The plugin's $.store in memory, readable by the test (mock.store keeps its own out of reach). With `limit`, a write
+ * that would take the whole store past it is refused, as the engine refuses it.
+ */
+function store(on: On, entries: Record<string, unknown> = {}, limit = Infinity): Map<string, unknown> {
   const m = new Map(Object.entries(entries))
   on('store.get', async (_$, e) => ({ value: m.get(e.key) }) as never)
   on('store.set', async (_$, e) => {
-    m.set(e.key, JSON.parse(JSON.stringify(e.value)))
+    const value = JSON.parse(JSON.stringify(e.value))
+    const after = new Map(m).set(e.key, value)
+    if (JSON.stringify(Object.fromEntries(after)).length > limit) throw new Error('store over 4 MiB')
+    m.set(e.key, value)
     return { value: undefined } as never
   })
   on('store.delete', async (_$, e) => {
