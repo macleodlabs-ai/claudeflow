@@ -111,7 +111,10 @@ export function gitStatus(porcelain: string): StatusLine[] {
 
 /** A ticket id as trackers write them (TL-260, ENG-1042); the standards and encodings that look alike are not tickets. */
 const TICKET = /\b([A-Z][A-Z0-9]{1,9}-\d{1,6})\b/g
-const NOT_TICKETS = new Set(['UTF', 'SHA', 'ISO', 'GPT', 'RFC', 'HTTP', 'IPV', 'ES', 'MD', 'ECMA', 'WCAG', 'COVID', 'AES', 'RSA', 'P', 'H', 'X', 'TLS', 'SSL'])
+const NOT_TICKETS = new Set([
+  ...['UTF', 'UCS', 'ASCII', 'ANSI', 'CP', 'WIN', 'KOI', 'BASE', 'ISO', 'IEEE', 'ITU', 'ECMA', 'ES', 'RFC', 'PEP', 'CVE', 'GHSA', 'CWE'],
+  ...['SHA', 'MD', 'AES', 'RSA', 'HMAC', 'PBKDF', 'TLS', 'SSL', 'HTTP', 'IPV', 'GPT', 'WCAG', 'COVID', 'MPEG', 'P', 'H', 'X'],
+])
 
 /** The ticket ids a text names, in order, each once. */
 export const ticketsIn = (text: string): string[] =>
