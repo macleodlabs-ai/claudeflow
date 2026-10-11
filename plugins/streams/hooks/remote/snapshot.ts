@@ -95,7 +95,8 @@ export type PendingQuestion = { id: string; question: string; header: string; op
 export type Settled = { id: string; why: AckWhy; label?: string; at: number }
 
 /** Someone this project is shared with, as the owner's People list shows them. */
-export type Person = { id: string; label: string; role: 'viewer' | 'contributor'; until: number; pairedAt: number }
+/** Someone the project is shared with. `browserKey`: joined without a passkey, so they can only watch. */
+export type Person = { id: string; label: string; role: 'viewer' | 'contributor'; until: number; pairedAt: number; browserKey?: boolean }
 
 /** A file sent with a prompt: its chunks (`chunk` commands under `blob`) came first. */
 export type PhoneFile = { blob: string; name: string; type: string }

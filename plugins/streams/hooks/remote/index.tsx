@@ -5,7 +5,7 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, type Device, type Link } from './link'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, type Device, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import {
   HEARTBEAT_MS,
@@ -66,7 +66,7 @@ export const STORE = {
   devices: 'remote:devices',
   /** `{ secret, until }`: an open pairing, valid ten minutes for any number of devices. */
   pairing: 'remote:pairing',
-  /** `[{ secret, until, project, role, days }]`: shared invites not yet used, one device each. */
+  /** `[{ secret, until, project, role, days }]`: shared invites until they expire, one person each. */
   invites: 'remote:invites',
 } as const
 
@@ -98,6 +98,9 @@ export const FETCH_MS = 20_000
  * or this session would never post again and every phone would find the Mac gone until Claude restarts.
  */
 export const TICK_STUCK_MS = 60_000
+
+/** How long a removed guest's device is remembered as removed. */
+const REMOVED_DAYS = 30
 
 /** A phone's Run now is taken at most once in this long per loop. */
 const RUN_NOW_GAP_MS = 30_000
@@ -184,7 +187,11 @@ async function remoteTick($: $) {
     // No device could answer, or the relay is backing off: no snapshot is made, and the relay is not asked.
     if (link.isQuiet({ devices, pairing, invites, now })) return
     // The owner's devices also see who this project is shared with (the link keeps it from shared ones).
-    const people = devices.flatMap(d => (d.role && d.project === myCwd ? [{ id: d.id, label: d.label, role: d.role, until: d.until ?? 0, pairedAt: d.pairedAt }] : []))
+    const people = devices.flatMap(d =>
+      d.role && !d.removed && d.project === myCwd
+        ? [{ id: d.id, label: d.label, role: roleOf(d)!, until: d.until ?? 0, pairedAt: d.pairedAt, ...(d.browserKey ? { browserKey: true } : {}) }]
+        : [],
+    )
     const snapshot = { ...(await snapshotNow($, me)), ...(people.length ? { people } : {}) }
     let post = link.next({ devices, pairing, invites, now, snapshot, isHolding: held.size > 0 })
     let hasAcked = false
@@ -202,12 +209,13 @@ async function remoteTick($: $) {
       const got = link.answered(r?.ok ? r.text : undefined, now)
       if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
-        const fresh = devicesOf(await $.store.get(STORE.devices))
-        devices = devicesOf([...fresh.filter(d => !got.paired.some(p => p.id === d.id)), ...got.paired])
-        await saveRemote($, STORE.devices, devices)
+        devices = devicesOf(withPaired(devicesOf(await $.store.get(STORE.devices)), got.paired))
+        // Not kept, a device is welcomed now and unknown at its next unlock: say so on the Mac rather than fail quietly.
+        await saveRemote($, STORE.devices, devices).catch(async err => {
+          await update($, remoteNoteA, () => ({ text: `Could not keep ${got.paired.map(d => d.label).join(', ')}: the Streams store is full`, until: now + NOTE_MS }))
+          throw err
+        })
       }
-      // An invite works once: used, it is gone for every session.
-      if (got.used.length) await saveRemote($, STORE.invites, invitesOf(await $.store.get(STORE.invites)).filter(i => !got.used.includes(i.secret)))
       for (const c of got.commands) {
         // Every command is acked, so the phone shows what came of it instead of guessing on a slow network.
         const done = await phoneCommand($, c.command).catch((): Omit<Ack, 't' | 'id'> => ({ ok: false }))
@@ -469,11 +477,13 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     const now = await $.clock.now()
     const devices = devicesOf(await $.store.get(STORE.devices))
     // Only someone this project was shared with: never the owner's own devices, nor another project's people.
-    const d = devices.find(x => x.id === c.deviceId && x.role && x.project === myCwd)
+    const d = devices.find(x => x.id === c.deviceId && x.role && !x.removed && x.project === myCwd)
     if (!d) return { ok: false }
-    const changed: Device | undefined =
-      c.kind === 'setRole' ? { ...d, role: c.role } : c.kind === 'extend' ? { ...d, until: Math.max(now, d.until ?? 0) + SHARE_DAYS * DAY_MS } : undefined
-    await saveRemote($, STORE.devices, changed ? devices.map(x => (x.id === d.id ? changed : x)) : devices.filter(x => x.id !== d.id))
+    // Removed, it is kept as removed for REMOVED_DAYS, so its next unlock is told that rather than "unknown device".
+    const changed: Device =
+      c.kind === 'setRole' ? { ...d, role: c.role } : c.kind === 'extend' ? { ...d, until: Math.max(now, d.until ?? 0) + SHARE_DAYS * DAY_MS } : { ...d, removed: true, until: now }
+    const kept = devices.filter(x => !(x.removed && (x.until ?? 0) < now - REMOVED_DAYS * DAY_MS))
+    await saveRemote($, STORE.devices, kept.map(x => (x.id === d.id ? changed : x)))
     return { ok: true }
   }
   if (c.kind === 'chunk') {
@@ -600,7 +610,9 @@ async function remotePair($: $, args: string[]): Promise<string> {
   const devices = devicesOf(await $.store.get(STORE.devices))
   if (args[0] === 'devices') {
     if (!devices.length) return 'No devices paired. `/streams phone` pairs one.'
-    return devices.map(d => `${d.label}  ${d.id}  paired ${new Date(d.pairedAt).toISOString().slice(0, 10)}`).join('\n')
+    // A guest's device says whose project it shares; a removed one is kept only to tell it so.
+    const what = (d: Device) => (d.removed ? '  removed' : d.role ? `  ${d.role} of ${d.project}` : '')
+    return devices.map(d => `${d.label}  ${d.id}  paired ${new Date(d.pairedAt).toISOString().slice(0, 10)}${what(d)}`).join('\n')
   }
   if (args[0] === 'forget') {
     const which = args[1] ?? ''
