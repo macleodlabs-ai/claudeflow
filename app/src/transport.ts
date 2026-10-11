@@ -25,6 +25,15 @@ export type RoomEvents = {
 /** Visible pings: sessions poll fast and hold permissions only while a device is looking. */
 export const PING_MS = 15_000
 const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
+/**
+ * Back on screen after this long with nothing heard, the socket is not trusted: iOS freezes a put-away app and its
+ * socket can still read OPEN while nothing gets through. Unlocked, a session sends at least every 30 s.
+ */
+const STALE_MS = 45_000
+/** A hello is signed for its minute and the Mac takes it for a few minutes only: older, Retry asks for Face ID again. */
+const HELLO_FRESH_MS = 3 * 60_000
+/** How long an unlocked line back on screen may stay silent before it is replaced. */
+const PROBE_MS = 15_000
 
 /**
  * Where a gate's passkey step is: Face ID up, or the hello sent and no session has answered yet (`checking`, until a
@@ -46,6 +55,9 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
   let stage: GateStage = { at: 'idle' }
   /** This connection's hello, for Retry: sent again as it was, so it needs no new Face ID. */
   let hello: DeviceFrame | undefined
+  let helloAt = 0
+  /** When this socket last heard anything, opened included. */
+  let heardAt = 0
   /** Commands as sent on this connection (an Allow with its Face ID), by id: Retry sends the same one again. */
   const sent = new Map<string, PhoneCommand>()
 
@@ -81,9 +93,11 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     saidHere = undefined
     sock.onopen = () => {
       retries = 0
+      heardAt = Date.now()
       ev.changed()
     }
     sock.onmessage = m => {
+      heardAt = Date.now()
       try {
         const msg = JSON.parse(String(m.data)) as { from?: unknown; data?: unknown }
         if (typeof msg.from === 'string' && msg.data && typeof msg.data === 'object') receive(msg.from, msg.data as Record<string, unknown>)
@@ -105,6 +119,22 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       ev.changed()
       setTimeout(connect, RETRY_MS[Math.min(retries++, RETRY_MS.length - 1)])
     }
+  }
+
+  /** Drops this socket without waiting out a backoff and opens a fresh one; the old one's keys go with it. */
+  function reconnect() {
+    const old = ws
+    ws = undefined
+    if (old) {
+      old.onclose = null
+      old.close()
+    }
+    core.reset()
+    hello = undefined
+    sent.clear()
+    retries = 0
+    connect()
+    ev.changed()
   }
 
   function receive(from: string, d: Record<string, unknown>) {
@@ -129,7 +159,14 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
 
   /** One passkey step per gate: a tap while one is up (here or in any room) does nothing. */
   async function gateStep(kind: 'pair' | 'unlock', ceremony: () => Promise<DeviceFrame | string | undefined>) {
-    if (stage.at !== 'idle' || isCeremonyBusy() || !ws) return
+    if (stage.at !== 'idle' || isCeremonyBusy()) return
+    if (!ws) {
+      // Between retries: open the line now and say so, rather than ignore the tap.
+      why = 'Reconnecting… tap again in a moment.'
+      retries = 0
+      connect()
+      return ev.changed()
+    }
     why = ''
     setStage({ at: 'faceid', kind, since: Date.now() })
     const r = await ceremony()
@@ -139,6 +176,7 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     }
     // A new hello means new connection keys: an Allow signed for the old ones would be refused.
     hello = r
+    helloAt = Date.now()
     sent.clear()
     if (!post(r)) {
       why = 'The connection dropped. Try again once it is back.'
@@ -178,6 +216,14 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       if (!ws) {
         retries = 0
         connect()
+      } else if (Date.now() - heardAt > STALE_MS && stage.at !== 'faceid') {
+        // Locked, a fresh line costs nothing. Unlocked, ask first: a looking device gets a snapshot within seconds,
+        // and only a line that stays silent is replaced (and Face ID asked again).
+        if (!core.isUnlocked()) return reconnect()
+        const asked = heardAt
+        setTimeout(() => {
+          if (ws && heardAt === asked) reconnect()
+        }, PROBE_MS)
       }
       ping()
     },
@@ -203,7 +249,13 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
      * repeated hello like the first, so a late welcome to either still unlocks.
      */
     retry() {
-      if (stage.at !== 'checking' || !hello || !post(hello)) return
+      if (stage.at !== 'checking' || !hello) return
+      // Too old for the Mac to take, or the line is dead: start over on a fresh line, and Face ID again.
+      if (Date.now() - helloAt > HELLO_FRESH_MS || !post(hello)) {
+        why = 'Reconnected. Tap Unlock again.'
+        stage = { at: 'idle' }
+        return reconnect()
+      }
       setStage({ ...stage, since: Date.now() })
     },
     /**

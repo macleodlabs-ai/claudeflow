@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, RenderElement } from 'claude-code'
 
 import type { ChatStyle, Stream } from '../../types'
-import { PANE, PANE_KEY, SAVED_ROWS, mem, storeKey, type PaneSaved, type Saved } from '../state'
+import { PANE, PANE_KEY, savedOf, mem, storeKey, type PaneSaved, type Saved } from '../state'
 import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, type Fold } from '../classify'
 import { colorOf, streamsNow, type Facts } from '../streams/model'
 import { foldQuiet, lapsed } from '../streams/loops'
@@ -86,7 +86,7 @@ async function setArchived($: $, id: string, archived: boolean) {
     if ((await read($, viewA)) === id) await update($, viewA, () => '')
   }
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
 }
 
 /** The facts as of now; the tick is read so the pane redraws while clocks run. */

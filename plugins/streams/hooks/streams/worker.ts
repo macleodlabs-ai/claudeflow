@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Folded, Stream } from '../../types'
-import { KEY_VERSION, keepRows, PANE, SAVED_ROWS, jobs, mem, storeKey, type Job, type Saved } from '../state'
+import { KEY_VERSION, keepRows, PANE, savedOf, jobs, mem, storeKey, type Job, type Saved } from '../state'
 import { REPLY_SYSTEM, ago, buildReplyPrompt, pickReplyStream, rowKey, slug, textKey } from '../classify'
 import { inParallel, readTranscript } from '../history'
 import { importPlan } from './importPlan'
@@ -47,7 +47,7 @@ async function touch($: $, id: string, patch?: (s: Stream) => Partial<Stream>) {
 
 async function save($: $) {
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
 }
 
 let draining = false

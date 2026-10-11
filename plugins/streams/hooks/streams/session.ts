@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { PANE, PANE_KEY, SAVED_ROWS, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
+import { PANE, PANE_KEY, savedOf, historyToDrop, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
 import { ago } from '../classify'
 import { ARCHIVE_LOOK_MS, archivableOf } from './archive'
 import { colorOf, streamsNow, type Facts } from './model'
@@ -45,7 +45,7 @@ async function autoArchive($: $, ids: string[]) {
   }
   if (ids.includes(await read($, viewA))) await update($, viewA, () => '')
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), { streams, rows: rows.slice(-SAVED_ROWS), loopStream } satisfies Saved)
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
 }
 
 async function writeDiagnostics($: $) {
@@ -139,6 +139,19 @@ export function wireSession(on: On, opts: { autoArchiveHours: number }) {
       await update($, rowsA, () => saved.rows)
       await update($, loopStreamA, () => saved.loopStream)
     }
+    // Keep the shared store well under the engine's 4 MiB: cut other projects' history saved by older versions
+    // to what savedOf keeps, and drop scratch folders and the largest when all of it is still over budget.
+    const sizes: { key: string; size: number }[] = []
+    for (const key of (await $.store.keys()).filter(k => k.startsWith(storeKey('')))) {
+      const old = (await $.store.get(key)) as Saved | undefined
+      if (!old?.rows) continue
+      const size = JSON.stringify(old).length
+      const cut = savedOf(old.streams, old.rows, old.loopStream)
+      const cutSize = JSON.stringify(cut).length
+      if (cutSize < size) await $.store.set(key, cut)
+      sizes.push({ key, size: cutSize })
+    }
+    for (const key of historyToDrop(sizes, storeKey(e.cwd))) await $.store.delete(key)
     await $.command.register({ name: 'streams', description: 'Open the streams navigator' })
     await $.command.register({
       name: 'stream',

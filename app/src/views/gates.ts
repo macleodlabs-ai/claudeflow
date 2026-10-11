@@ -20,11 +20,18 @@ export type GateView = {
 }
 
 const NOT_PAIRED = 'Run <b>/streams phone</b> in Claude Code on your Mac and scan the code it shows.'
+/** The Mac's refusals, said so the way out is clear. */
+const WHY_TEXT: Record<string, string> = {
+  'not paired': 'Your Mac no longer knows this device. Run /streams phone on your Mac and scan its code to pair again.',
+  'passkey not verified': 'Your Mac could not check that Face ID. Tap Unlock to try again; if it keeps failing, scan a new code.',
+}
 const PENDING = { faceid: 'Waiting for Face ID…', checking: 'Syncing…' } as const
 
 function one(g: GateView, isMany: boolean): string {
   const who = isMany ? `<div class="meta">${esc(g.label)}</div>` : ''
-  const why = g.why && g.stage.at === 'idle' ? `<p class="why" role="status">${esc(g.why)}</p>` : ''
+  const why = g.why && g.stage.at === 'idle' ? `<p class="why" role="status">${esc(WHY_TEXT[g.why] ?? g.why)}</p>` : ''
+  // Unlock refused, or no pairing at all: scanning a new code from here is the way back, without leaving the app.
+  const scan = g.stage.at === 'idle' && (g.gate === 'not-paired' || (g.gate === 'locked' && WHY_TEXT[g.why])) ? scanButton() : ''
   const isBusy = g.stage.at !== 'idle'
   const btn = (kind: 'pair' | 'unlock', text: string) => {
     const isMine = g.stage.at !== 'idle' && g.stage.kind === kind
@@ -42,8 +49,8 @@ function one(g: GateView, isMany: boolean): string {
       <p>Create a passkey for Claudeflow. You'll use Face ID or your passcode to open it and to allow Claude's actions.</p>${why}${btn('pair', 'Create passkey')}${slow}${offline}</div>`
   if (g.gate === 'locked')
     return `<div class="gate">${who}<h2>Locked</h2><p>Unlock to see your streams.</p>${why}${btn('unlock', 'Unlock')}
-      ${g.canRepair ? ` ${btn('pair', 'Pair again')}` : ''}${slow}${offline}${forget}</div>`
-  return `<div class="gate">${who}<h2>Not paired</h2>${why}<p>${NOT_PAIRED}</p>${forget}</div>`
+      ${g.canRepair ? ` ${btn('pair', 'Pair again')}` : ''}${slow}${offline}${scan}${forget}</div>`
+  return `<div class="gate">${who}<h2>Not paired</h2>${why}<p>${NOT_PAIRED}</p>${scan}${forget}</div>`
 }
 
 export function gates(views: GateView[]): string {

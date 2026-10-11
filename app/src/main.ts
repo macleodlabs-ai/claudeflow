@@ -58,6 +58,8 @@ const visit = storeOf(() => sessionStorage)
 
 const device: Device = keep.get<Device | null>('cf:device', null) ?? { id: randomId(), ...newIdentity() }
 keep.set('cf:device', device)
+// Ask the browser to keep this device's keys and pairings: storage it may evict would leave every passkey useless.
+void navigator.storage?.persist?.().catch(() => {})
 
 // The fragment stays in the address: Add to Home Screen keeps it, so the Home Screen app can pair once too. Each
 // secret is taken from the address once only: the Home Screen app starts from the address it was added with, so its

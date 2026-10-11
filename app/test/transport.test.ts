@@ -1,7 +1,7 @@
 // The app's transport against a real session: the plugin's own link (remote/link.ts) answers what the device core
 // (remote/device.ts) sends, through a fake socket, with a software passkey behind navigator.credentials. What the
 // device sends must be exactly what a session checks, and nothing unsealed gets through.
-import { beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { b64u, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId } from '../../plugins/streams/hooks/remote/seal'
 import { PAIRING_MS, createLink, type Answered, type Device as Stored, type OutFrame, type Pairing as Open } from '../../plugins/streams/hooks/remote/link'
 import { authenticator } from '../../plugins/streams/tests/authenticator'
@@ -25,6 +25,9 @@ class FakeSocket {
   }
   send(s: string) {
     this.sent.push(JSON.parse(s))
+  }
+  close() {
+    this.readyState = 3
   }
   deliver(from: string, data: unknown) {
     this.onmessage?.({ data: JSON.stringify({ from, data }) })
@@ -115,6 +118,8 @@ function session(ws: FakeSocket, id: string, o: { sk?: string; devices?: Stored[
   }
   return { ...s, tick, ack: link.ack, boxes: () => s.posted.filter(f => (f.data as { t: string }).t === 'box').map(f => f.data) }
 }
+
+afterEach(() => setSystemTime())
 
 beforeEach(() => {
   challenges.length = 0
@@ -275,6 +280,35 @@ describe('on a slow network', () => {
     session(ws, 's1', { devices: [stored] }).tick()
     expect(link.isUnlocked()).toBe(true)
     expect(link.stage()).toEqual({ at: 'idle' })
+  })
+
+  test('Retry after the hello has gone stale starts a fresh line and asks for Face ID again, which then unlocks', async () => {
+    // The Mac takes a hello for a few minutes only: resending an old one is refused forever, and the phone looks dead.
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    setSystemTime(new Date(Date.now() + 4 * 60_000))
+    link.retry()
+    expect(FakeSocket.last).not.toBe(ws)
+    expect(link.stage()).toEqual({ at: 'idle' })
+    expect(link.why()).toContain('Unlock again')
+    await link.unlock()
+    session(FakeSocket.last, 's1', { devices: [stored] }).tick()
+    expect(link.isUnlocked()).toBe(true)
+  })
+
+  test('back on screen after a long silence, a locked line is replaced at once, so Unlock is not sent into a dead socket', async () => {
+    // iOS freezes a put-away app; its socket can still read open while nothing gets through.
+    const { link, ws } = start(PAIRED)
+    setSystemTime(new Date(Date.now() + 60_000))
+    link.wake()
+    expect(FakeSocket.last).not.toBe(ws)
+  })
+
+  test('back on screen after a short time away, the line is kept', async () => {
+    const { link, ws } = start(PAIRED)
+    ws.onopen?.()
+    link.wake()
+    expect(FakeSocket.last).toBe(ws)
   })
 
   test("the session's ack reaches the app, and resending a command keeps its id", async () => {
