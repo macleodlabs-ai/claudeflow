@@ -58,14 +58,15 @@ describe('the composer in the dock', () => {
 })
 
 describe('archiving by swipe', () => {
-  test('a finished phone card swipes left to archive; an active one, or the wide layout list, does not', () => {
-    // Archiving is only for what is over: a running, looping or waiting stream never moves under a thumb.
+  test('a finished phone card swipes left to archive; an active one only gives a little and says why; the wide list does not', () => {
+    // Archiving is only for what is over: a running, looping or waiting stream is never archived by a thumb, but the
+    // swipe answers, so it never seems to have just failed.
     const s = withStreams('docs')
     const running = s.sessions[A]!.snapshot.streams[0]!
     const done = { ...running, kind: 'done', state: 'DONE' } as typeof running
     expect(card(s, A, done, 0)).toContain('data-swipe="archive"')
     expect(card(s, A, done, 0, 'list')).not.toContain('data-swipe')
-    for (const kind of ['running', 'loop', 'waiting']) expect(card(s, A, { ...running, kind } as typeof running, 0)).not.toContain('data-swipe')
+    for (const kind of ['running', 'loop', 'waiting']) expect(card(s, A, { ...running, kind } as typeof running, 0)).toContain('data-swipe="hold"')
   })
 
   test('archived streams fold under the list; opened, each swipes right or taps ↺ to restore', () => {

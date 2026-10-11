@@ -150,6 +150,20 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: width > 390 ? 1 : 2, mobile: width <= 390 })
       await sleep(400)
     },
+    /** A finger swipe across `sel`, from `from` (a selector inside it, or its middle) by dx, as touch input. */
+    async swipe(sel: string, dx: number, from?: string) {
+      const at = (await js(`(() => { const e = document.querySelector(${JSON.stringify(from ?? sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.left + Math.min(r.width / 2, 40), y: r.top + r.height / 2 } })()`)) as { x: number; y: number } | null
+      if (!at) throw new Error(`${name}: nothing at ${from ?? sel} to swipe`)
+      await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+      const touch = (type: string, x: number) => send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: at.y }] })
+      await touch('touchStart', at.x)
+      for (let i = 1; i <= 8; i++) {
+        await touch('touchMove', at.x + (dx * i) / 8)
+        await sleep(30)
+      }
+      await touch('touchEnd', at.x + dx)
+      await send('Emulation.setTouchEmulationEnabled', { enabled: false })
+    },
     async shot(file: string) {
       const h = (await js('document.documentElement.scrollHeight')) as number
       const s = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: this.width, height: Math.max(844, h), scale: 1 } })
@@ -229,6 +243,8 @@ function startSession() {
       { id: 'st1', name: 'relay deploy', color: '#79c0ff', kind: 'waiting', state: 'WAITING FOR YOU', detail: '', question: 'Deploy the relay now?', agents: [], rows: [{ kind: 'prompt', text: 'ship the relay', at }] },
       { id: 'st2', name: 'phone app', color: '#ffd33d', kind: 'running', state: 'RUNNING', detail: 'building views', agents: [], rows: [] },
       { id: 'st3', name: 'audit', color: '#d0bfff', kind: 'running', state: 'RUNNING', detail: 'workflow', agents: [], rows: [], workflow: WORKFLOW },
+      { id: 'st5', name: 'docs pass', color: '#b2f2bb', kind: 'done', state: 'DONE', detail: '', agents: [],
+        rows: [{ kind: 'reply', text: 'Done: see [the guide](https://example.com/guide) and\n```\nnpx wrangler deploy --env production --minify --keep-vars\n```', at }] },
       { id: 'st4', name: 'CI watch', color: '#99e9f2', kind: 'loop', state: 'LOOP', detail: 'CI still running', nextAt: at + 250_000, agents: [], rows: [{ kind: 'loop', text: '↻ tick: checks still pending', at }],
         loop: { kind: 'wakeup', nextAt: at + 250_000, reason: 'CI still running', noopStreak: 3, lastChange: { at: at - 600_000, text: 'PR #12 merged' } } },
     ],
@@ -403,6 +419,18 @@ try {
       const restored = await until('the restore command', () => s.commands.find(c => c.command.kind === 'restore'), POLL_WAIT_MS)
       check('tapping Archived opens the list, and ↺ there reaches the session as restore for that stream',
         restored.command.kind === 'restore' && restored.command.streamId === 'st9', JSON.stringify(restored))
+
+      // A swipe left archives a finished card wherever the finger lands, a sideways-scrolling code block included; an active
+      // card gives a little and stays.
+      await d1.swipe('[data-swipe="hold"]', -160)
+      await sleep(600)
+      check('an active card swiped left is not archived', !s.commands.some(c => c.command.kind === 'archive'))
+      await d1.tap('[data-swipe="archive"] .head')
+      await until('the done card open', () => d1.js(`!!document.querySelector('[data-swipe="archive"] .body pre')`))
+      await d1.swipe('[data-swipe="archive"]', -160, '[data-swipe="archive"] .body pre')
+      const archived = await until('the archive command', () => s.commands.find(c => c.command.kind === 'archive'), POLL_WAIT_MS)
+      check('a finished card swiped left from a code block in it reaches the session as archive for that stream',
+        archived.command.kind === 'archive' && archived.command.streamId === 'st5', JSON.stringify(archived))
 
       // A held permission reaches both devices; device 2 allows it with its passkey.
       s.permissions = [{ id: 'toolu_e2e', tool: 'Bash', summary: 'Bash: npx wrangler deploy', at: Date.now(), since: Date.now() }]

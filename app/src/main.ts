@@ -162,7 +162,7 @@ const side = matchMedia('(min-width: 1280px)')
 side.addEventListener?.('change', () => render())
 
 /** A stream card being swiped (archive or restore), declared before render reads it. */
-let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean } | undefined
+let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean; at: number } | undefined
 
 function render() {
   // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
@@ -758,11 +758,16 @@ function archiveTap(shown: SessionTab, key: string, kind: 'archive' | 'restore')
 
 // A stream card swipes left to archive; an archived row swipes right to restore. Past SWIPE_DONE_PX it goes; short of
 // that it springs back. Mostly-vertical moves stay a scroll.
-const SWIPE_DONE_PX = 96
+const SWIPE_DONE_PX = 72
+/** A quick flick archives too: this far, this fast. */
+const FLICK_PX = 36
+const FLICK_MS = 250
+/** How far an active card gives before it stops: enough to see it is held, not archived. */
+const HOLD_PX = 28
 document.addEventListener('pointerdown', e => {
   const el = (e.target as Element).closest?.<HTMLElement>('[data-swipe]')
-  if (!el || document.body.classList.contains('read-only') || (e.target as Element).closest('button, textarea, input, a')) return
-  drag = { el, kind: el.dataset.swipe!, x: e.clientX, y: e.clientY, dx: 0, isOn: false }
+  if (!el || document.body.classList.contains('read-only') || (e.target as Element).closest('textarea, input, [data-mic]')) return
+  drag = { el, kind: el.dataset.swipe!, x: e.clientX, y: e.clientY, dx: 0, isOn: false, at: Date.now() }
 })
 document.addEventListener('pointermove', e => {
   if (!drag) return
@@ -780,14 +785,14 @@ document.addEventListener('pointermove', e => {
     drag.el = now
   }
   // Only the way that does something: left for archive, right for restore.
-  drag.dx = drag.kind === 'archive' ? Math.min(0, dx) : Math.max(0, dx)
+  drag.dx = drag.kind === 'restore' ? Math.max(0, dx) : drag.kind === 'hold' ? Math.max(-HOLD_PX, Math.min(0, dx)) : Math.min(0, dx)
   drag.el.style.transform = `translateX(${drag.dx}px)`
   drag.el.classList.toggle('swipe-ready', Math.abs(drag.dx) >= SWIPE_DONE_PX)
   drag.el.classList.add('swiping')
 })
 const endDrag = () => {
   if (!drag) return
-  const { el, kind, dx, isOn } = drag
+  const { el, kind, dx, isOn, at } = drag
   drag = undefined
   el.classList.remove('swiping', 'swipe-ready')
   el.style.transform = ''
@@ -796,7 +801,8 @@ const endDrag = () => {
   isGesture = true
   setTimeout(() => (isGesture = false), 400)
   const shown = currentOf(shownState, Date.now())
-  if (Math.abs(dx) >= SWIPE_DONE_PX && shown) archiveTap(shown, el.dataset.stream!, kind === 'archive' ? 'archive' : 'restore')
+  const isFlick = Math.abs(dx) >= FLICK_PX && Date.now() - at < FLICK_MS
+  if (kind !== 'hold' && (Math.abs(dx) >= SWIPE_DONE_PX || isFlick) && shown) archiveTap(shown, el.dataset.stream!, kind === 'archive' ? 'archive' : 'restore')
 }
 document.addEventListener('pointerup', endDrag)
 document.addEventListener('pointercancel', endDrag)
