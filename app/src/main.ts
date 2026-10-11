@@ -161,9 +161,13 @@ wide.addEventListener?.('change', () => render())
 const side = matchMedia('(min-width: 1280px)')
 side.addEventListener?.('change', () => render())
 
+/** A stream card being swiped (archive or restore), declared before render reads it. */
+let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean } | undefined
+
 function render() {
   // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
-  if (document.activeElement?.matches('textarea') || isDockMoving) {
+  // Nor mid-swipe: a redraw would replace the card under the finger, and it would spring back.
+  if (document.activeElement?.matches('textarea') || isDockMoving || drag?.isOn) {
     pendingRender = true
     return
   }
@@ -755,7 +759,6 @@ function archiveTap(shown: SessionTab, key: string, kind: 'archive' | 'restore')
 // A stream card swipes left to archive; an archived row swipes right to restore. Past SWIPE_DONE_PX it goes; short of
 // that it springs back. Mostly-vertical moves stay a scroll.
 const SWIPE_DONE_PX = 96
-let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean } | undefined
 document.addEventListener('pointerdown', e => {
   const el = (e.target as Element).closest?.<HTMLElement>('[data-swipe]')
   if (!el || document.body.classList.contains('read-only') || (e.target as Element).closest('button, textarea, input, a')) return
@@ -770,6 +773,12 @@ document.addEventListener('pointermove', e => {
     if (Math.abs(dx) < 12) return
     drag.isOn = true
   }
+  // A redraw between the touch and the swipe replaced the card: follow the one now on the page.
+  if (!drag.el.isConnected) {
+    const now = document.querySelector<HTMLElement>(`[data-swipe="${drag.kind}"][data-stream="${CSS.escape(drag.el.dataset.stream ?? '')}"]`)
+    if (!now) return void (drag = undefined)
+    drag.el = now
+  }
   // Only the way that does something: left for archive, right for restore.
   drag.dx = drag.kind === 'archive' ? Math.min(0, dx) : Math.max(0, dx)
   drag.el.style.transform = `translateX(${drag.dx}px)`
@@ -783,6 +792,7 @@ const endDrag = () => {
   el.classList.remove('swiping', 'swipe-ready')
   el.style.transform = ''
   if (!isOn) return
+  if (pendingRender) setTimeout(render, 0)
   isGesture = true
   setTimeout(() => (isGesture = false), 400)
   const shown = currentOf(shownState, Date.now())

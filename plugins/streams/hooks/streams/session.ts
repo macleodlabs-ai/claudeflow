@@ -16,6 +16,7 @@ const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const focusA = atom({ plugin: 'streams', key: 'focus' } as const, '')
 const viewA = atom({ plugin: 'streams', key: 'view' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
+const sourcesA = atom({ plugin: 'streams', key: 'sources' } as const, { since: 0, files: [] as string[] })
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
@@ -45,7 +46,7 @@ async function autoArchive($: $, ids: string[]) {
   }
   if (ids.includes(await read($, viewA))) await update($, viewA, () => '')
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
-  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream))
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
 
 async function writeDiagnostics($: $) {
@@ -138,6 +139,9 @@ export function wireSession(on: On, opts: { autoArchiveHours: number }) {
       await update($, streamsA, () => saved.streams)
       await update($, rowsA, () => saved.rows)
       await update($, loopStreamA, () => saved.loopStream)
+      if (saved.sources) await update($, sourcesA, () => saved.sources!)
+      // Rows saved as keys alone: the worker reads their words back from the transcripts.
+      if (saved.rows.some(r => !r.text)) jobs.push({ kind: 'texts' })
     }
     // Keep the shared store well under the engine's 4 MiB: cut other projects' history saved by older versions
     // to what savedOf keeps, and drop scratch folders and the largest when all of it is still over budget.
@@ -146,7 +150,7 @@ export function wireSession(on: On, opts: { autoArchiveHours: number }) {
       const old = (await $.store.get(key)) as Saved | undefined
       if (!old?.rows) continue
       const size = JSON.stringify(old).length
-      const cut = savedOf(old.streams, old.rows, old.loopStream)
+      const cut = savedOf(old.streams, old.rows, old.loopStream, old.sources)
       const cutSize = JSON.stringify(cut).length
       if (cutSize < size) await $.store.set(key, cut)
       sizes.push({ key, size: cutSize })

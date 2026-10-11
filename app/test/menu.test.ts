@@ -3,6 +3,7 @@ import { currentOf, initial, reduce, type Snapshot } from '../src/state'
 import { menuView, roleNote } from '../src/views/menu'
 import { page } from '../src/views/page'
 import { gates } from '../src/views/gates'
+import { slowText } from '../src/views/util'
 
 const DAY = 86_400_000
 const snap = (extra: Partial<Snapshot> = {}): Snapshot => ({
@@ -71,5 +72,13 @@ describe('accounts on this device', () => {
   })
   test('a locked account among several can be forgotten on this device', () => {
     expect(gates([view('live', 'open'), view('old', 'locked')])).toContain('data-forget-room="old"')
+  })
+})
+
+describe('a command nobody answers', () => {
+  test('to a session on an older plugin, the phone says to reload it there rather than blaming the Mac', () => {
+    // A Claude session keeps the plugin it started with: it may never answer today's commands until reloaded.
+    expect(slowText({})).toContain('/reload-plugins')
+    expect(slowText({ proto: 2 })).toContain('is Claude Code running')
   })
 })

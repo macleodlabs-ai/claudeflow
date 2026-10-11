@@ -1,9 +1,9 @@
 // The Streams view: a card per stream, a waiting one with its question and Yes / Reply, and a reply box whose
 // draft comes from the state, so a redraw from a new snapshot keeps what was typed.
-import { isInFlight, SENT_MS, SLOW_MS, streamKey, type State, isUnseen } from '../state'
+import { isInFlight, keyOf, SENT_MS, SLOW_MS, streamKey, type State, isUnseen } from '../state'
 import { flowDetail, flowSub, progress } from './flows'
 import { md } from './markdown'
-import { clock, color, esc, GLYPH, kindOf, lineText, SLOW_TEXT, STATE_COLOR, stageLine, type Stream } from './util'
+import { clock, color, esc, GLYPH, kindOf, lineText, slowText, STATE_COLOR, stageLine, type Stream } from './util'
 
 const ROW_CLASS: Record<string, string> = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
 
@@ -15,7 +15,7 @@ const sentNote = (s: State, key: string, now: number): string => {
   if (t.stage === 'failed') return stageLine(t.why ?? 'Not sent. Try again.', false)
   if (t.stage === 'queued') return stageLine('Offline: sends when you reconnect…')
   if (now - t.at < SLOW_MS) return stageLine('Sent: waiting for your Mac…')
-  return `${stageLine(SLOW_TEXT, false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
+  return `${stageLine(slowText(s.sessions[keyOf(t.room, t.sessionId)]?.snapshot.session), false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
 }
 
 export function replyBox(s: State, key: string): string {

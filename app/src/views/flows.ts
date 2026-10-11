@@ -1,8 +1,8 @@
 // Workflow runs and loops on a stream's card: the subline and progress line, the phase list (GitHub Actions style,
 // failures pinned on top), a loop's details, the stream's Stop / Run now buttons, and the sticky summary.
 // The snapshot carries times, never running clocks (the free plan's polling budget): every clock is counted here.
-import { isArmed, isInFlight, SENT_MS, SLOW_MS, type Snapshot, type State } from '../state'
-import { clock, clockOf, esc, SLOW_TEXT, STATE_COLOR, stageLine, timeOfDay, type Stream } from './util'
+import { isArmed, isInFlight, keyOf, SENT_MS, SLOW_MS, type Snapshot, type State } from '../state'
+import { clock, clockOf, esc, slowText, STATE_COLOR, stageLine, timeOfDay, type Stream } from './util'
 
 type Run = NonNullable<Stream['workflow']>
 type Phase = Run['phases'][number]
@@ -120,7 +120,7 @@ function tapNote(s: State, key: string, now: number): string {
   if (t.stage === 'failed') return stageLine(t.why ?? 'Not sent. Try again.', false)
   if (t.stage === 'queued') return stageLine('Offline: sends when you reconnect…')
   if (now - t.at < SLOW_MS) return stageLine('Sent: waiting for your Mac…')
-  return `${stageLine(SLOW_TEXT, false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
+  return `${stageLine(slowText(s.sessions[keyOf(t.room, t.sessionId)]?.snapshot.session), false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
 }
 
 /**

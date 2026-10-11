@@ -48,7 +48,7 @@ function composer(s: State, sessionKey: string, x: Snapshot, view: ComposeView):
     <div class="to"><span class="target">→ ${name ? `<b>${esc(name)}</b>` : 'new prompt'}<span class="why" data-why>${view.why ? ` · ${esc(view.why)}` : ''}</span></span>${limitMarks(x)}</div>${attachedStrip(view.files)}
     <div class="compose-row ${view.isListening ? 'listening' : ''}">
       ${clip(view.files.length)}
-      <div class="field"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(WAVE_BARS)}</span><textarea rows="1" placeholder="${name ? `Message ${esc(name)}…` : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea></div>${mic}
+      <div class="field"><span class="wave" aria-hidden="true">${'<i></i>'.repeat(WAVE_BARS)}</span><textarea rows="1" placeholder="${name ? 'Message…' : 'New prompt…'}" data-draft="${esc(key)}" data-compose>${esc(s.drafts[key] ?? '')}</textarea></div>${mic}
       <button class="btn send" data-send="${esc(key)}" ${busy ? 'disabled' : ''} aria-label="Send">${busy ? '…' : '↑'}</button>
     </div></div>`
 }
