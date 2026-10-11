@@ -122,7 +122,13 @@ export type TicketInput = {
   agents: readonly { description: string; status: 'running' | 'done' | 'error'; last: string; tools: number; lastAt: number; endedAt?: number; streamId: string }[]
   /** Each stream's own state on the card, so a ticket worked in a waiting stream is waiting too. */
   streamKind: Record<string, StatusKind>
+  now: number
 }
+
+/** How long a finished ticket stays on the card: done today is news, done yesterday is not. */
+export const RECENT_TICKET_MS = 12 * 3600_000
+/** Keys TeamFlow mints for work that came with no ticket: its own bookkeeping, not a ticket anyone filed. */
+const MINTED = /^ADHOC-/
 
 /** The sentence of a text that names the ticket, or its first sentence. */
 const sentenceAbout = (text: string, id: string): string => {
@@ -135,7 +141,7 @@ const sentenceAbout = (text: string, id: string): string => {
  * Running agents on it say what they are doing and how long they have been quiet; otherwise its latest news.
  */
 export function ticketLines(x: TicketInput): StatusLine[] {
-  const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(r => r.text), ...x.agents.map(a => a.description)].flatMap(ticketsIn))]
+  const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(r => r.text), ...x.agents.map(a => a.description)].flatMap(ticketsIn))].filter(id => !MINTED.test(id))
   const lines = named.map(id => {
     const mine = x.agents.filter(a => ticketsIn(a.description).includes(id))
     const said = x.rows.filter(r => ticketsIn(r.text).includes(id)).sort((a, b) => a.at - b.at)
@@ -165,7 +171,9 @@ export function ticketLines(x: TicketInput): StatusLine[] {
     const news = latest ? oneLine(sentenceAbout(latest.text, id), 300) : ended ? `${ended.description} finished` : ''
     return line(kind, news || '—')
   })
-  return sortStatus(lines, Object.fromEntries(lines.map(l => [l.id, l.lastAt]))).map(({ lastAt: _, ...l }) => l)
+  // Only tickets in hand: being worked on, waiting on the person, or finished (or failed) recently.
+  const inHand = lines.filter(l => l.kind !== 'idle' && !((l.kind === 'done' || l.kind === 'error') && x.now - l.lastAt > RECENT_TICKET_MS))
+  return sortStatus(inHand, Object.fromEntries(inHand.map(l => [l.id, l.lastAt]))).map(({ lastAt: _, ...l }) => l)
 }
 
 /** One plan limit as the status card's footer shows it; `until` is when it resets (epoch ms), counted down as it draws (`resetsIn`). */
