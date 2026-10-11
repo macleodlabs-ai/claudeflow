@@ -68,7 +68,8 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
       : `<div class="body">${flow}${agents}${rows || (flow ? '' : '<div class="row reply">Quiet so far.</div>')}${x.question ? '' : sentNote(s, key, now)}</div>`
   // On a phone a finished card swipes left to archive (main.ts); a running, looping or waiting one does not move, so
   // nothing active is archived by a stray thumb. The wide layout's list and detail pane do not swipe.
-  const swipe = mode === 'inline' && FINISHED.includes(kind) ? ` data-swipe="archive" data-stream="${esc(key)}"` : ''
+  // An active card swipes a little and says why it stays, so a swipe never seems to just fail.
+  const swipe = mode !== 'inline' ? '' : ` data-swipe="${FINISHED.includes(kind) ? 'archive' : 'hold'}" data-stream="${esc(key)}"`
   return `<section${swipe} class="card st-${kind} ${isOpen ? 'open' : ''} ${isFull ? 'full' : 'compact'} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
       <div class="title"><div class="name">${esc(x.name)}${mode !== 'detail' && isUnseen(s, sessionKey, x) ? '<span class="new-dot" role="img" aria-label="changed since you looked"></span>' : ''}</div>${line}</div>

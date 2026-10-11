@@ -235,6 +235,10 @@ body.read-only :is([data-answer], [data-reply-open], [data-perm], [data-choose],
 .style-btn:hover { color: var(--text); }
 /* Swipe a card left to archive, an archived row right to restore: the action shows behind it as it slides. */
 [data-swipe] { position: relative; touch-action: pan-y; }
+/* Everything inside too: a code block scrolling sideways (or a link) would otherwise take the swipe from the card. */
+[data-swipe] * { touch-action: pan-y; }
+[data-swipe].swiping { -webkit-user-select: none; user-select: none; }
+[data-swipe="hold"].swiping::after { content: "Archives once finished"; right: 12px; background: var(--glass-line); z-index: 2; }
 [data-swipe].swiping { transition: none; }
 [data-swipe]:not(.swiping) { transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease); }
 [data-swipe].swiping::after { position: absolute; top: 50%; transform: translateY(-50%); padding: 4px 10px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 800; color: #fff; opacity: .55; }
