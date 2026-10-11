@@ -29,6 +29,8 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
  * (ARCHITECTURE.md, "Polling budget").
  */
 const POLL_WAIT_MS = 45_000
+/** A refusal shows once no other session has let the device in for transport.ts DENY_GRACE_MS (35 s). */
+const DENIAL_WAIT_MS = POLL_WAIT_MS + 35_000
 /** The app's state.ts SLOW_MS: how long a hello waits before the app says nobody has answered. */
 const SLOW_MS = 45_000
 /** Words that mean nothing to someone a project was shared with: they never set up Claude Code. */
@@ -167,7 +169,7 @@ async function openDevice(name: string, port: number, extra: string[] = [], kind
     /** A tap, as a person makes it: with a user gesture, so WebAuthn may run. */
     tap: (sel: string) => until(`${name}: ${sel}`, () => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true })()`)),
     see: (what: string, ms?: number) => until(`${name} to show "${what}"`, async () => String((await js('document.body.innerText')) ?? '').includes(what), ms),
-    width: 390,
+    width: kind.width ?? 390,
     /** Phone (390), tablet (820) or Mac (1280): the app picks its layout from the width, as on the real device. */
     async resize(width: number, height: number) {
       this.width = width
@@ -373,7 +375,7 @@ const stopLeftovers = () => {
 // ---- the run ----
 let failed = false
 try {
-  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets six minutes.
+  // Every wait has its own limit, but a stuck DevTools call has none: the whole run gets eight minutes.
   await Promise.race([
     (async () => {
       const v = spawnSync('node', ['--version']).stdout?.toString().trim() ?? ''
@@ -634,7 +636,7 @@ try {
       await d1.tap('[data-menu-close]')
       await d5.reload()
       await d5.tap('[data-gate="unlock"]')
-      await d5.see('removed your access', POLL_WAIT_MS)
+      await d5.see('removed your access', DENIAL_WAIT_MS)
       const removed = await d5.text()
       check('a removed guest is told the owner removed their access, not that a Mac does not know the device',
         removed.includes('e2e removed your access to claudeflow') && !JARGON.test(removed), removed)
@@ -649,7 +651,7 @@ try {
       await d3.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${old.secret}&p=claudeflow&o=e2e`)
       await d3.see('Join claudeflow')
       await d3.tap('[data-gate="pair"]')
-      await d3.see('This invite has expired', POLL_WAIT_MS)
+      await d3.see('This invite has expired', DENIAL_WAIT_MS)
       const expired = await d3.text()
       check('an expired invite says so and to ask e2e for a new link, with no Mac or pairing words', expired.includes('Ask e2e for a new link') && !JARGON.test(expired), expired)
       await d3.shot('app-390-guest-expired.png')
@@ -767,8 +769,8 @@ try {
       s.isRunning = false
       for (const d of [d1, d2, d3, d4, d5, d6, d7, d8]) d.close()
     })(),
-    sleep(360_000).then(() => {
-      throw new Error('the run took over 6 minutes')
+    sleep(480_000).then(() => {
+      throw new Error('the run took over 8 minutes')
     }),
   ])
 } catch (e) {

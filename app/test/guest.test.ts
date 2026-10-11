@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { gateOf, linkFragment, parseLink, refused, withLink } from '../src/links'
 import { gates, type GateView } from '../src/views/gates'
-import { forGuest } from '../src/views/util'
+import { forGuest, OLD_TEXT, SLOW_TEXT } from '../src/views/util'
 import { menuView } from '../src/views/menu'
 import { currentOf, initial, reduce, type Snapshot } from '../src/state'
 
@@ -81,8 +81,8 @@ describe('what a guest sees inside the project', () => {
       'Answered on your Mac',
       'Moved to your Mac',
       'Hide this here (it stays open on your Mac)',
-      "Your Mac hasn't answered yet: is Claude Code running?",
-      'This Claude session runs an older Streams plugin and may not answer: run /reload-plugins in it on your Mac.',
+      SLOW_TEXT,
+      OLD_TEXT,
       "Your Mac couldn't do that. Try again.",
       'Face ID was not accepted. Answer on your Mac.',
       'Nothing flowing yet. Start Claude Code on your Mac.',
