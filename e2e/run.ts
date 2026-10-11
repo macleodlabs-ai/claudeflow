@@ -150,16 +150,16 @@ async function openDevice(name: string, port: number, extra: string[] = []) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: width > 390 ? 1 : 2, mobile: width <= 390 })
       await sleep(400)
     },
-    /** A finger swipe across `sel`, from `from` (a selector inside it, or its middle) by dx, as touch input. */
-    async swipe(sel: string, dx: number, from?: string) {
+    /** A finger swipe across `sel`, from `from` (a selector inside it, or its middle) by dx and drifting dy, as touch input. */
+    async swipe(sel: string, dx: number, from?: string, dy = 0) {
       const at = (await js(`(() => { const e = document.querySelector(${JSON.stringify(from ?? sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.left + Math.min(r.width / 2, 40), y: r.top + r.height / 2 } })()`)) as { x: number; y: number } | null
       if (!at) throw new Error(`${name}: nothing at ${from ?? sel} to swipe`)
       await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
-      const touch = (type: string, x: number) => send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: at.y }] })
+      const touch = (type: string, x: number, y = at.y) => send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] })
       await touch('touchStart', at.x)
       for (let i = 1; i <= 8; i++) {
-        await touch('touchMove', at.x + (dx * i) / 8)
-        await sleep(30)
+        await touch('touchMove', at.x + (dx * i) / 8, at.y + (dy * i) / 8)
+        await sleep(40)
       }
       await touch('touchEnd', at.x + dx)
       await send('Emulation.setTouchEmulationEnabled', { enabled: false })
@@ -427,9 +427,10 @@ try {
       check('an active card swiped left is not archived', !s.commands.some(c => c.command.kind === 'archive'))
       await d1.tap('[data-swipe="archive"] .head')
       await until('the done card open', () => d1.js(`!!document.querySelector('[data-swipe="archive"] .body pre')`))
-      await d1.swipe('[data-swipe="archive"]', -160, '[data-swipe="archive"] .body pre')
+      // As a thumb does it: a short, unhurried move left that drifts down, not a long exact drag.
+      await d1.swipe('[data-swipe="archive"]', -64, '[data-swipe="archive"] .body pre', 30)
       const archived = await until('the archive command', () => s.commands.find(c => c.command.kind === 'archive'), POLL_WAIT_MS)
-      check('a finished card swiped left from a code block in it reaches the session as archive for that stream',
+      check('a short, drifting swipe left on a finished card, from a code block in it, reaches the session as archive for that stream',
         archived.command.kind === 'archive' && archived.command.streamId === 'st5', JSON.stringify(archived))
 
       // A held permission reaches both devices; device 2 allows it with its passkey.
