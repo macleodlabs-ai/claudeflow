@@ -35,6 +35,7 @@ import { menuView, type InviteView } from './views/menu'
 import { bell, page, switcher, tabs } from './views/page'
 import { attachOf, sendFiles, type Ready } from './upload'
 import { attachedStrip, clip } from './views/compose'
+import { lockOf, swipeGoes } from './swipe'
 import { dictation } from './voice'
 
 /** Web storage can throw (private mode, blocked storage): the app then works for this visit only. */
@@ -162,7 +163,7 @@ const side = matchMedia('(min-width: 1280px)')
 side.addEventListener?.('change', () => render())
 
 /** A stream card being swiped (archive or restore), declared before render reads it. */
-let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean; at: number } | undefined
+let drag: { el: HTMLElement; kind: string; x: number; y: number; dx: number; isOn: boolean; lastX: number; lastAt: number; v: number } | undefined
 
 function render() {
   // Redrawing would drop the keyboard mid-word: wait until the box loses focus.
@@ -756,43 +757,49 @@ function archiveTap(shown: SessionTab, key: string, kind: 'archive' | 'restore')
   void go(tapKey, tapFor(shown, tapKey, { id: randomId(), kind, streamId: streamIdOf(key) }))
 }
 
-// A stream card swipes left to archive; an archived row swipes right to restore. Past SWIPE_DONE_PX it goes; short of
-// that it springs back. Mostly-vertical moves stay a scroll.
-const SWIPE_DONE_PX = 72
-/** A quick flick archives too: this far, this fast. */
-const FLICK_PX = 36
-const FLICK_MS = 250
+// A stream card swipes left to archive; an archived row swipes right to restore. The swipe goes on intent (swipeGoes):
+// a clear move its way, or a flick. Mostly-vertical moves stay a scroll.
+// A finger is followed by touch events, not pointer events: once a move leans sideways its touchmove holds the page
+// still, so the browser never starts a scroll and cancels the swipe partway (pointer events cannot hold it).
 /** How far an active card gives before it stops: enough to see it is held, not archived. */
 const HOLD_PX = 28
-document.addEventListener('pointerdown', e => {
-  const el = (e.target as Element).closest?.<HTMLElement>('[data-swipe]')
-  if (!el || document.body.classList.contains('read-only') || (e.target as Element).closest('textarea, input, [data-mic]')) return
-  drag = { el, kind: el.dataset.swipe!, x: e.clientX, y: e.clientY, dx: 0, isOn: false, at: Date.now() }
-})
-document.addEventListener('pointermove', e => {
-  if (!drag) return
-  const dx = e.clientX - drag.x
-  const dy = e.clientY - drag.y
+const dragStart = (target: Element, x: number, y: number) => {
+  const el = target.closest?.<HTMLElement>('[data-swipe]')
+  if (!el || document.body.classList.contains('read-only') || target.closest('textarea, input, [data-mic]')) return
+  drag = { el, kind: el.dataset.swipe!, x, y, dx: 0, isOn: false, lastX: x, lastAt: Date.now(), v: 0 }
+}
+/** Follows the finger; true while it is a swipe, so the page should not scroll. */
+const dragMove = (x: number, y: number): boolean => {
+  if (!drag) return false
+  const dx = x - drag.x
   if (!drag.isOn) {
-    if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) return void (drag = undefined)
-    if (Math.abs(dx) < 12) return
+    const lock = lockOf(dx, y - drag.y)
+    if (lock === 'scroll') return void (drag = undefined), false
+    if (!lock) return Math.abs(dx) > Math.abs(y - drag.y)
     drag.isOn = true
   }
   // A redraw between the touch and the swipe replaced the card: follow the one now on the page.
   if (!drag.el.isConnected) {
     const now = document.querySelector<HTMLElement>(`[data-swipe="${drag.kind}"][data-stream="${CSS.escape(drag.el.dataset.stream ?? '')}"]`)
-    if (!now) return void (drag = undefined)
+    if (!now) return void (drag = undefined), false
     drag.el = now
   }
+  const at = Date.now()
+  if (at > drag.lastAt) drag.v = 0.5 * drag.v + (0.5 * (x - drag.lastX)) / (at - drag.lastAt)
+  drag.lastX = x
+  drag.lastAt = at
   // Only the way that does something: left for archive, right for restore.
   drag.dx = drag.kind === 'restore' ? Math.max(0, dx) : drag.kind === 'hold' ? Math.max(-HOLD_PX, Math.min(0, dx)) : Math.min(0, dx)
   drag.el.style.transform = `translateX(${drag.dx}px)`
-  drag.el.classList.toggle('swipe-ready', Math.abs(drag.dx) >= SWIPE_DONE_PX)
+  drag.el.classList.toggle('swipe-ready', drag.kind !== 'hold' && swipeGoes(dx, 0, drag.kind === 'restore' ? 1 : -1))
   drag.el.classList.add('swiping')
-})
-const endDrag = () => {
+  return true
+}
+const dragEnd = () => {
   if (!drag) return
-  const { el, kind, dx, isOn, at } = drag
+  const { el, kind, x, lastX, isOn, lastAt } = drag
+  // A finger that stopped before lifting is not flicking.
+  const v = Date.now() - lastAt > 100 ? 0 : drag.v
   drag = undefined
   el.classList.remove('swiping', 'swipe-ready')
   el.style.transform = ''
@@ -801,11 +808,31 @@ const endDrag = () => {
   isGesture = true
   setTimeout(() => (isGesture = false), 400)
   const shown = currentOf(shownState, Date.now())
-  const isFlick = Math.abs(dx) >= FLICK_PX && Date.now() - at < FLICK_MS
-  if (kind !== 'hold' && (Math.abs(dx) >= SWIPE_DONE_PX || isFlick) && shown) archiveTap(shown, el.dataset.stream!, kind === 'archive' ? 'archive' : 'restore')
+  const way = kind === 'restore' ? 1 : -1
+  if (kind !== 'hold' && swipeGoes(lastX - x, v, way) && shown) archiveTap(shown, el.dataset.stream!, kind === 'archive' ? 'archive' : 'restore')
 }
-document.addEventListener('pointerup', endDrag)
-document.addEventListener('pointercancel', endDrag)
+document.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) dragStart(e.target as Element, e.touches[0].clientX, e.touches[0].clientY)
+  else drag = undefined
+}, { passive: true })
+document.addEventListener('touchmove', e => {
+  if (drag && dragMove(e.touches[0].clientX, e.touches[0].clientY) && e.cancelable) e.preventDefault()
+}, { passive: false })
+document.addEventListener('touchend', dragEnd)
+document.addEventListener('touchcancel', dragEnd)
+// A mouse or pen: the same swipe, by pointer.
+document.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') dragStart(e.target as Element, e.clientX, e.clientY)
+})
+document.addEventListener('pointermove', e => {
+  if (e.pointerType !== 'touch') dragMove(e.clientX, e.clientY)
+})
+document.addEventListener('pointerup', e => {
+  if (e.pointerType !== 'touch') dragEnd()
+})
+document.addEventListener('pointercancel', e => {
+  if (e.pointerType !== 'touch') dragEnd()
+})
 
 // Card heads and the usage bar are role="button": Enter and Space work them from a keyboard, as on a button.
 document.addEventListener('keydown', e => {
