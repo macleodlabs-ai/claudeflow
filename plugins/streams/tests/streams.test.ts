@@ -1024,6 +1024,7 @@ describe('tickets on the status card', () => {
       ],
       agents: [{ description: 'TL-260 lottie fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
       streamKind: { tickets: 'done' },
+      now: 10_000,
     })
     expect(lines.map(l => [l.area, l.state, lineText(l, 10_000 + 7 * 60_000)])).toEqual([
       ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools) · 7m with no output'],
@@ -1036,8 +1037,26 @@ describe('tickets on the status card', () => {
       rows: [{ kind: 'prompt', text: 'ship ENG-7', at: 0, streamId: 's' }],
       agents: [{ description: 'ENG-7 deploy', status: 'error', last: '', tools: 3, lastAt: 9, endedAt: 10, streamId: 's' }],
       streamKind: { s: 'done' },
+      now: 10,
     })
     expect([line?.state, line?.detail]).toEqual(['ERROR', 'ENG-7 deploy failed'])
+  })
+
+  // The card is for tickets in hand. One named once and left, or finished long ago, is noise the person has to read past.
+  test('only tickets being worked on or done recently show; one left idle, finished hours ago, or minted by TeamFlow does not', () => {
+    const H = 3600_000
+    const lines = ticketLines({
+      rows: [
+        { kind: 'prompt', text: 'look at TL-1', at: 0, streamId: 'idle' },
+        { kind: 'prompt', text: 'ship TL-2', at: 0, streamId: 'old' },
+        { kind: 'prompt', text: 'ship TL-3', at: 20 * H, streamId: 'new' },
+        { kind: 'prompt', text: 'fix TL-4', at: 0, streamId: 'busy' },
+      ],
+      agents: [{ description: 'ADHOC-198 audit', status: 'running', last: 'Bash', tools: 3, lastAt: 21 * H, streamId: 'busy' }],
+      streamKind: { idle: 'idle', old: 'done', new: 'done', busy: 'running' },
+      now: 21 * H,
+    })
+    expect(lines.map(l => [l.area, l.state])).toEqual([['TL-4', 'RUNNING'], ['TL-3', 'DONE']])
   })
 })
 
@@ -1070,6 +1089,32 @@ describe('folding the pane to a side tab', () => {
     await bar.press({ key: 'tab' })
     expect(opened.at(-1)).toMatchObject({ id: 'streams', columns: 72 })
     expect(await bar.find({ key: 'tab' })).toBe(undefined)
+  })
+})
+
+describe('a ticket\'s buttons on the status card', () => {
+  // A real ticket on the card is one press from being picked up again or closed, without typing its key.
+  test('continue and close each send the session a prompt naming the ticket', ENGINE, async ($, on) => {
+    mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    on('agent.spawn', async () => ({ model: 'haiku', agentId: 'ag1' }))
+    await $.prompt.submit({ text: '#billing fix TL-260 rounding', wait: false, origin: { kind: 'composer' } })
+    await $.agent.spawn({ prompt: 'fix it', description: 'TL-260 rounding fix', subagentType: 'Explore' } as never)
+    await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+    const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    await bar.press({ key: 'ticket-continue:TL-260' })
+    expect(sent.at(-1)).toBe('Continue work on TL-260.')
+    await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+    await bar.press({ key: 'ticket-close:TL-260' })
+    expect(sent.at(-1)).toBe('TL-260 is done: close it in its tracker.')
   })
 })
 

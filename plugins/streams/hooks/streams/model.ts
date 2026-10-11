@@ -115,6 +115,7 @@ export function streamsNow(f: Facts, streams: readonly Stream[]): StreamsNow {
         rows: f.rows,
         agents: Object.values(f.agents),
         streamKind: Object.fromEntries(this.lines.map(l => [l.id, l.kind ?? 'idle'])),
+        now: f.now,
       }))
     },
   }

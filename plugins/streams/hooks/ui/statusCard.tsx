@@ -21,7 +21,7 @@ export type Card = {
  * The status card above the prompt: git, tickets and every stream in the order that needs the person, then
  * the plan limits. Its Area and State columns are fixed, so every row lines up.
  */
-export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknown; open: (id: string) => unknown }): RenderElement {
+export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknown; open: (id: string) => unknown; ticket: (id: string, what: 'continue' | 'close') => unknown }): RenderElement {
   const { Box, Button, Text } = ui
   const { streams, git, tickets, limits, width, now } = c
   const lines = [...git, ...tickets, ...c.streamLines]
@@ -77,6 +77,13 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
             <Box flexGrow={1} flexShrink={1}>
               <Text wrap="wrap">{oneLine(lineText(l, now), Math.max(20, (width - areaW - stateW) * (l.id.startsWith('ticket:') ? 3 : 2)))}</Text>
             </Box>
+            {/* A ticket is one press from being picked up again or closed in its tracker. */}
+            {l.id.startsWith('ticket:') ? (
+              <Box key={`st-acts:${l.area}`} flexShrink={0} gap={1} marginLeft={1}>
+                <Button key={`ticket-continue:${l.area}`} plain hover={{ bold: true }} label="▶ continue" onPress={() => act.ticket(l.area, 'continue')} />
+                <Button key={`ticket-close:${l.area}`} plain hover={{ bold: true }} label="✓ close" onPress={() => act.ticket(l.area, 'close')} />
+              </Box>
+            ) : null}
           </Box>,
         ]
       })}

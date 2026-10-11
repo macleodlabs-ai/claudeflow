@@ -163,7 +163,14 @@ export function wireBar(on: On) {
     if (!e.props.hasSurvey && (await read($, statusOpenA))) {
       const rows = cardOf(now, { git: (await read($, statusGitA)).lines, rateLimits: (await $.session.usage().catch(() => undefined))?.rateLimits })
       const card = { streams, git: rows.git, tickets: rows.tickets.slice(0, TICKET_ROWS), streamLines: rows.lines, limits: rows.limits, width: e.props.bodyColumns, now: facts.now }
-      return statusCard(ui, card, { close: () => update($, statusOpenA, () => false), open: id => openStream($, id) })
+      return statusCard(ui, card, {
+        close: () => update($, statusOpenA, () => false),
+        open: id => openStream($, id),
+        ticket: async (id, what) => {
+          await update($, statusOpenA, () => false)
+          await $.prompt.submit({ text: what === 'continue' ? `Continue work on ${id}.` : `${id} is done: close it in its tracker.`, asUser: true })
+        },
+      })
     }
     if (e.props.hasSurvey) return next(e)
     const updateButton = updateControl(ui, await read($, updatesA), await read($, updatingA))
