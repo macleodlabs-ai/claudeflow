@@ -1014,6 +1014,8 @@ describe('tickets on the status card', () => {
   test('ticket ids are found as trackers write them, and look-alike standards are not tickets', () => {
     expect(ticketsIn('build APP-260 then APP-262, and re-review APP-260')).toEqual(['APP-260', 'APP-262'])
     expect(ticketsIn('encode as UTF-8 and hash with SHA-256 per ISO-8601')).toEqual([])
+    // Colour depths, code pages, standards and advisories read like keys but are never a tracker's.
+    expect(ticketsIn('ANSI-256 colours, ASCII-7, IEEE-754, CP-1252, CVE-2024-3094, PEP-8, X-11, ES-2022')).toEqual([])
   })
 
   test('a ticket with a running agent says what it is doing and how long it has been quiet; a finished one gives its latest news', () => {
