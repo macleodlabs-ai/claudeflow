@@ -51,8 +51,8 @@ export const limitColor = (p: number): string => (p >= 80 ? 'var(--error-ink)' :
 
 /** A tap in progress. It stops turning when motion is reduced; the words beside it carry the state. */
 export const spinner = '<span class="spinner" aria-hidden="true"></span>'
-/** The Mac has been quiet for state.ts SLOW_MS. */
-export const SLOW_TEXT = "Your Mac hasn't answered yet: is Claude Code running?"
+/** The Mac has been quiet for state.ts SLOW_MS: what to check, in the order it is likeliest. */
+export const SLOW_TEXT = "Your Mac hasn't answered yet. Check it's awake with Claude Code open. Still nothing? Run /reload-plugins in Claude Code on your Mac."
 /** Said instead when the session runs a plugin from before its snapshots named what it answers. */
 export const OLD_TEXT = 'This Claude session runs an older Streams plugin and may not answer: run /reload-plugins in it on your Mac.'
 /** The slow line for a command to `session`: an older plugin is the likelier reason than a Mac that is away. */

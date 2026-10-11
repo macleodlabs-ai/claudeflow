@@ -8,7 +8,7 @@ import { authenticator } from '../../plugins/streams/tests/authenticator'
 import type { Snapshot } from '../src/state'
 import type { Ack } from '../../plugins/streams/hooks/remote/snapshot'
 import type { Pairing } from '../src/links'
-import { roomLink, type Device } from '../src/transport'
+import { DENY_GRACE_MS, roomLink, type Device } from '../src/transport'
 
 const ORIGIN = 'https://relay.test'
 
@@ -222,13 +222,34 @@ describe('pairing', () => {
     expect(saved.at(-1)).toMatchObject({ isPaired: true, credentialId: passkey.credentialId, secret: undefined, spent: secret })
   })
 
-  test('a refused pairing drops the secret, so the app says Not paired', async () => {
+  test('a refused pairing drops the secret once no session lets it in, so the app says Not paired', async () => {
     const { link, ws, saved } = start({ room, pk: account.pk, secret, isPaired: false })
     await link.pair()
     // The pairing closed before the hello was read; another device keeps the session polling.
     session(ws, 's1', { devices: [{ ...stored, id: randomId() }], pairing: { secret, until: Date.now() - 1 } }).tick()
-    expect(saved.at(-1)).toMatchObject({ isPaired: false, secret: undefined, spent: secret })
+    expect(link.why()).toBe('')
+    // No session lets it in: once the grace has passed, the refusal stands.
+    setSystemTime(new Date(Date.now() + DENY_GRACE_MS + 1))
     expect(link.why()).toBe('pairing expired')
+    expect(saved.at(-1)).toMatchObject({ isPaired: false, secret: undefined, spent: secret })
+    expect(link.stage()).toEqual({ at: 'idle' })
+  })
+
+  test("one session's no is not the Mac's: an older session refuses the pairing, another lets it in, and the phone pairs", async () => {
+    // Sessions on an older plugin (or for another project) refuse what they do not know. The phone must not show
+    // "Not paired" or drop its secret on the first refusal while a current session is about to welcome it.
+    const { link, ws, saved } = start({ room, pk: account.pk, secret, isPaired: false })
+    await link.pair()
+    session(ws, 'old', { devices: [{ ...stored, id: randomId() }] }).tick()
+    expect(link.why()).toBe('')
+    expect(link.stage()).toMatchObject({ at: 'checking', kind: 'pair' })
+    expect(saved.some(x => x.secret === undefined && !x.isPaired)).toBe(false)
+    session(ws, 's1', { pairing: { secret, until: Date.now() + PAIRING_MS } }).tick()
+    expect(link.isUnlocked()).toBe(true)
+    expect(saved.at(-1)).toMatchObject({ isPaired: true, spent: secret })
+    setSystemTime(new Date(Date.now() + DENY_GRACE_MS + 1))
+    expect(link.why()).toBe('')
+    expect(saved.at(-1)).toMatchObject({ isPaired: true })
   })
 })
 
@@ -268,6 +289,30 @@ describe('on a slow network', () => {
     await link.unlock()
     expect(link.stage().at).toBe('checking')
     expect(link.why()).toBe('')
+  })
+
+  test('an unlock refused by one session and welcomed by another unlocks, and never shows the refusal', async () => {
+    // An older session checks a narrower clock window, and a session for another project says "not paired":
+    // the phone keeps Syncing until the session that knows it answers.
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    session(ws, 'old', { devices: [{ ...stored, id: randomId() }] }).tick()
+    expect(link.stage()).toMatchObject({ at: 'checking', kind: 'unlock' })
+    expect(link.why()).toBe('')
+    session(ws, 's1', { devices: [stored] }).tick()
+    expect(link.isUnlocked()).toBe(true)
+    expect(link.stage()).toEqual({ at: 'idle' })
+    setSystemTime(new Date(Date.now() + DENY_GRACE_MS + 1))
+    expect(link.why()).toBe('')
+  })
+
+  test('an unlock every session refuses says why once the grace has passed', async () => {
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    session(ws, 'old', { devices: [{ ...stored, id: randomId() }] }).tick()
+    setSystemTime(new Date(Date.now() + DENY_GRACE_MS + 1))
+    expect(link.stage()).toEqual({ at: 'idle' })
+    expect(link.why()).toBe('not paired')
   })
 
   test('Retry sends the same hello again without Face ID, and a late welcome still unlocks', async () => {

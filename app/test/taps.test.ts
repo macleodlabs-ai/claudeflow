@@ -94,7 +94,7 @@ describe('a permission card under lag', () => {
     let s = seen(initial(), T, [ask('req1')])
     s = reduce(s, { type: 'tap', key: permKey('req1'), tap: tap(allow(), 'sent', T) })
     expect(phases(s, T + SLOW_MS)).toEqual(['slow'])
-    expect(html(s, T + SLOW_MS)).toContain('answered yet: is Claude Code running?')
+    expect(html(s, T + SLOW_MS)).toContain('awake with Claude Code open')
     expect(html(s, T + SLOW_MS)).toContain(`data-retry="${permKey('req1')}"`)
   })
 })

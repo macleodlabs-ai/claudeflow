@@ -30,6 +30,12 @@ const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
  * socket can still read OPEN while nothing gets through. Unlocked, a session sends at least every 30 s.
  */
 const STALE_MS = 45_000
+/**
+ * One session's refusal is not the Mac's: a session on an older plugin, or one for a project this device may not
+ * see, refuses what another session lets in. A refusal stands only once no session has welcomed this hello for this
+ * long; a session answers a hello within one 30 s heartbeat.
+ */
+export const DENY_GRACE_MS = 35_000
 /** A hello is signed for its minute and the Mac takes it for a few minutes only: older, Retry asks for Face ID again. */
 const HELLO_FRESH_MS = 3 * 60_000
 
@@ -56,6 +62,8 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
   let helloAt = 0
   /** When this socket last heard anything, opened included. */
   let heardAt = 0
+  /** A session's refusal of this hello, held for DENY_GRACE_MS in case another session welcomes it. */
+  let denial: { why: string; isPairing: boolean; at: number; timer: ReturnType<typeof setTimeout> } | undefined
   /** Commands as sent on this connection (an Allow with its Face ID), by id: Retry sends the same one again. */
   const sent = new Map<string, PhoneCommand>()
 
@@ -110,6 +118,7 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
       core.reset()
       hello = undefined
       sent.clear()
+      dropDenial()
       if (stage.at === 'checking') {
         why = 'The connection dropped before your Mac answered. Try again once it is back.'
         stage = { at: 'idle' }
@@ -130,26 +139,46 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     core.reset()
     hello = undefined
     sent.clear()
+    dropDenial()
     retries = 0
     connect()
     ev.changed()
   }
 
+  /** A refusal no session has overruled within DENY_GRACE_MS stands: say why, and a refused pairing spends its secret. */
+  function settleDenial(): void {
+    if (!denial || Date.now() - denial.at < DENY_GRACE_MS) return
+    const d = denial
+    clearTimeout(d.timer)
+    denial = undefined
+    if (core.isUnlocked()) return
+    why = d.why
+    if (stage.at === 'checking') stage = { at: 'idle' }
+    // A refused pairing secret has expired or was turned down: it cannot be tried again.
+    if (d.isPairing && !p.isPaired) set(refused(p))
+    ev.changed()
+  }
+  const dropDenial = () => {
+    if (denial) clearTimeout(denial.timer)
+    denial = undefined
+  }
+
   function receive(from: string, d: Record<string, unknown>) {
     const r = core.receive(from, d)
     if (!r) return
-    // Any answer from a session ends "Checking with your Mac…".
+    if (r.t === 'denied') {
+      // Held, not shown: another session may still let this hello in (DENY_GRACE_MS).
+      if (!denial && !core.isUnlocked()) denial = { why: r.why, isPairing: r.isPairing, at: Date.now(), timer: setTimeout(settleDenial, DENY_GRACE_MS + 50) }
+      return
+    }
+    // Any other answer from a session ends "Syncing…".
     if (stage.at === 'checking') stage = { at: 'idle' }
     if (r.t === 'welcome') {
+      dropDenial()
       why = ''
       if (!p.isPaired) set(paired(p))
       ping()
       ev.welcomed?.()
-      ev.changed()
-    } else if (r.t === 'denied') {
-      why = r.why
-      // A refused pairing secret has expired or was turned down: it cannot be tried again.
-      if (r.isPairing && !core.isUnlocked()) set(refused(p))
       ev.changed()
     } else if (r.t === 'snapshot') ev.snapshot(p.room, r.snapshot)
     else ev.ack(p.room, from, r.ack)
@@ -174,6 +203,7 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     }
     // A new hello means new connection keys: an Allow signed for the old ones would be refused.
     hello = r
+    dropDenial()
     helloAt = Date.now()
     sent.clear()
     if (!post(r)) {
@@ -188,8 +218,8 @@ export function roomLink(pairing: Pairing, device: Device, ev: RoomEvents) {
     pairing: () => p,
     isOpen: () => ws?.readyState === WebSocket.OPEN,
     isUnlocked: () => core.isUnlocked(),
-    stage: () => stage,
-    why: () => why,
+    stage: () => (settleDenial(), stage),
+    why: () => (settleDenial(), why),
     /** Whether a command for `session` can go now: the line is up and that session welcomed this connection. */
     canSend: (session: string) => ws?.readyState === WebSocket.OPEN && core.hasChannel(session),
     start: connect,

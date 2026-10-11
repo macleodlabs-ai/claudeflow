@@ -308,6 +308,32 @@ function startSession() {
 }
 
 /**
+ * Another session of the same account still on an older plugin: it knows the paired devices but not invites, so it
+ * refuses a guest's invite hello, as plugins before 1.2 do, while the current session lets the guest in.
+ */
+function startOlderSession(s: ReturnType<typeof startSession>) {
+  const id = crypto.randomUUID()
+  const link = createLink({ identity: s.identity, session: id, origin: ORIGIN, project: '/work/[vault:master/CLAUDE_BIN]flow' })
+  const o = { id, denied: [] as { to: string; why: string }[], isRunning: true }
+  void (async () => {
+    while (o.isRunning) {
+      const now = Date.now()
+      const snapshot = { v: 1, session: { id, account: 'e2e', project: '[vault:master/CLAUDE_BIN]flow', busy: false }, at: now, streams: [], status: [], limits: [], updates: [], permissions: [], questions: [], settled: [] } as Snapshot
+      const known = () => ({ devices: s.devices, invites: [], now, snapshot, isHolding: false })
+      let post = link.next(known())
+      while (post) {
+        for (const f of post.frames) if ((f.data as { t: string }).t === 'denied') o.denied.push({ to: f.to, why: (f.data as { why: string }).why })
+        const r = await fetch(`${UP}/v1/room/${s.identity.room}/up`, { method: 'POST', body: JSON.stringify(post) }).catch(() => undefined)
+        const got = link.answered(r?.ok ? await r.text().catch(() => undefined) : undefined, now)
+        post = got.again ? link.next(known()) : undefined
+      }
+      await sleep(TICK_MS)
+    }
+  })()
+  return o
+}
+
+/**
  * Bun does not always start a detached child in its own process group, so what the run started is also stopped by
  * name: the Chromes by their profile folder, wrangler and its workerd by this run's port.
  */
@@ -510,11 +536,27 @@ try {
       const inviteLink = String(await until('the invite link', () => d1.js(`document.querySelector('.invite-link')?.value || ''`), POLL_WAIT_MS))
       check('the ☰ menu makes an invite link for this project', inviteLink.startsWith(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=`), inviteLink)
       await d1.shot('app-390-share.png')
+      // The guest's hello reaches an older session first, which refuses the invite it does not know; the current
+      // session (held back until then) lets it in. The guest must never be told it is not paired meanwhile.
+      s.isLagging = true
       await d5.goto(inviteLink)
       await d5.see('Pair this device')
       await d5.tap('[data-gate="pair"]')
-      await d5.see('Watching', POLL_WAIT_MS)
+      await sleep(1000)
+      const older = startOlderSession(s)
       const id5 = await d5.deviceId()
+      await until('the older session refusing the invite', () => older.denied.some(x => x.to === id5), POLL_WAIT_MS)
+      await sleep(1500)
+      const REFUSAL = /Not paired|expired|no longer knows|bad pairing/i
+      let refusal = REFUSAL.exec(await d5.text())?.[0] ?? ''
+      s.isLagging = false
+      await until('the guest watching', async () => {
+        const t = await d5.text()
+        refusal ||= REFUSAL.exec(t)?.[0] ?? ''
+        return t.includes('Watching')
+      }, POLL_WAIT_MS)
+      older.isRunning = false
+      check("one older session's refusal is not shown: the guest pairs when the current session lets it in, with no pairing error on the way", !refusal, refusal)
       check('the guest joins as a watcher of this project: role, project and an end date, the invite used up',
         s.devices.some(d => d.id === id5 && d.role === 'viewer' && d.project === '/work/claudeflow' && (d.until ?? 0) > Date.now()) && s.invites.length === 0,
         JSON.stringify(s.devices.find(d => d.id === id5)))
