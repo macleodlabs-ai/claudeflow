@@ -103,6 +103,31 @@ export const SHOWN_MS: Record<Outcome, number> = { ok: 2_000, allowed: 2_000, de
 export const SLOW_MS = 45_000
 
 export const keyOf = (room: string, session: string): string => `${room}|${session}`
+
+/** How long an archive or restore the Mac has acked stands on screen while its snapshot has not caught up. */
+export const SETTLE_MS = 60_000
+
+/**
+ * The streams as the phone shows them: an archive or restore this phone sent stands at once and stays, while it is on
+ * its way or once the Mac has acked it, until the snapshot says the same. A refused one puts the stream back.
+ */
+export function settled<T extends { id: string; name: string; color: string }>(
+  s: Pick<State, 'taps'>,
+  sessionKey: string,
+  streams: readonly T[],
+  archived: readonly { id: string; name: string; color: string }[],
+  now: number,
+): { streams: T[]; archived: { id: string; name: string; color: string }[] } {
+  const stands = (id: string, kind: 'archive' | 'restore') => {
+    const t = s.taps[`${streamKey(sessionKey, id)}|${kind}`]
+    return !!t && (isInFlight(t) || (t.stage === 'done' && now - t.at < SETTLE_MS))
+  }
+  const going = streams.filter(x => stands(x.id, 'archive'))
+  return {
+    streams: streams.filter(x => !going.includes(x)),
+    archived: [...archived.filter(x => !stands(x.id, 'restore')), ...going.map(({ id, name, color }) => ({ id, name, color }))],
+  }
+}
 export const streamKey = (sessionKey: string, streamId: string): string => `${sessionKey}|${streamId}`
 export const permKey = (requestId: string): string => `perm|${requestId}`
 export const stopKey = (sessionKey: string): string => `stop|${sessionKey}`
@@ -175,6 +200,7 @@ function acked(t: Tap, a: Ack, now: number): Tap {
     return { ...t, stage: 'failed', at: now, tries, why }
   }
   const result = outcomeOf(a.why) ?? (a.ok ? 'ok' : undefined)
+  if (a.why === 'no such stream') return { ...t, stage: 'failed', at: now, why: 'That stream is no longer on your Mac.' }
   if (!result) return { ...t, stage: 'failed', at: now, why: "Your Mac couldn't do that. Try again." }
   return { ...t, stage: 'done', at: now, result, ...(result === 'chosen' && t.command.kind === 'choose' ? { label: t.command.label } : {}) }
 }

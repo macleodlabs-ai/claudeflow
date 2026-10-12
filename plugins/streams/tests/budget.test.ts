@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { randomId } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, MAX_ROUNDS, WARM_MS, createLink, type OutFrame, type Pairing, type UpBody } from '../hooks/remote/link'
+import { ACTIVE_POLL_MS, IDLE_POLL_MS, MAX_ROUNDS, WARM_MS, createLink, type OutFrame, type Pairing, type UpBody } from '../hooks/remote/link'
 import { HEARTBEAT_MS, type Snapshot } from '../hooks/remote/snapshot'
 import { TICK_MS } from '../hooks/remote/index'
 import { ORIGIN, SESSION, T0, account, cycle, phone, room, snapshot, tOf, type Phone } from './room'
@@ -81,7 +81,7 @@ describe('the polling budget', () => {
     expect(boxes(T0 + 4 * HEARTBEAT_MS + 8000, working(14), [a])).toBe(1)
   })
 
-  test('a session posts every tick only while a permission waits on a device, every 6 s while one looks, otherwise on news or every 30 s', () => {
+  test('a session posts every tick only while a permission waits on a device, every 6 s while one looks, otherwise on news or every 15 s', () => {
     // 2 s for every session while a device looks would spend the 100k a day in a few hours. Fast polling is kept
     // for an Allow waiting on Face ID.
     const me = account()
@@ -94,8 +94,8 @@ describe('the polling budget', () => {
       return cycle(link, relay, { devices: [a.stored()], now, snapshot: o.snapshot ?? snapshot(T0), isHolding: o.isHolding ?? false, active: o.active ?? [] }).posts.length
     }
     expect(posts(0)).toBe(1)
-    expect(posts(10_000)).toBe(0)
-    expect(posts(HEARTBEAT_MS - 10_000)).toBe(1)
+    expect(posts(IDLE_POLL_MS - TICK_MS)).toBe(0)
+    expect(posts(TICK_MS)).toBe(1)
     expect(posts(TICK_MS, { snapshot: snapshot(T0, { updates: [{ id: 'x', from: '1', to: '2' }] }) })).toBe(1)
     expect(posts(HEARTBEAT_MS, { active: [a], snapshot: snapshot(T0, { updates: [{ id: 'x', from: '1', to: '2' }] }) })).toBe(1)
     const looking = { active: [a], snapshot: snapshot(T0, { updates: [{ id: 'x', from: '1', to: '2' }] }) }
@@ -105,7 +105,7 @@ describe('the polling budget', () => {
     expect(posts(TICK_MS, { ...looking, isHolding: true })).toBe(1)
   })
 
-  test('for a minute after welcoming a device the session polls every 6 s, then falls back to 30 s', () => {
+  test('for a minute after welcoming a device the session polls every 6 s, then falls back to every 15 s', () => {
     // A device counts as looking only once its ping reaches a later answer. Without this window the first Yes after
     // an unlock waited for the 30 s heartbeat, which felt broken on the phone.
     const me = account()
@@ -121,10 +121,10 @@ describe('the polling budget', () => {
     expect(posts(0)).toBeGreaterThan(0)
     // Inside the window: a post every 6 s.
     while (now + ACTIVE_POLL_MS < T0 + WARM_MS) expect(posts(ACTIVE_POLL_MS)).toBe(1)
-    // After it: quiet until the 30 s heartbeat.
-    expect(posts(ACTIVE_POLL_MS)).toBe(0)
-    expect(posts(HEARTBEAT_MS - 2 * ACTIVE_POLL_MS)).toBe(0)
-    expect(posts(ACTIVE_POLL_MS)).toBe(1)
+    // After it: the quiet pace.
+    const last = now
+    while (now + TICK_MS < last + IDLE_POLL_MS) expect(posts(TICK_MS)).toBe(0)
+    expect(posts(TICK_MS)).toBe(1)
   })
 
   test('an account with nothing paired and no pairing open never posts', () => {

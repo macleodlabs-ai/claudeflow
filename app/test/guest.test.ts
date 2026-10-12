@@ -41,7 +41,7 @@ describe('what a guest sees before the project opens', () => {
   })
   const text = (html: string) => html.replace(/<[^>]+>/g, ' ')
   const WHYS = ['not paired', 'passkey not verified', 'access expired', 'access removed', 'pairing expired', 'bad pairing proof', 'bad registration',
-    'The connection dropped before your Mac answered. Try again once it is back.', 'Reconnecting… tap again in a moment.']
+    'The connection dropped before your Mac answered. Try again once it is back.', 'Reconnecting… tap again in a moment.', 'Still not through. Tap Unlock to try again.']
 
   test('joining asks for their name and Face ID, naming the project and who shared it', () => {
     const html = gates([view('pair')])
@@ -78,6 +78,7 @@ describe('what a guest sees inside the project', () => {
   test("every line that speaks of the owner's Mac speaks of the owner instead", () => {
     const lines = [
       'Sent: waiting for your Mac…',
+      'Waiting for your Mac… 12 s',
       'Answered on your Mac',
       'Moved to your Mac',
       'Hide this here (it stays open on your Mac)',
@@ -89,6 +90,7 @@ describe('what a guest sees inside the project', () => {
     ]
     for (const line of lines) expect(forGuest(line, 'Steve')).not.toMatch(JARGON)
     expect(forGuest('Sent: waiting for your Mac…', 'Steve')).toBe('Sent: waiting for Steve…')
+    expect(forGuest('Waiting for your Mac… 12 s', 'Steve')).toBe('Waiting for Steve… 12 s')
   })
 })
 

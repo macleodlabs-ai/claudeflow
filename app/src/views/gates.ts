@@ -27,7 +27,34 @@ export type GateView = {
   signIn?: SignIn
   /** The room's key is this browser's own (no passkey): it opens with no prompt. */
   isBrowserKey?: boolean
+  /** How long the step under way has run (ms), for the seconds the step line shows after a while. */
+  elapsed?: number
+  /** Sessions that asked for this device again after its unlock went stale: a new unlock shows them (transport.ts). */
+  unreached?: number
 }
+
+/** After this long a step says how long it has taken, so a wait reads as progress, not as a hang. */
+export const ELAPSED_AFTER_MS = 5_000
+
+/**
+ * Where an unlock is, as a quiet line of steps under its button: done, under way (with its seconds after a while),
+ * still to come. `at` is the step under way.
+ */
+export function steps(names: readonly string[], at: number, elapsed = 0): string {
+  const items = names
+    .map((name, i) => {
+      const state = i < at ? 'done' : i === at ? 'now' : 'todo'
+      const secs = i === at && elapsed >= ELAPSED_AFTER_MS ? ` <span class="secs">${Math.floor(elapsed / 1000)} s</span>` : ''
+      return `<li class="${state}"${i === at ? ' aria-current="step"' : ''}><i aria-hidden="true"></i>${esc(name)}${secs}</li>`
+    })
+    .join('')
+  return `<ol class="steps" role="status" aria-label="Unlocking">${items}</ol>`
+}
+
+/** Which step a gate is on: the line coming up, Face ID, or the hello on its way to a session. */
+const stepOf = (g: GateView): number => (g.stage.at === 'faceid' ? 1 : g.stage.at === 'checking' ? 2 : 0)
+/** Whether a gate shows its steps: while a step runs, or while it waits for the line. */
+const isStepping = (g: GateView): boolean => g.stage.at !== 'idle'
 
 const NOT_PAIRED = 'Open the invite link you were sent. Or, to see your own Claude Code: run <b>/streams phone</b> on your Mac and scan the code it shows.'
 /** The Mac's refusals, said so the way out is clear. */
@@ -35,7 +62,9 @@ const WHY_TEXT: Record<string, string> = {
   'not paired': 'Your Mac no longer knows this device. Run /streams phone on your Mac and scan its code to pair again.',
   'passkey not verified': 'Your Mac could not check that Face ID. Tap Unlock to try again; if it keeps failing, scan a new code.',
 }
-const PENDING = { faceid: 'Waiting for Face ID…', checking: 'Syncing…' } as const
+const PENDING = { faceid: 'Waiting for Face ID…', checking: 'Reaching your Mac…' } as const
+/** The owner's steps: the line, Face ID, a session answering, then the streams (main.ts says that last one). */
+const OWNER_STEPS = ['Connecting', 'Face ID', 'Reaching your Mac', 'Opening streams'] as const
 
 /** A refusal or a line from the connection, as a guest reads it: what happened to their access, and who to ask. */
 function guestWhy(why: string, { project, owner }: Guest, term: string): string {
@@ -69,13 +98,17 @@ function guestOne(g: GateView, guest: Guest): string {
   const btn = (kind: 'pair' | 'pair-browser' | 'unlock', text: string, look = 'yes') => {
     const isMine = g.stage.at !== 'idle' && g.stage.kind === (kind === 'pair-browser' ? 'pair' : kind)
     const label = isMine && g.stage.at !== 'idle' ? `${spinner}${g.stage.at === 'faceid' ? `Waiting for ${esc(term)}…` : `Opening ${esc(project)}…`}` : text
-    return `<button class="btn ${look}" data-gate="${kind}" data-room="${esc(g.room)}" ${isBusy || g.isCeremony || !g.isOnline ? 'disabled' : ''} ${isMine ? 'aria-busy="true"' : ''}>${label}</button>`
+    return `<button class="btn ${look}" data-gate="${kind}" data-room="${esc(g.room)}" ${isBusy || g.isCeremony ? 'disabled' : ''} ${isMine ? 'aria-busy="true"' : ''}>${label}</button>`
   }
   // Not open now: the project is there while its owner works in it, and the hello waits for it.
   const slow = g.isSlow
-    ? `<p class="slow" role="status">${esc(project)} isn't online right now. It opens while ${esc(owner)} is working on it.</p><button class="btn ghost" data-gate="retry" data-room="${esc(g.room)}">Try again</button>`
+    ? `<p class="slow" role="status">Still trying: ${esc(project)} isn't online right now. It opens while ${esc(owner)} is working on it.</p><button class="btn ghost" data-gate="retry" data-room="${esc(g.room)}">Try again</button>`
     : ''
-  const offline = g.isOnline ? '' : '<p class="meta">Connecting…</p>'
+  const offline = isStepping(g)
+    ? steps(['Connecting', term === 'this browser' ? 'This browser' : cap(term), `Reaching ${project}`, `Opening ${project}`], g.isOnline ? stepOf(g) : 0, g.elapsed)
+    : g.isOnline
+      ? ''
+      : '<p class="meta">Connecting…</p>'
   if (g.gate === 'pair') {
     // The way in this browser has, then the browser key where nothing is built in (said plainly what it costs).
     const browserNote = '<p class="browser-note">On this browser you can watch, not act. Anyone who uses this browser can open it.</p>'
@@ -105,12 +138,13 @@ function one(g: GateView, isMany: boolean): string {
   const btn = (kind: 'pair' | 'unlock', text: string) => {
     const isMine = g.stage.at !== 'idle' && g.stage.kind === kind
     const label = isMine && g.stage.at !== 'idle' ? `${spinner}${PENDING[g.stage.at]}` : text
-    return `<button class="btn yes" data-gate="${kind}" data-room="${esc(g.room)}" ${isBusy || g.isCeremony || !g.isOnline ? 'disabled' : ''} ${isMine ? 'aria-busy="true"' : ''}>${label}</button>`
+    return `<button class="btn yes" data-gate="${kind}" data-room="${esc(g.room)}" ${isBusy || g.isCeremony ? 'disabled' : ''} ${isMine ? 'aria-busy="true"' : ''}>${label}</button>`
   }
+  // Still trying, not failed: the hello goes again by itself; what to check comes after a long wait, with Try again.
   const slow = g.isSlow
-    ? `<p class="slow" role="status">${SLOW_TEXT}</p><button class="btn ghost" data-gate="retry" data-room="${esc(g.room)}">Retry</button>`
+    ? `<p class="slow" role="status">Still trying. ${SLOW_TEXT}</p><button class="btn ghost" data-gate="retry" data-room="${esc(g.room)}">Try again</button>`
     : ''
-  const offline = g.isOnline ? '' : '<p class="meta">Connecting…</p>'
+  const offline = isStepping(g) ? steps(OWNER_STEPS, g.isOnline ? stepOf(g) : 0, g.elapsed) : g.isOnline ? '' : '<p class="meta">Connecting…</p>'
   // An account this device no longer uses (an old pairing, a Mac set up again) can be forgotten here.
   const forget = isMany ? `<button type="button" class="btn ghost small" data-forget-room="${esc(g.room)}">Forget this account</button>` : ''
   if (g.gate === 'pair')
@@ -126,7 +160,14 @@ export function gates(views: GateView[]): string {
   // With an account open, one that cannot pair (no code, never paired) is a leftover: it is not shown over the streams.
   const hasOpen = views.some(g => g.gate === 'open')
   const shown = views.filter(g => g.gate !== 'open' && !(hasOpen && g.gate === 'not-paired'))
-  return shown.map(g => one(g, views.length > 1)).join('')
+  // Open, but a session restarted after the unlock went stale: one more unlock shows it, said in a line, not a gate.
+  const again = views
+    .filter(g => g.gate === 'open' && (g.unreached ?? 0) > 0 && g.stage.at === 'idle')
+    .map(
+      g => `<div class="gate slim"><p>${g.guest ? 'Unlock again to see the latest.' : 'A Claude session restarted. Unlock again to see it here.'}</p>
+      <button class="btn" data-gate="unlock" data-room="${esc(g.room)}" ${g.isCeremony ? 'disabled' : ''}>Unlock</button></div>`,
+    )
+  return shown.map(g => one(g, views.length > 1)).join('') + again.join('')
 }
 
 /** No rooms at all: the app was opened without a pairing link. */

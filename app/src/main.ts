@@ -92,6 +92,11 @@ function dispatch(a: Action) {
   if (state.seen !== before.seen) keep.set('cf:seen', state.seen)
 }
 
+/** When each room's sessions last welcomed this device: its streams are opening until the first snapshot lands. */
+const welcomedAt = new Map<string, number>()
+/** How long after an unlock "Opening streams" shows while no session's snapshot has come. */
+const OPENING_MS = 30_000
+
 const links: RoomLink[] = Object.values(rooms).map(p =>
   roomLink(p, device, {
     save(next) {
@@ -107,6 +112,8 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
       render()
     },
     ack(room, _session, ack) {
+      // A prompt whose photo lost a part on the way: the parts go again, then the same prompt, and it stays "sent".
+      if (ack.why === FILE_MISSING && refile(ack.id)) return render()
       dispatch({ type: 'ack', ack, now: Date.now() })
       const asked = invitesSent.get(ack.id)
       if (asked && invite) {
@@ -123,7 +130,14 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
     },
     // Each unlock tells the room again where to push: cheap, and it heals a room that forgot (a 410, a new room).
     welcomed() {
+      welcomedAt.set(p.room, Date.now())
       if (pushSub) linkOf(p.room)?.push(pushSub)
+    },
+    // Back on a new socket: what waited for the line goes now, and what went out unanswered goes again.
+    reopened() {
+      flush()
+      resend(Date.now(), true)
+      render()
     },
   }),
 )
@@ -184,8 +198,14 @@ function render() {
   const now = Date.now()
   const isOnline = links.some(l => l.isOpen())
   wasOnline ||= isOnline
+  // Syncing: an unlock under way, streams opening, or a tap on its way to the Mac. The dot breathes, nothing more.
+  const hasSessions = (room: string) => Object.values(state.sessions).some(h => h.room === room)
+  const isOpening = links.some(l => l.isUnlocked() && !hasSessions(l.room()) && now - (welcomedAt.get(l.room()) ?? 0) < OPENING_MS)
+  const isSyncing =
+    isOpening || links.some(l => l.stage().at !== 'idle') || Object.values(state.taps).some(t => t.stage === 'sent' || t.stage === 'queued')
   el('conn').classList.toggle('on', isOnline)
-  const connText = isOnline ? 'Connected' : 'Reconnecting…'
+  el('conn').classList.toggle('syncing', isOnline && isSyncing)
+  const connText = !isOnline ? 'Reconnecting…' : isSyncing ? 'Syncing…' : 'Connected'
   if (el('conn').textContent !== connText) el('conn').textContent = connText
   const queued = Object.values(state.taps).filter(t => t.stage === 'queued').length
   const banner = el('banner')
@@ -200,6 +220,8 @@ function render() {
       why: l.why(),
       stage,
       isSlow: stage.at === 'checking' && now - stage.since >= SLOW_MS,
+      elapsed: stage.at === 'idle' ? 0 : now - stage.since,
+      unreached: l.unreached(),
       isCeremony: isCeremonyBusy(),
       isOnline: l.isOpen(),
       canRepair: !!l.pairing().secret,
@@ -219,7 +241,7 @@ function render() {
   // A project shared with this device is read in the guest's words: the owner by name, never "your Mac".
   const guestTab = currentOf(shownState, now)
   const guestOwner = guestTab && (rooms[guestTab.room]?.guest?.owner ?? (guestTab.snapshot.you ? guestTab.snapshot.session.account : undefined))
-  const html = page(shownState, now, open.size > 0, wide.matches, notifyView(), compose)
+  const html = page(shownState, now, open.size > 0, wide.matches, notifyView(), compose, isOpening)
   el('main').innerHTML = guestOwner ? forGuest(html, guestOwner, guestTab && rooms[guestTab.room]?.browserKey ? 'this browser' : signIn.term) : html
   // On a Mac the sidebar holds plan usage and the runs-and-loops line right under the session tabs; the composer stays.
   const dock = el('main').querySelector<HTMLElement>('.dock')
@@ -433,6 +455,7 @@ async function go(key: string, tap: Tap) {
   }
   dispatch({ type: 'tap', key, tap: { ...tap, stage: 'sent', at: Date.now(), why: undefined } })
   render()
+  lastSent.set(key, Date.now())
   const r = await link.send(tap.sessionId, c)
   const cur = state.taps[key]
   // Settled while Face ID was up (an ack, or the request left the snapshot): that outcome stands.
@@ -454,6 +477,49 @@ function flush() {
     }
     void go(key, tap)
   }
+}
+
+/** When each tap's command last went out: an unanswered one goes again every RESEND_TAP_MS (`resend`). */
+const lastSent = new Map<string, number>()
+/**
+ * How often a command no session has acked goes again, under its id: the session runs it once and acks it again,
+ * so a box lost on a dropped socket (or a session that restarted) costs seconds, not a dead "waiting".
+ */
+const RESEND_TAP_MS = 6_000
+/** For this long after it was first sent; after that the Retry button is the person's. */
+const RESEND_FOR_MS = 3 * 60_000
+
+/** Sends again what went out and was not acked: every RESEND_TAP_MS, or all at once (`now`) on a new socket. */
+function resend(now: number, isNow = false) {
+  for (const [key, tap] of Object.entries(state.taps)) {
+    if (tap.stage !== 'sent' || now - tap.at > RESEND_FOR_MS) continue
+    if (!isNow && now - (lastSent.get(key) ?? tap.at) < RESEND_TAP_MS) continue
+    const link = linkOf(tap.room)
+    if (!link?.canSend(tap.sessionId)) continue
+    lastSent.set(key, now)
+    void link.send(tap.sessionId, tap.command)
+  }
+}
+
+/** A photo's parts, by the id of the prompt that names it: sent again if the session says one went astray. */
+const parts = new Map<string, { sessionId: string; room: string; chunks: PhoneCommand[]; tries: number }>()
+/** The session's word for a prompt whose files have not all arrived (remote/link.ts RETRY_WHY). */
+const FILE_MISSING = 'file missing'
+/** Times a prompt's parts are sent again before the person is told it did not go. */
+const REFILE_TRIES = 2
+
+/** Sends a prompt's parts again, then the prompt under its id; false when there is nothing (more) to try. */
+function refile(commandId: string): boolean {
+  const p = parts.get(commandId)
+  const link = p && linkOf(p.room)
+  const tap = Object.values(state.taps).find(t => t.command.id === commandId)
+  if (!p || !link || !tap || p.tries >= REFILE_TRIES || !link.canSend(p.sessionId)) return false
+  p.tries++
+  void (async () => {
+    for (const c of p.chunks) await link.send(p.sessionId, c)
+    await link.send(p.sessionId, tap.command)
+  })()
+  return true
 }
 
 /** Sends an answer to a held prompt or question, once, while it can still be answered. */
@@ -615,12 +681,14 @@ document.addEventListener('click', e => {
     // The files go first, in chunks; the prompt naming them follows once every chunk is sent.
     const link = linkOf(shown.room)
     if (!link) return
-    return void sendFiles(files, c => link.send(shown.snapshot.session.id, c)).then(r => {
+    const chunks: PhoneCommand[] = []
+    return void sendFiles(files, c => (chunks.push(c), link.send(shown.snapshot.session.id, c))).then(r => {
       if ('why' in r) {
         attached = files
         composeWhy = r.why
         return render()
       }
+      parts.set(command.id, { sessionId: shown.snapshot.session.id, room: shown.room, chunks, tries: 0 })
       void go(key, tapFor(shown, key, { ...command, files: r.files }))
     })
   }
@@ -884,6 +952,7 @@ let ticks = 0
 setInterval(() => {
   if (document.visibilityState !== 'visible') return
   const now = Date.now()
+  resend(now)
   const shown = currentOf(state, now)
   const isMoving =
     (!!shown && askCards(state, shown.key, now).some(c => c.phase !== 'open')) ||

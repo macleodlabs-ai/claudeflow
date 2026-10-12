@@ -431,8 +431,8 @@ try {
       await d1.see('Create passkey')
       await d1.doubleTap('[data-gate="pair"]')
       await d2.tap('[data-gate="pair"]')
-      // The session polls at its idle pace until a device looks, so "Syncing…" shows for a while.
-      await d1.see('Syncing…')
+      // The session polls at its idle pace until a device looks, so "Reaching your Mac…" shows for a while.
+      await d1.see('Reaching your Mac…')
       check('Create passkey shows its pending state and is disabled while the Mac checks', await d1.isDisabled('[data-gate="pair"]'))
       await d1.shot('e2e-02a-device1-checking.png')
       await Promise.all([d1, d2].map(d => d.see('Deploy the relay now?', POLL_WAIT_MS)))
@@ -503,6 +503,14 @@ try {
       const archived = await until('the archive command', () => s.commands.find(c => c.command.kind === 'archive'), POLL_WAIT_MS)
       check('a short, drifting swipe left on a finished card, from a code block in it, reaches the session as archive for that stream',
         archived.command.kind === 'archive' && archived.command.streamId === 'st5', JSON.stringify(archived))
+      // This session's snapshots still list the stream (as a real one does until its archive is processed): the
+      // card must not come back on the next one. Before, it slid out and bounced back.
+      const archivedAt = s.posts
+      await until('two more posts after the archive', () => s.posts >= archivedAt + 2, POLL_WAIT_MS)
+      check('the archived card stays archived while the snapshot still lists it, and shows under Archived',
+        !(await d1.js(`(() => { const c = document.querySelector('[data-swipe="archive"][data-stream$="|st5"]'); return !!c && !c.classList.contains('gone') })()`)) &&
+          /archived · /i.test(await d1.text()),
+        (await d1.text()).slice(0, 300))
 
       // A held permission reaches both devices; device 2 allows it with its passkey.
       s.permissions = [{ id: 'toolu_e2e', tool: 'Bash', summary: 'Bash: npx wrangler deploy', at: Date.now(), since: Date.now() }]
@@ -533,7 +541,8 @@ try {
       // A prompt answered in the terminal: it leaves the snapshot saying so, and the phone's card collapses.
       s.permissions = [{ id: 'toolu_mac', tool: 'Bash', summary: 'Bash: rm -rf build', at: Date.now(), since: Date.now() }]
       await d1.see('Claude wants to run Bash')
-      check('a held permission has no countdown: it says how long it has waited', (await d1.text()).includes('just now') && !(await d1.text()).includes('s left'))
+      check('a held permission has no countdown: it says how long it has waited', (await d1.text()).includes('just now') && !(await d1.text()).includes('s left'),
+        (await d1.text()).slice(0, 300))
       s.answer('toolu_mac', 'answered on Mac')
       await d1.see('Answered on your Mac', POLL_WAIT_MS)
       await d1.shot('e2e-05c-device1-answered-on-mac.png')

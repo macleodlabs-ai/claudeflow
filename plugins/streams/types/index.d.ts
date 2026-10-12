@@ -173,6 +173,37 @@ declare module 'claude-code' {
       /** What the session answered for the person (a recommended option nobody chose), shown in the band until `until`. */
       remoteNote: { text: string; until: number }
       /**
+       * This session's sealed channels with phones (keys and counts, remote/link.ts KeptConn), so /reload-plugins
+       * does not cut the phones off. In memory only, like the rest of $.state.
+       */
+      remoteConns: {
+        room: string
+        session: string
+        conns: {
+          device: {
+            id: string
+            pk: string
+            credentialId: string
+            credentialKey: string
+            label: string
+            pairedAt: number
+            browserKey?: boolean
+            role?: 'viewer' | 'contributor'
+            project?: string
+            until?: number
+            via?: string
+            removed?: boolean
+          }
+          send: string
+          recv: string
+          sent: number
+          lastOpened: number
+          peerEph: string
+          peerNonce: string
+          welcome: { to: string; data: unknown }
+        }[]
+      }
+      /**
        * The card's git rows (branch against upstream, what is uncommitted) and when they were read: shared by the
        * card, which reads them as it opens, and the phone's snapshot, which reuses them while fresh.
        */

@@ -134,7 +134,9 @@ describe('Yes and Reply under lag', () => {
   test('Yes is disabled while its answer is on its way, and says Sent ✓ only once the Mac acks it', () => {
     let s = reduce(initial(), { type: 'tap', key, tap: tap({ id: 'a1', kind: 'answer', streamId: 'st1', text: 'yes' }, 'sent', T) })
     expect(card(s, SK, waiting, T)).toMatch(/data-answer="[^"]+" disabled/)
-    expect(card(s, SK, waiting, T)).toContain('Sent: waiting for your Mac…')
+    expect(card(s, SK, waiting, T)).toContain('Sending…')
+    // It goes again by itself until the Mac answers: after a while the line counts the seconds, so it reads as going.
+    expect(card(s, SK, waiting, T + 12_000)).toContain('Waiting for your Mac… 12 s')
     expect(card(s, SK, waiting, T)).not.toContain('Sent ✓')
     s = reduce(s, { type: 'ack', ack: { t: 'ack', id: 'a1', ok: true }, now: T + 1 })
     expect(card(s, SK, waiting, T + 1)).toContain('Sent ✓')
@@ -162,7 +164,7 @@ describe('Stop workflow, Stop loop and Run now under lag', () => {
     // Only that button: Stop loop and Stop workflow are separate taps.
     expect(button(html, 'data-stop-loop')).not.toContain('disabled')
     expect(button(html, 'data-stop-task')).not.toContain('disabled')
-    expect(html).toContain('Sent: waiting for your Mac…')
+    expect(html).toContain('Sending…')
     s = reduce(s, { type: 'ack', ack: { t: 'ack', id: 't1', ok: true }, now: T + 1 })
     html = card(s, SK, looping, T + 1)
     expect(html).toContain('Done ✓')

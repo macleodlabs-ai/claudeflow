@@ -1,6 +1,6 @@
 // The session page: one tab per session across every paired room, then the chosen session's Stop, permission
 // prompts, the Streams | Status switch and its view, "Notify me", with plan usage pinned at the bottom.
-import { currentOf, newsOf, isInFlight, isStopConfirmed, askCards, stopKey, tabsOf, type SessionTab, type State } from '../state'
+import { currentOf, newsOf, isInFlight, isStopConfirmed, askCards, settled, stopKey, tabsOf, type SessionTab, type State } from '../state'
 import { dock, type ComposeView } from './compose'
 import { roleNote } from './menu'
 import { summaryLine } from './flows'
@@ -61,7 +61,9 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
   // Shared access that has run out shows nothing of the project (its sessions have stopped sending anyway).
   if (x.you && now >= x.you.until)
     return `<div class="gate"><h2>Access ended</h2><p>Your access to <b>${esc(x.session.project)}</b> has ended. Ask whoever shared it to give you more time.</p></div>`
-  const streams = x.streams ?? []
+  // An archive or restore sent from here stands at once, not when the next snapshot catches up (state.ts `settled`).
+  const shown = settled(s, t.key, x.streams ?? [], x.archived ?? [], now)
+  const streams = shown.streams
   const isStopping = isInFlight(s.taps[stopKey(t.key)])
   const stop =
     x.session.busy && !t.isStale
@@ -72,7 +74,7 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
   const views = `<div class="views" role="tablist">
     <button data-view="streams" role="tab" aria-selected="${s.view === 'streams'}" class="${s.view === 'streams' ? 'on' : ''}">Streams</button>
     <button data-view="status" role="tab" aria-selected="${s.view === 'status'}" class="${s.view === 'status' ? 'on' : ''}">Status</button></div>`
-  const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide) + archivedList(s, t.key, x.archived ?? [])
+  const body = s.view === 'status' ? statusView(x, now) : streamsView(s, t.key, streams, now, isWide) + archivedList(s, t.key, shown.archived)
   // The dock: the composer for the stream being viewed, with plan usage and the runs-and-loops line a swipe away (on a
   // Mac, main.ts moves those two into the sidebar).
   const bottom = dock(s, t.key, x, compose ?? { files: [], isListening: false, hasMic: false, why: '' }, [usageBar(x, now), summaryLine(x, now)])
@@ -85,8 +87,10 @@ function session(s: State, t: SessionTab, now: number, isWide: boolean, notify?:
  * The page below the gates; empty-state text when nothing has arrived yet. `isWide` is the 820 px two-pane layout;
  * `notify` the "Notify me" row, drawn with a session, so only once a room is unlocked.
  */
-export function page(s: State, now: number, hasOpenRoom: boolean, isWide = false, notify?: NotifyView, compose?: ComposeView): string {
+export function page(s: State, now: number, hasOpenRoom: boolean, isWide = false, notify?: NotifyView, compose?: ComposeView, isOpening = false): string {
   const t = currentOf(s, now)
   if (t) return session(s, t, now, isWide, notify, compose)
+  // Just unlocked: the sessions' first snapshots are on their way, the last of the unlock's steps.
+  if (hasOpenRoom && isOpening) return `<div class="empty opening" role="status">${spinner}Opening your streams…</div>`
   return hasOpenRoom ? '<div class="empty"><span class="motif" aria-hidden="true"></span>Nothing flowing yet. Start Claude Code on your Mac.</div>' : ''
 }

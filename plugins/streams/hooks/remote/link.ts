@@ -1,4 +1,4 @@
-import { channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, verifyPasskey } from './seal'
+import { b64u, channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, verifyPasskey } from './seal'
 import { proofParts } from './device'
 import { HEARTBEAT_MS, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 import { createNotifier, type Hint } from './notify'
@@ -63,12 +63,16 @@ export const withPaired = (devices: Device[], paired: Device[]): Device[] => [
 /** A frame for the relay to pass to one device. */
 export type OutFrame = { to: string; data: unknown }
 /** What the relay answers a session's `up`. */
-export type UpResponse = { frames: { seq: number; from: string; data: unknown }[]; devices: { id: string; isActive: boolean }[] }
+/** The relay's answer to a post. `more`: it held frames back to keep the answer small (a photo's chunks); post again now. */
+export type UpResponse = { frames: { seq: number; from: string; data: unknown }[]; devices: { id: string; isActive: boolean }[]; more?: boolean }
 
 /** How long a pairing secret works: long enough to find the phone, short enough that a leaked QR code expires. */
 export const PAIRING_MS = 10 * 60_000
-/** The minutes back from now a passkey hello may be signed for (-1: a phone clock a minute fast). */
-export const HELLO_MINUTES = [0, 1, -1, 2, 3, 4, 5]
+/**
+ * The minutes back from now a passkey hello may be signed for: five back (it can wait in the room while a session
+ * backs off), and three ahead, as phone clocks run fast (a phone 2.5 min ahead was refused at one).
+ */
+export const HELLO_MINUTES = [0, 1, -1, 2, -2, 3, -3, 4, 5]
 
 const str = (v: unknown, max = 200): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
 const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {})
@@ -106,6 +110,7 @@ export const upOf = (text: string): UpResponse | undefined => {
     return {
       frames: x.frames.filter(f => typeof obj(f).seq === 'number' && typeof obj(f).from === 'string'),
       devices: x.devices.filter(d => typeof obj(d).id === 'string'),
+      ...(x.more === true ? { more: true } : {}),
     }
   } catch {
     return undefined
@@ -159,13 +164,38 @@ const assertionOf = (v: unknown): PasskeyAssertion | undefined => {
   return str(x.authenticatorData, 4000) && str(x.clientDataJSON, 4000) && str(x.signature, 400) ? (x as PasskeyAssertion) : undefined
 }
 
+/** An ack that does not settle its command: sent again under the same id, it runs again (index.tsx `saveFiles`). */
+export const RETRY_WHY = 'file missing'
+
 /** What only the owner's devices may ask: sharing the project and managing who it is shared with. */
 const OWNER_ONLY: readonly string[] = ['invite', 'setRole', 'extend', 'forgetDevice']
 
-/** One open, sealed connection with a device. */
-type Conn = { device: Device; ch: ReturnType<typeof channel>; peerEph: string; last: { body: string; at: number } }
+/**
+ * One open, sealed connection with a device. `welcome` is the frame that opened it, sent again as it was when the same
+ * hello comes again (`peerEph`, `peerNonce`): a phone that missed it, or asks twice, keeps one channel on both sides.
+ */
+type Conn = {
+  device: Device
+  ch: ReturnType<typeof channel>
+  /** The channel's keys (b64u), kept with its counts so the channel outlives a reload of the plugin (`kept`). */
+  keys: { send: string; recv: string }
+  peerEph: string
+  peerNonce: string
+  welcome: OutFrame
+  last: { body: string; at: number }
+}
 
-type Taken = { send: OutFrame[]; paired: Device[]; commands: { device: string; command: PhoneCommand }[] }
+/** A channel as the session keeps it in $.state across a reload of the plugin, keys and counts included. */
+export type KeptConn = { device: Device; send: string; recv: string; sent: number; lastOpened: number; peerEph: string; peerNonce: string; welcome: OutFrame }
+
+/**
+ * How far a kept channel's send count is moved on when it is taken up again: boxes sealed after it was last kept (a
+ * reload mid-tick) must never share a nonce with the ones sealed after, and a tick seals a few at most.
+ */
+export const KEPT_MARGIN = 1000
+
+/** `resync`: a device asked for the latest snapshot (`sync`), which goes in a post at once, not at the next. */
+type Taken = { send: OutFrame[]; paired: Device[]; commands: { device: string; command: PhoneCommand }[]; resync?: boolean }
 
 /** What the session knows of its devices on this tick, from $.store: the paired ones, and an open pairing. */
 export type Known = { devices: Device[]; pairing?: Pairing; invites?: Invite[]; now: number }
@@ -195,8 +225,19 @@ const backoffMs = (fails: number): number => Math.min(HEARTBEAT_MS, 2000 * 2 ** 
 /** How often a session posts while a device looks and nothing waits on it: every third 2 s tick. */
 export const ACTIVE_POLL_MS = 6000
 
+/**
+ * How often a session with a device that may reach it posts when nothing else is due: a phone opened now waits at
+ * most this long before a session sees it (then 6 s, as a phone on its lock screen counts as looking). 5,760 posts a
+ * day a session: the free plan's 100k requests leave room for three idle sessions and most of a day of looking
+ * (ARCHITECTURE.md, "Polling budget"). Shorter costs the budget a relay over its limit would fail every post on.
+ */
+export const IDLE_POLL_MS = 15_000
+
+
 /** Posts in one tick at most: the first, and one more when it answered hellos. A relay that keeps sending hellos gets no more. */
 export const MAX_ROUNDS = 2
+/** Posts in one tick at most while the relay says it holds `more` frames (a photo's chunks): the rest come next tick. */
+export const MORE_ROUNDS = 4
 
 /**
  * How long a session keeps the 6 s cadence after it welcomes a device: the device counts as looking only once its
@@ -210,8 +251,13 @@ export const WARM_MS = 60_000
  * the devices' passkeys live. Each tick the adapter asks `next` for a post, sends it, and hands the answer (or the
  * failure) to `answered`; the link keeps the cursor, the welcomes not yet sent, the cadence and the backoff.
  */
-export function createLink(o: { identity: Identity; session: string; origin: string; project: string }) {
+export function createLink(o: { identity: Identity; session: string; origin: string; project: string; kept?: readonly KeptConn[] }) {
   const conns = new Map<string, Conn>()
+  // Channels this session had before the plugin reloaded: the phones keep theirs, so nothing needs a new Face ID.
+  for (const k of o.kept ?? []) {
+    const ch = channel(fromB64u(k.send), fromB64u(k.recv), { sent: k.sent + KEPT_MARGIN, lastOpened: k.lastOpened })
+    conns.set(k.device.id, { device: k.device, ch, keys: { send: k.send, recv: k.recv }, peerEph: k.peerEph, peerNonce: k.peerNonce, welcome: k.welcome, last: { body: '', at: 0 } })
+  }
   /**
    * Command ids already taken, with the ack each got: a phone on a laggy network sends a command again under the same
    * id, so it runs once and the phone is told again what came of it.
@@ -220,7 +266,9 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   /** Acks not yet posted, sealed only when posted so a failed post loses none. */
   let acks: { to: string; ack: Ack }[] = []
   const queueAck = (to: string, ack: Ack) => {
-    seen.set(ack.id, ack)
+    // A prompt whose files had not all arrived may come again under its id once the phone has resent them.
+    if (ack.why === RETRY_WHY) seen.delete(ack.id)
+    else seen.set(ack.id, ack)
     acks.push({ to, ack })
   }
   let connected = new Map<string, boolean>()
@@ -238,11 +286,28 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   let round = 0
 
   function welcome(h: Hello, device: Device): OutFrame {
+    // The same hello again (the phone resent it, or a welcome went astray): the same welcome, the channel kept.
+    const was = conns.get(device.id)
+    if (was && was.peerEph === h.eph && was.peerNonce === h.nonce && was.device.pk === device.pk) {
+      was.device = device
+      was.last = { body: '', at: 0 }
+      return was.welcome
+    }
     const eph = newIdentity()
     const nonce = randomId(32)
     const k = connectionKeys({ ownSk: o.identity.sk, peerPk: h.pk, ownEphSk: eph.sk, peerEphPk: h.eph, sessionNonce: nonce, deviceNonce: h.nonce })
-    conns.set(device.id, { device, ch: channel(k.sessionToDevice, k.deviceToSession), peerEph: h.eph, last: { body: '', at: 0 } })
-    return { to: device.id, data: { t: 'welcome', session: o.session, eph: eph.pk, nonce } }
+    // `hello`: which hello this answers, so a late welcome for an older one is not taken with this one's keys.
+    const frame: OutFrame = { to: device.id, data: { t: 'welcome', session: o.session, eph: eph.pk, nonce, hello: h.eph } }
+    conns.set(device.id, {
+      device,
+      ch: channel(k.sessionToDevice, k.deviceToSession),
+      keys: { send: b64u(k.sessionToDevice), recv: b64u(k.deviceToSession) },
+      peerEph: h.eph,
+      peerNonce: h.nonce,
+      welcome: frame,
+      last: { body: '', at: 0 },
+    })
+    return frame
   }
 
   /** The device this hello may connect as, a new one when it pairs, or why not. */
@@ -292,12 +357,13 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     return isVerified ? { device: d } : 'passkey not verified'
   }
 
-  function command(conn: Conn, box: unknown): PhoneCommand | undefined {
+  /** The command in a sealed box, undefined when there is none to run, or `unread` when the box does not open here. */
+  function command(conn: Conn, box: unknown): PhoneCommand | 'unread' | undefined {
     let opened: Record<string, unknown>
     try {
       opened = obj(conn.ch.open(String(box)))
     } catch {
-      return undefined
+      return 'unread'
     }
     const c = opened.t === 'command' ? commandOf(opened.command) : undefined
     if (!c) return undefined
@@ -348,10 +414,22 @@ export function createLink(o: { identity: Identity; session: string; origin: str
         }
         out.send.push(welcome(h, admitted))
         poll.warmUntil = w.now + WARM_MS
+      } else if (data.t === 'sync') {
+        // A device back on a new socket (snapshots sent while it was away went nowhere): the latest, now.
+        const c = conns.get(f.from)
+        if (c) {
+          c.last = { body: '', at: 0 }
+          out.resync = true
+        }
       } else if (data.t === 'box') {
         const conn = conns.get(f.from)
-        const c = conn && command(conn, data.b)
-        if (c) out.commands.push({ device: f.from, command: c })
+        const c = conn ? command(conn, data.b) : 'unread'
+        // A device sealing for a channel this session does not have (it restarted, or a welcome went astray): ask it
+        // for its hello again, once per answer. Its own command comes again under the same id once it has a channel.
+        if (c === 'unread') {
+          const mayTalk = w.devices.some(d => d.id === f.from && mayAccess(d, o.project, w.now))
+          if (mayTalk && !out.send.some(x => x.to === f.from && obj(x.data).t === 'rehello')) out.send.push({ to: f.from, data: { t: 'rehello', session: o.session } })
+        } else if (c) out.commands.push({ device: f.from, command: c })
       }
     }
     return out
@@ -386,6 +464,10 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   return {
     room: o.identity.room,
 
+    /** The open channels as $.state keeps them, so a reload of the plugin takes them up again (`kept`). */
+    kept: (): KeptConn[] =>
+      [...conns.values()].map(c => ({ device: c.device, send: c.keys.send, recv: c.keys.recv, ...c.ch.counts(), peerEph: c.peerEph, peerNonce: c.peerNonce, welcome: c.welcome })),
+
     /** Whether a device with an open channel is looking now: only then are permission prompts held for it. */
     isLooking: () => [...conns.keys()].some(id => connected.get(id) === true),
 
@@ -417,7 +499,13 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       hintAgain = undefined
       const isActive = k.now < poll.warmUntil || [...connected.values()].some(Boolean)
       const isDue =
-        round > 0 || k.isHolding || outbox.length > 0 || acks.length > 0 || !!hint || body !== poll.lastBody || k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : HEARTBEAT_MS)
+        round > 0 ||
+        k.isHolding ||
+        outbox.length > 0 ||
+        acks.length > 0 ||
+        !!hint ||
+        body !== poll.lastBody ||
+        k.now - poll.lastAt >= (isActive ? ACTIVE_POLL_MS : mayKnow.length ? IDLE_POLL_MS : HEARTBEAT_MS)
       if (!isDue) return undefined
       // Acks are sealed like snapshots, on the device's current channel; one whose device has gone is dropped.
       const sealed = acks.flatMap(a => {
@@ -457,7 +545,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       poll.lastAt = now
       const t = take(r, s.known)
       outbox = t.send
-      round = outbox.length && round + 1 < MAX_ROUNDS ? round + 1 : 0
+      round = ((outbox.length || t.resync) && round + 1 < MAX_ROUNDS) || (r.more && round + 1 < MORE_ROUNDS) ? round + 1 : 0
       return { paired: t.paired, commands: t.commands, again: round > 0 }
     },
   }
