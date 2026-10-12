@@ -106,7 +106,8 @@ export const withSource = (s: Sources, file: string, now: number): Sources => ({
  */
 export type Job =
   | { kind: 'route'; uuid: string; rowId: string; text: string; turnSid: string; folded: readonly Folded[] }
-  | { kind: 'import'; path: string; isCurrent: boolean }
+  /** `waits`: seconds spent waiting for a new session's transcript to be written (the first prompt comes first). */
+  | { kind: 'import'; path: string; isCurrent: boolean; waits?: number }
   /** Rows loaded as keys alone get their words back from the project's transcripts. */
   | { kind: 'texts' }
 export const jobs: Job[] = []

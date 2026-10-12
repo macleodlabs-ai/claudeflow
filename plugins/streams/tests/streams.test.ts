@@ -449,6 +449,41 @@ describe('rows filed under an older key scheme', () => {
   })
 })
 
+describe('a new session whose transcript is not on disk yet', () => {
+  // Seen live: the first prompt queued the import before Claude Code had written the transcript; the read failed
+  // (ENOENT), the job was dropped, and that session's history was never filed.
+  test('the import waits for the transcript to appear, then files the history once', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    let isWritten = false
+    let reads = 0
+    const missing = () => {
+      throw Object.assign(new Error('ENOENT: /t.jsonl'), { code: 'ENOENT' })
+    }
+    on('session.cwd', async () => ({ value: '/project' }))
+    on('session.usage', async () => ({ value: { startedAt: 0 } }) as never)
+    on('fs.exists', async () => ({ value: isWritten }) as never)
+    on('fs.stat', async () => (isWritten ? { value: { kind: 'file', size: TRANSCRIPT.length, mtimeMs: 0, isLink: false } } : missing()) as never)
+    on('fs.read', async () => {
+      if (!isWritten) missing()
+      reads += 1
+      return { value: TRANSCRIPT } as never
+    })
+    on('classic.UserPromptSubmit', async () => ({}) as never)
+    on('ui.toast', async () => ({ value: undefined }))
+    on('ui.status', async () => ({ value: undefined }))
+    on('model.complete', async () => ({ value: { isAnswered: true, text: '["timezones", "billing"]', usage: USAGE } }) as never)
+    await $.classic.UserPromptSubmit({ prompt: 'first', transcript_path: '/t.jsonl' } as never)
+    await clock.advance(3500)
+    expect(reads).toBe(0)
+    isWritten = true
+    await clock.advance(1500)
+    expect(reads).toBe(1)
+    await clock.advance(5000)
+    expect(reads).toBe(1)
+  })
+})
+
 describe('active loops', () => {
   test('a scheduled wakeup lights its stream with a LOOP badge and a countdown, and stopping it clears it', ENGINE, async ($, on) => {
     const clock = mock.clock(on)
