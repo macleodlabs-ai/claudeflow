@@ -3,8 +3,12 @@
 import { isArmed, type SessionTab, type State } from '../state'
 import { esc } from './util'
 
-/** An invite being made, or made: its link to share, or why it could not be made. */
-export type InviteView = { role: 'viewer' | 'contributor'; isBusy: boolean; link?: string; why?: string }
+/**
+ * An invite being made, or made: its link to share, or why it could not be made. `isConfirming`: the link is shown
+ * (the phone made its secret) while the Mac saves it. `copied`: Copy worked (`yes`), or the clipboard was refused and
+ * the link is selected for the person to copy (`select`).
+ */
+export type InviteView = { role: 'viewer' | 'contributor'; isBusy: boolean; link?: string; why?: string; isConfirming?: boolean; copied?: 'yes' | 'select' }
 
 const ROLE_WORD = { viewer: 'Watching', contributor: 'Contributing' } as const
 
@@ -40,7 +44,8 @@ function people(s: State, t: SessionTab, now: number, invite: InviteView | undef
   const made = invite?.link
     ? `<div class="invite-made"><p>Send this to one person. Within 24 hours they can join <b>${esc(t.snapshot.session.project)}</b> as ${invite.role === 'viewer' ? 'a watcher' : 'a contributor'}, on one device, for 7 days:</p>
       <input class="invite-link" readonly value="${esc(invite.link)}" aria-label="Invite link">
-      <div class="actions"><button type="button" class="btn" data-share-link>Share…</button><button type="button" class="btn ghost" data-copy-link>Copy</button></div></div>`
+      <div class="actions"><button type="button" class="btn" data-share-link>Share…</button><button type="button" class="btn ghost${invite.copied === 'yes' ? ' done' : ''}" data-copy-link>${invite.copied === 'yes' ? 'Copied ✓' : 'Copy'}</button></div>
+      <p class="meta" aria-live="polite">${invite.copied === 'yes' ? 'Copied to the clipboard.' : invite.copied === 'select' ? 'Selected: copy it with your keyboard or the text menu.' : invite.isConfirming ? 'Saving it on your Mac…' : ''}</p></div>`
     : invite?.isBusy
       ? '<p class="meta">Making the link…</p>'
       : invite?.why

@@ -56,6 +56,8 @@ export function room(phones: Phone[]) {
   const queued: UpResponse['frames'] = []
   return {
     from: (p: Phone, data: unknown) => queued.push({ seq: ++seq, from: p.id, data }),
+    /** Whether device frames wait for the session: what the relay's `wait` answers. */
+    isWaiting: () => queued.length > 0,
     answer: (active: Phone[] = phones): UpResponse => ({ frames: queued.splice(0), devices: phones.map(p => ({ id: p.id, isActive: active.includes(p) })) }),
     /** Delivers the session's frames, returning what each phone read. */
     deliver(frames: OutFrame[]): Map<string, unknown[]> {

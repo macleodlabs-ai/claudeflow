@@ -7,7 +7,7 @@ import { ID, MAX_BYTES } from './shapes'
 
 export { Room }
 
-const ROUTE = /^\/v1\/room\/([^/]+)\/(up|device)$/
+const ROUTE = /^\/v1\/room\/([^/]+)\/(up|wait|device)$/
 
 const fail = (status: number, why: string) => new Response(why, { status })
 
@@ -23,7 +23,7 @@ export default {
     if (!match) return fail(404, 'not found')
     const [, room, kind] = match
     if (!ID.test(room)) return fail(400, 'bad room')
-    if (kind === 'up') {
+    if (kind === 'up' || kind === 'wait') {
       if (req.method !== 'POST') return fail(405, 'POST only')
       // The room re-checks the bytes it reads; this refuses honest oversize bodies before they are sent on.
       if (Number(req.headers.get('content-length') ?? 0) > MAX_BYTES) return fail(413, 'too large')

@@ -44,7 +44,9 @@ export type PhoneStream = {
  * The phone-command set this plugin answers. A Claude session keeps the plugin it started with until it reloads, so
  * the phone tells a command to an older session apart from a Mac that is not there.
  */
-export const PROTO = 2
+export const PROTO = 3
+/** An invite's secret, as `randomId(32)` makes it: the phone's own (PROTO 3) is taken only in this shape. */
+export const isInviteSecret = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{43}$/.test(v)
 
 export type Snapshot = {
   v: 1
@@ -109,8 +111,11 @@ export const CHUNK_B64 = 8_000
 export type PhoneCommand =
   /** A prompt: into `streamId`'s stream, or ('') a new one that routing files. */
   | { id: string; kind: 'answer'; streamId: string; text: string; files?: PhoneFile[] }
-  /** The owner shares this project: a one-time invite for `role`, its secret in the ack. */
-  | { id: string; kind: 'invite'; role: 'viewer' | 'contributor' }
+  /**
+   * The owner shares this project: a one-time invite for `role`, its secret in the ack. From PROTO 3 the phone makes
+   * the secret and shows the link at once; the session keeps that one (an older session makes its own).
+   */
+  | { id: string; kind: 'invite'; role: 'viewer' | 'contributor'; secret?: string }
   /** The owner changes what a shared device may do, gives it SHARE_DAYS more, or removes it. */
   | { id: string; kind: 'setRole'; deviceId: string; role: 'viewer' | 'contributor' }
   | { id: string; kind: 'extend'; deviceId: string }
@@ -247,7 +252,10 @@ export const commandOf = (c: unknown): PhoneCommand | undefined => {
   if (k.kind === 'stopTask') return isId(k.taskId) ? { id: k.id, kind: 'stopTask', taskId: k.taskId } : undefined
   if (k.kind === 'stopLoop' || k.kind === 'runTick' || k.kind === 'archive' || k.kind === 'restore') return isId(k.streamId) ? { id: k.id, kind: k.kind, streamId: k.streamId } : undefined
   const isRole = (r: unknown): r is 'viewer' | 'contributor' => r === 'viewer' || r === 'contributor'
-  if (k.kind === 'invite') return isRole(k.role) ? { id: k.id, kind: 'invite', role: k.role } : undefined
+  if (k.kind === 'invite') {
+    if (!isRole(k.role) || (k.secret !== undefined && !isInviteSecret(k.secret))) return undefined
+    return { id: k.id, kind: 'invite', role: k.role, ...(k.secret !== undefined ? { secret: k.secret as string } : {}) }
+  }
   if (k.kind === 'setRole') return isId(k.deviceId) && isRole(k.role) ? { id: k.id, kind: 'setRole', deviceId: k.deviceId, role: k.role } : undefined
   if (k.kind === 'extend' || k.kind === 'forgetDevice') return isId(k.deviceId) ? ({ id: k.id, kind: k.kind, deviceId: k.deviceId } as PhoneCommand) : undefined
   if (k.kind === 'choose') return typeof k.requestId === 'string' && typeof k.label === 'string' && k.label.length > 0 && k.label.length <= 400 ? (c as PhoneCommand) : undefined

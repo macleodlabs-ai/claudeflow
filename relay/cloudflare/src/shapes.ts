@@ -50,6 +50,17 @@ export function parseUp(text: string): Up | null {
   return { token: v.token, session: v.session, since: v.since, frames, notify: { to, kind: v.kind as NotifyKind } }
 }
 
+/** A session's `POST /v1/room/{room}/wait` body: who asks, and the cursor past which a device frame wakes it. */
+export type Wait = { token: string; session: string; since: number }
+
+/** A `wait` body, or null when any part is malformed. */
+export function parseWait(text: string): Wait | null {
+  const v = parse(text)
+  if (!v || !isId(v.token) || !isId(v.session)) return null
+  if (typeof v.since !== 'number' || !Number.isSafeInteger(v.since) || v.since < 0) return null
+  return { token: v.token, session: v.session, since: v.since }
+}
+
 const B64U = /^[A-Za-z0-9_-]+$/
 
 /**

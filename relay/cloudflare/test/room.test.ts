@@ -407,3 +407,36 @@ test('a room keeps at most 32 push subscriptions, the most recently sent: made-u
   for (const path of paths.slice(8)) expect(sent.has(path)).toBe(true)
   for (const d of sockets) d.ws.close()
 })
+
+function wait(room: string, body: { token: string; session: string; since: number }) {
+  return fetch(`${BASE}/v1/room/${room}/wait`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+}
+
+test("a session's wait is answered the moment a device sends, so a tap reaches the Mac now, not at its next poll", async () => {
+  const room = id()
+  const tok = token()
+  const session = id()
+  const deviceId = id()
+  await up(room, { token: tok, session })
+  const d = await device(room, deviceId)
+  const began = Date.now()
+  const held = wait(room, { token: tok, session, since: 0 })
+  await sleep(300)
+  d.send({ to: session, data: { t: 'box', b: 'tap' } })
+  const res = await held
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual({ wake: true })
+  expect(Date.now() - began).toBeLessThan(3000)
+  // Frames already past the cursor answer at once; past them, nothing new holds the wait.
+  expect(await (await wait(room, { token: tok, session, since: 0 })).json()).toEqual({ wake: true })
+  const seq = (await up(room, { token: tok, session })).frames.at(-1)!.seq
+  const quiet = await Promise.race([wait(room, { token: tok, session, since: seq }).then(() => 'answered'), sleep(1000).then(() => 'held')])
+  expect(quiet).toBe('held')
+  d.ws.close()
+})
+
+test("a wait with someone else's token is refused, so a room id alone cannot watch when its devices are active", async () => {
+  const room = id()
+  await up(room, { token: token(), session: id() })
+  expect((await wait(room, { token: token(), session: id(), since: 0 })).status).toBe(403)
+})

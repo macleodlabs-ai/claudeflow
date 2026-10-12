@@ -4,7 +4,7 @@
 // also keeps each device's Web Push subscription and sends the pushes a session hints at (a kind, never any text).
 import { DurableObject } from 'cloudflare:workers'
 import { mayPush, sendPush, spent, vapidOf, type Budget, type NotifyKind } from './push'
-import { DEVICE_MAX_BYTES, MAX_BYTES, parseDeviceMessage, parseUp } from './shapes'
+import { DEVICE_MAX_BYTES, MAX_BYTES, parseDeviceMessage, parseUp, parseWait } from './shapes'
 
 export type Env = {
   ROOMS: DurableObjectNamespace<Room>
@@ -30,6 +30,11 @@ const ANSWER_BYTES = 1 << 20
 export const SOCKET_PER_MINUTE = 200
 /** A device is active when it reported itself visible this recently (it pings every 15 s while visible). */
 const ACTIVE_MS = 30_000
+/**
+ * How long a session's `wait` is held when no device frame is waiting for it. Under the plugin's 20 s fetch guard
+ * (FETCH_MS), so a held wait always answers before the session gives up on it.
+ */
+export const WAIT_MS = 15_000
 /**
  * At most this many push subscriptions a room keeps, and none from a device unseen this long. Anyone with the room
  * id can add rows under made-up device ids, so storage must stay bounded; a paired device sends its subscription
@@ -72,7 +77,40 @@ export class Room extends DurableObject<Env> {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url)
+    if (url.pathname.endsWith('/wait')) return this.wait(req)
     return url.pathname.endsWith('/up') ? this.up(req) : this.join(url.searchParams.get('id') ?? '')
+  }
+
+  /** Sessions waiting for a device frame (`wait`): each answered when one arrives, or after WAIT_MS. */
+  private waiters = new Set<() => void>()
+
+  /**
+   * A session asks to be told the moment a device sends anything (a tap, a hello), so it posts at once rather than at
+   * its next poll. Answers `{ wake: true }` when frames past `since` are already here or one arrives within WAIT_MS,
+   * `{ wake: false }` otherwise. It carries no frames: the session's next `up` collects them, as ever.
+   */
+  private async wait(req: Request): Promise<Response> {
+    const text = await readBody(req)
+    if (text === null) return fail(413, 'too large')
+    const w = parseWait(text)
+    if (!w) return fail(400, 'bad request')
+    const owner = await this.ctx.storage.get<string>('tokenHash')
+    if (!owner || owner !== (await sha256(w.token))) return fail(403, 'not yours')
+    const waiting = this.ctx.storage.sql
+      .exec<{ n: number }>(`SELECT COUNT(*) AS n FROM frames WHERE seq > ? AND (recipient = ? OR recipient = '*')`, w.since, w.session)
+      .one().n
+    if (waiting > 0) return Response.json({ wake: true })
+    const wake = await new Promise<boolean>(resolve => {
+      const done = (isWoken: boolean) => {
+        clearTimeout(timer)
+        this.waiters.delete(woken)
+        resolve(isWoken)
+      }
+      const woken = () => done(true)
+      const timer = setTimeout(() => done(false), WAIT_MS)
+      this.waiters.add(woken)
+    })
+    return Response.json({ wake })
   }
 
   /** A device's WebSocket (its id was checked by the Worker). A reconnect replaces the device's older socket. */
@@ -207,6 +245,8 @@ export class Room extends DurableObject<Env> {
       JSON.stringify(message.data),
     )
     this.prune()
+    // Every waiting session posts now: the frame may be for any of them ('*' for a hello), and a post is cheap.
+    for (const woken of [...this.waiters]) woken()
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
