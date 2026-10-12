@@ -83,5 +83,12 @@ export const forGuest = (html: string, owner: string, term = 'Face ID'): string 
   const fill = (to: string) => to.replaceAll('{o}', esc(owner)).replace(/^\{a\}/, esc(term.charAt(0).toUpperCase() + term.slice(1))).replaceAll('{a}', esc(term))
   return GUEST_LINES.reduce((out, [from, to]) => out.replaceAll(esc(from), fill(esc(to))).replaceAll(from, fill(to)), html)
 }
+/**
+ * A tap on its way, `elapsed` ms after it was sent: it goes again by itself until the Mac answers (main.ts `resend`),
+ * so the line says it is still going, with its seconds after a while, rather than looking stuck.
+ */
+export const waitLine = (elapsed: number): string =>
+  elapsed < 5_000 ? 'Sending…' : `Waiting for your Mac… ${Math.floor(elapsed / 1000)} s`
+
 /** Where a tap is, read out as it changes; with a spinner while it waits. */
 export const stageLine = (text: string, isWaiting = true): string => `<p class="stage" role="status">${isWaiting ? spinner : ''}${esc(text)}</p>`

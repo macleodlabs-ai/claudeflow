@@ -47,6 +47,17 @@ async function up(room: string, body: { token: string; session: string; since?: 
   return (await res.json()) as UpReply
 }
 
+/** Every frame waiting for `session`, read page by page as a session does while the room says `more`. */
+async function every(room: string, tok: string, session: string): Promise<UpReply['frames']> {
+  const all: UpReply['frames'] = []
+  for (let since = 0; ; ) {
+    const r = (await up(room, { token: tok, session, since })) as UpReply & { more?: boolean }
+    all.push(...r.frames)
+    if (!r.more || !r.frames.length) return all
+    since = r.frames.at(-1)!.seq
+  }
+}
+
 /** A device's socket, with every message it receives kept in order. */
 async function device(room: string, deviceId: string) {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/v1/room/${room}/device?id=${deviceId}`)
@@ -183,7 +194,7 @@ async function fill(room: string, tok: string, session: string, count: number, d
     const end = Math.min(count, n + 30)
     for (; n < end; n++) d.send({ to: session, data: data(n) })
     const last = JSON.stringify(data(end - 1))
-    await waitFor(async () => ((await up(room, { token: tok, session })).frames.some(f => JSON.stringify(f.data) === last) ? true : undefined))
+    await waitFor(async () => ((await every(room, tok, session)).some(f => JSON.stringify(f.data) === last) ? true : undefined))
     d.ws.close()
   }
 }
@@ -199,22 +210,27 @@ test('the room keeps at most the newest 500 device frames', async () => {
   expect(frames[499].data).toEqual({ n: 509 })
 }, 30_000)
 
-test('the room keeps at most the newest 1 MB of frame data, so one up answer stays readable', async () => {
-  // 500 frames of 16 KB would be 8 MB in one JSON answer: more than a session's fetch should have to parse.
+test('an up answer carries at most 1 MB, oldest first, and says there is more; the rest comes on the next post', async () => {
+  // A photo is up to 63 chunks of ~11 KB, and two may wait at once: none may be pruned before the session reads it,
+  // nor may one answer be more than a session's fetch should have to parse.
   const room = id()
   const [tok, session] = [token(), id()]
   const pad = 'x'.repeat(15_000)
-  await fill(room, tok, session, 90, n => ({ n, pad }))
-  const { frames } = await up(room, { token: tok, session })
-  const bytes = frames.reduce((sum, f) => sum + JSON.stringify(f.data).length, 0)
+  await fill(room, tok, session, 120, n => ({ n, pad }))
+  const first = (await up(room, { token: tok, session })) as UpReply & { more?: boolean }
+  const bytes = first.frames.reduce((sum, f) => sum + JSON.stringify(f.data).length, 0)
   expect(bytes).toBeLessThanOrEqual(1 << 20)
-  expect(frames.length).toBeGreaterThan(60)
-  expect(frames.at(-1)?.data).toMatchObject({ n: 89 })
-}, 30_000)
+  expect(first.more).toBe(true)
+  expect(first.frames[0]?.data).toMatchObject({ n: 0 })
+  const rest = (await up(room, { token: tok, session, since: first.frames.at(-1)!.seq })) as UpReply & { more?: boolean }
+  expect(rest.more).toBeUndefined()
+  expect([...first.frames, ...rest.frames].map(f => (f.data as { n: number }).n)).toEqual(Array.from({ length: 120 }, (_, i) => i))
+}, 60_000)
 
-test('a device message over 16 KB is dropped, and a socket sending over 30 a minute is closed', async () => {
+test('a device message over 16 KB is dropped; a photo\'s 63 chunks at once pass, and a socket sending over 200 a minute is closed', async () => {
   // Device sockets need no token: anyone with the room id could otherwise fill its storage or spend the account's
-  // free-plan writes and requests for every room. A real device sends a few small messages a minute.
+  // free-plan writes for every room. A real device sends a few small messages a minute, and a photo's chunks at once:
+  // 30 a minute closed the socket mid-upload, which locked the phone and lost the rest of the photo.
   const room = id()
   const [tok, session] = [token(), id()]
   const d = await device(room, id())
@@ -228,10 +244,10 @@ test('a device message over 16 KB is dropped, and a socket sending over 30 a min
 
   const flood = await device(room, id())
   const closed = new Promise<number>(resolve => flood.ws.addEventListener('close', e => resolve(e.code)))
-  for (let n = 0; n < 40; n++) flood.send({ to: session, data: { n } })
+  for (let n = 0; n < 210; n++) flood.send({ to: session, data: { n } })
   expect(await closed).toBe(1008)
   const { frames } = await up(room, { token: tok, session })
-  expect(frames.filter(f => typeof f.data === 'object' && f.data !== null && 'n' in f.data)).toHaveLength(30)
+  expect(frames.filter(f => typeof f.data === 'object' && f.data !== null && 'n' in f.data)).toHaveLength(200)
   d.ws.close()
 })
 

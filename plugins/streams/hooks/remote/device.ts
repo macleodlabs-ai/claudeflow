@@ -23,6 +23,11 @@ export type Received =
   | { t: 'snapshot'; snapshot: Snapshot }
   /** What the session did with one of this device's commands. */
   | { t: 'ack'; ack: Ack }
+  /**
+   * A session has no channel with this device (it started after the welcome, or its welcome went astray): sending the
+   * same hello again opens one, while the hello is fresh; otherwise only a new unlock does.
+   */
+  | { t: 'rehello'; session: string }
 
 type Keys = { eph: { sk: string; pk: string }; nonce: string }
 
@@ -33,14 +38,15 @@ export const proofParts = (device: { id: string; pk: string }, reg: { credential
 /**
  * The device in one room: `accountPk` is the account's public key from the pairing link. A connection starts with
  * a hello (`pairHello`, or `unlockChallenge` then `unlockHello`); each session that welcomes it gets its own sealed
- * channel. `reset` when the socket closes: nothing from the old connection carries over.
+ * channel. The channels outlive the socket (the relay only carries sealed frames): `reset` is for locking.
  */
 export function createDevice(o: { device: DeviceKeys; room: string; accountPk: string; label?: string }) {
   /** The hello sent on this connection, which welcomes and denials answer. */
   let hello: (Keys & { isPairing: boolean }) | undefined
   /** Keys made for an unlock while Face ID is up, sent with its hello. */
   let pending: Keys | undefined
-  const channels = new Map<string, ReturnType<typeof channel>>()
+  /** Each session's channel, with the welcome that opened it: the same welcome again keeps it, counters and all. */
+  const channels = new Map<string, { ch: ReturnType<typeof channel>; from: string }>()
 
   const fresh = (): Keys => ({ eph: newIdentity(), nonce: randomId(32) })
 
@@ -83,34 +89,44 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
 
     /** A command sealed for one session (an Allow carries its assertion over `allowChallenge`); none without a channel. */
     seal(session: string, command: PhoneCommand): DeviceFrame | undefined {
-      const ch = channels.get(session)
+      const ch = channels.get(session)?.ch
       return ch && { to: session, data: { t: 'box', b: ch.seal({ t: 'command', command }) } }
     },
 
     /** Reads a frame from session `from`; undefined for anything that is not for this connection or does not open. */
     receive(from: string, d: Record<string, unknown>): Received | undefined {
+      // A welcome naming another hello answers an older connection's: its keys are not this hello's.
+      if (d.t === 'welcome' && typeof d.hello === 'string' && d.hello !== hello?.eph.pk) return undefined
       if (d.t === 'welcome' && hello && typeof d.eph === 'string' && typeof d.nonce === 'string') {
-        const k = connectionKeys({ ownSk: o.device.sk, peerPk: o.accountPk, ownEphSk: hello.eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: hello.nonce })
-        channels.set(from, channel(k.deviceToSession, k.sessionToDevice))
+        const id = `${d.eph}.${d.nonce}`
+        if (channels.get(from)?.from !== id) {
+          const k = connectionKeys({ ownSk: o.device.sk, peerPk: o.accountPk, ownEphSk: hello.eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: hello.nonce })
+          channels.set(from, { ch: channel(k.deviceToSession, k.sessionToDevice), from: id })
+        }
         return { t: 'welcome', session: from }
       }
+      if (d.t === 'rehello') return hello && !hello.isPairing ? { t: 'rehello', session: from } : undefined
       if (d.t === 'denied' && hello) return { t: 'denied', why: typeof d.why === 'string' ? d.why.slice(0, 200) : 'refused', isPairing: hello.isPairing }
       if (d.t !== 'box' || typeof d.b !== 'string') return undefined
-      const ch = channels.get(from)
-      if (!ch) return undefined
+      const ch = channels.get(from)?.ch
+      // A sealed frame from a session this device has no channel with: that session has a channel this device lost.
+      if (!ch) return hello && !hello.isPairing ? { t: 'rehello', session: from } : undefined
       try {
         const x = ch.open(d.b) as { t?: string; snapshot?: Snapshot }
         const ack = ackOf(x)
         if (ack) return { t: 'ack', ack }
         // A session speaks only for itself: a snapshot naming another session is dropped.
         return x?.t === 'snapshot' && x.snapshot?.v === 1 && x.snapshot.session?.id === from ? { t: 'snapshot', snapshot: x.snapshot } : undefined
-      } catch {
-        // Tampered, replayed or reordered: dropped, the next snapshot comes within 30 s.
-        return undefined
+      } catch (e) {
+        // Replayed or reordered: dropped, the next snapshot comes within 30 s. One that does not open at all is sealed
+        // on a channel this device does not have (a session on an older plugin opened a new one for a repeated
+        // hello): the hello again settles which.
+        if ((e as Error).message.includes('replayed')) return undefined
+        return hello && !hello.isPairing ? { t: 'rehello', session: from } : undefined
       }
     },
 
-    /** The socket closed: a new connection needs a new hello, and so a new Face ID. */
+    /** Locked: the channels and the hello go, so seeing this room again needs a new Face ID. A socket closing is not this. */
     reset() {
       hello = undefined
       pending = undefined

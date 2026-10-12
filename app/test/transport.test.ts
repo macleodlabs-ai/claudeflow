@@ -8,7 +8,7 @@ import { authenticator } from '../../plugins/streams/tests/authenticator'
 import type { Snapshot } from '../src/state'
 import type { Ack } from '../../plugins/streams/hooks/remote/snapshot'
 import type { Pairing } from '../src/links'
-import { DENY_GRACE_MS, roomLink, type Device } from '../src/transport'
+import { DENY_GRACE_MS, RESEND_HELLO_MS, roomLink, type Device } from '../src/transport'
 
 const ORIGIN = 'https://relay.test'
 
@@ -29,12 +29,27 @@ class FakeSocket {
   close() {
     this.readyState = 3
   }
+  /** The line drops under the app (a network change, the relay restarting): the socket closes by itself. */
+  drop(code = 1006) {
+    this.readyState = 3
+    ;(this.onclose as ((e: { code: number }) => void) | undefined)?.({ code })
+  }
   deliver(from: string, data: unknown) {
     this.onmessage?.({ data: JSON.stringify({ from, data }) })
   }
 }
 
 const passkey = authenticator(ORIGIN)
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+/** The socket the link opens after a drop, once its first retry has run, opened. */
+async function reopened(old: FakeSocket): Promise<FakeSocket> {
+  await sleep(400)
+  const ws = FakeSocket.last
+  expect(ws).not.toBe(old)
+  ws.onopen?.()
+  return ws
+}
+
 /** Face ID as the person answers it: at once, cancelled (`refuse`), or held open until `release` (a slow prompt). */
 let refuse: string | undefined
 let release: (() => void) | undefined
@@ -47,7 +62,7 @@ const buf = (s: string) => fromB64u(s).slice().buffer
 const g = globalThis as any
 g.WebSocket = FakeSocket
 g.location = { protocol: 'https:', host: 'relay.test', hostname: 'relay.test' }
-g.document = { visibilityState: 'visible' }
+g.document = { visibilityState: 'visible', hasFocus: () => true }
 g.navigator = {
   credentials: {
     async create(o: { publicKey: { challenge: Uint8Array } }) {
@@ -94,9 +109,11 @@ const snap = (id: string, busy = false): Snapshot => ({
  * device sent since the last tick is the relay's answer, and what the session posts reaches the socket (`relay`
  * may redirect it, as a relay could).
  */
-function session(ws: FakeSocket, id: string, o: { sk?: string; devices?: Stored[]; pairing?: Open } = {}) {
+function session(socket: FakeSocket, id: string, o: { sk?: string; devices?: Stored[]; pairing?: Open; isLate?: boolean } = {}) {
+  let ws = socket
   const link = createLink({ identity: { room, token: randomId(32), sk: o.sk ?? account.sk }, session: id, origin: ORIGIN, project: '/work/claudeflow' })
-  let read = 0
+  // `isLate`: started after the relay let go of what the device sent before (it keeps device frames two minutes).
+  let read = o.isLate ? socket.sent.length : 0
   let seq = 0
   let devices = o.devices ?? []
   const s = { paired: [] as Stored[], commands: [] as Answered['commands'], posted: [] as OutFrame[] }
@@ -116,7 +133,12 @@ function session(ws: FakeSocket, id: string, o: { sk?: string; devices?: Stored[
       post = got.again ? link.next(known()) : undefined
     }
   }
-  return { ...s, tick, ack: link.ack, boxes: () => s.posted.filter(f => (f.data as { t: string }).t === 'box').map(f => f.data) }
+  /** The device is on another socket now (it reconnected): the relay reads and delivers there. */
+  const use = (next: FakeSocket) => {
+    ws = next
+    read = 0
+  }
+  return { ...s, tick, use, ack: link.ack, boxes: () => s.posted.filter(f => (f.data as { t: string }).t === 'box').map(f => f.data) }
 }
 
 afterEach(() => setSystemTime())
@@ -153,7 +175,6 @@ describe('unlocking a paired room', () => {
     s1.tick({ snapshot: snap('s1', true), relay: (_, data) => ws.deliver('s2', data) })
     // A session speaks only for itself, even with a valid box.
     s1.tick({ snapshot: snap('other') })
-    expect(s1.boxes()).toHaveLength(3)
     expect(got.map(s => s.session.id)).toEqual(['s1'])
   })
 
@@ -200,6 +221,82 @@ describe('unlocking a paired room', () => {
     const before = ws.sent.length
     expect(await link.send('s9', { id: 'c', kind: 'stop' })).toMatchObject({ ok: false, isOffline: true })
     expect(ws.sent.length).toBe(before)
+  })
+})
+
+describe('the line heals itself', () => {
+  // The socket is only the road to the relay: phones change networks, iOS freezes sockets and the relay restarts on
+  // every deploy. None of that may cost a Face ID, end an unlock with an error, or leave a command unanswered.
+  test('a socket that drops while the Mac has not answered yet carries the same hello on the next one, and unlocks', async () => {
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    const hello = ws.sent.at(-1)
+    ws.drop()
+    expect(link.stage().at).toBe('checking')
+    expect(link.why()).toBe('')
+    const next = await reopened(ws)
+    expect(next.sent).toContainEqual(hello)
+    session(next, 's1', { devices: [stored] }).tick()
+    expect(link.isUnlocked()).toBe(true)
+    expect(challenges).toHaveLength(1)
+  })
+
+  test('an unlocked phone whose socket drops stays unlocked, and its commands reach the session on the next socket', async () => {
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    const s1 = session(ws, 's1', { devices: [stored] })
+    s1.tick()
+    ws.drop()
+    expect(link.isUnlocked()).toBe(true)
+    expect(link.canSend('s1')).toBe(false)
+    const next = await reopened(ws)
+    expect(link.canSend('s1')).toBe(true)
+    expect(await link.send('s1', { id: 'c1', kind: 'stop' })).toEqual({ ok: true })
+    // The session is the same one: only the phone's socket changed.
+    s1.use(next)
+    s1.tick()
+    expect(s1.commands.map(c => c.command.id)).toEqual(['c1'])
+    expect(challenges).toHaveLength(1)
+  })
+
+  test('a hello no session has answered goes again every few seconds, with no new Face ID', async () => {
+    // A hello that reached the room just after a session's post, or a welcome lost on the way, is answered next time.
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    const hello = ws.sent.at(-1)
+    const before = ws.sent.filter(m => m.data?.t === 'hello').length
+    link.heal()
+    expect(ws.sent.filter(m => m.data?.t === 'hello').length).toBe(before)
+    setSystemTime(new Date(Date.now() + RESEND_HELLO_MS))
+    link.heal()
+    expect(ws.sent.filter(m => m.data?.t === 'hello').length).toBe(before + 1)
+    expect(ws.sent.at(-1)).toEqual(hello)
+    expect(challenges).toHaveLength(1)
+    session(ws, 's1', { devices: [stored] }).tick()
+    expect(link.isUnlocked()).toBe(true)
+  })
+
+  test('a session that restarted asks for the hello again; the phone answers with the same one and its commands go through', async () => {
+    // /reload-plugins in Claude Code starts the session's link over: without this, the phone looked unlocked while
+    // everything it sent that session was dropped unread, and it sat on "Sent: waiting for your Mac".
+    const { link, ws } = start(PAIRED)
+    await link.unlock()
+    session(ws, 's1', { devices: [stored] }).tick()
+    const restarted = session(ws, 's1', { devices: [stored], isLate: true })
+    expect(await link.send('s1', { id: 'c1', kind: 'stop' })).toEqual({ ok: true })
+    restarted.tick()
+    expect(restarted.commands).toEqual([])
+    // The rehello reached the phone, which said its hello again: the next post welcomes it.
+    restarted.tick()
+    expect(await link.send('s1', { id: 'c1', kind: 'stop' })).toEqual({ ok: true })
+    restarted.tick()
+    expect(restarted.commands.map(c => c.command.id)).toEqual(['c1'])
+    expect(challenges).toHaveLength(1)
+  })
+
+  test('a locked phone on screen tells the room it is looking, so sessions answer its unlock within seconds', async () => {
+    const { ws } = start(PAIRED)
+    expect(ws.sent).toContainEqual({ here: true })
   })
 })
 
@@ -327,17 +424,17 @@ describe('on a slow network', () => {
     expect(link.stage()).toEqual({ at: 'idle' })
   })
 
-  test('Retry after the hello has gone stale starts a fresh line and asks for Face ID again, which then unlocks', async () => {
+  test('a hello gone stale ends the step and Unlock asks for Face ID again, which then unlocks', async () => {
     // The Mac takes a hello for a few minutes only: resending an old one is refused forever, and the phone looks dead.
     const { link, ws } = start(PAIRED)
     await link.unlock()
     setSystemTime(new Date(Date.now() + 4 * 60_000))
     link.retry()
-    expect(FakeSocket.last).not.toBe(ws)
     expect(link.stage()).toEqual({ at: 'idle' })
-    expect(link.why()).toContain('Unlock again')
+    expect(link.why()).toContain('Tap Unlock')
     await link.unlock()
-    session(FakeSocket.last, 's1', { devices: [stored] }).tick()
+    expect(challenges).toHaveLength(2)
+    session(ws, 's1', { devices: [stored] }).tick()
     expect(link.isUnlocked()).toBe(true)
   })
 

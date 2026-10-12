@@ -76,10 +76,12 @@ function nonceFor(n: number): Bytes {
  * One end of a sealed channel. `open` throws on anything that is not the next-or-later box from the peer, so the
  * relay can neither alter, replay nor reorder messages; it only advances after a box authenticates.
  */
-export function channel(sendKey: Bytes, recvKey: Bytes) {
-  let sent = 0
-  let lastOpened = -1
+export function channel(sendKey: Bytes, recvKey: Bytes, from: { sent: number; lastOpened: number } = { sent: 0, lastOpened: -1 }) {
+  let sent = from.sent
+  let lastOpened = from.lastOpened
   return {
+    /** Where the counts are, to carry the channel over a reload (`from`): nonces must never repeat on a key. */
+    counts: () => ({ sent, lastOpened }),
     seal(obj: unknown): string {
       const n = sent++
       return `${n}.${b64u(xchacha20poly1305(sendKey, nonceFor(n)).encrypt(utf8(JSON.stringify(obj))))}`

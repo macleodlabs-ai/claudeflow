@@ -18,13 +18,16 @@ export type Env = {
 const KEEP_MS = 2 * 60_000
 /** At most this many device frames are kept, so a chatty device cannot grow the room's storage. */
 const KEEP_FRAMES = 500
-/** At most this much frame data is kept, so one `up` answer stays small enough for a session to read. */
-const KEEP_BYTES = 1 << 20
+/** At most this much frame data is kept: a photo goes as up to 63 sealed chunks, and a few may wait at once. */
+const KEEP_BYTES = 4 << 20
+/** At most this much frame data goes in one `up` answer, so a session reads it easily; `more` says to ask again now. */
+const ANSWER_BYTES = 1 << 20
 /**
- * Messages one device socket may send a minute (it pings 4 times a minute, plus hellos and commands). Sockets need
- * no token, so this keeps one from spending the account's free-plan row writes and requests for every room.
+ * Messages one device socket may send a minute: pings, hellos and commands, and a photo's chunks (up to 63 each, sent
+ * at once). Sockets need no token, so this keeps one from spending the account's free-plan row writes for every room.
+ * Over it, the socket is closed; the app paces its uploads to stay under it.
  */
-const SOCKET_PER_MINUTE = 30
+export const SOCKET_PER_MINUTE = 200
 /** A device is active when it reported itself visible this recently (it pings every 15 s while visible). */
 const ACTIVE_MS = 30_000
 /**
@@ -98,14 +101,18 @@ export class Room extends DurableObject<Env> {
       for (const ws of this.ctx.getWebSockets(`device:${frame.to}`)) ws.send(out)
     }
     this.prune()
-    const frames = this.ctx.storage.sql
+    const rows = this.ctx.storage.sql
       .exec<{ seq: number; sender: string; data: string }>(
         `SELECT seq, sender, data FROM frames WHERE seq > ? AND (recipient = ? OR recipient = '*') ORDER BY seq`,
         up.since,
         up.session,
       )
       .toArray()
-      .map(row => ({ seq: row.seq, from: row.sender, data: JSON.parse(row.data) as unknown }))
+    // Oldest first, up to ANSWER_BYTES (at least one): the rest wait for the session's next post, which comes at once.
+    let bytes = 0
+    const taken = rows.filter((row, i) => (bytes += row.data.length) <= ANSWER_BYTES || i === 0)
+    const more = taken.length < rows.length
+    const frames = taken.map(row => ({ seq: row.seq, from: row.sender, data: JSON.parse(row.data) as unknown }))
     const now = Date.now()
     const devices = this.ctx.getWebSockets().flatMap(ws => {
       const device = ws.deserializeAttachment() as Device | null
@@ -119,7 +126,7 @@ export class Room extends DurableObject<Env> {
       // Not awaited: the session's frames and its tick never wait on push services (each up to 10 s).
       this.ctx.waitUntil(this.notify(up.notify.to.filter(id => !looking.has(id)), up.notify.kind, subject).catch(() => {}))
     }
-    return json({ frames, devices })
+    return json(more ? { frames, devices, more } : { frames, devices })
   }
 
   /**

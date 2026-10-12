@@ -158,6 +158,9 @@ body.read-only :is([data-answer], [data-reply-open], [data-perm], [data-choose],
 .conn { flex: none; width: 12px; height: 12px; border-radius: 50%; overflow: hidden; white-space: nowrap; text-indent: 100%; font-size: 1px; color: transparent;
         background: transparent; box-shadow: inset 0 0 0 2px var(--error), 0 0 10px color-mix(in srgb, var(--error) 60%, transparent); }
 .conn.on { background: var(--done); box-shadow: 0 0 0 2px color-mix(in srgb, var(--done) 35%, transparent), 0 0 10px color-mix(in srgb, var(--done) 70%, transparent); }
+/* Syncing (an unlock under way, streams opening, a tap on its way): the green dot breathes, slowly. */
+.conn.on.syncing { animation: conn-breathe 1.6s var(--ease) infinite; }
+@keyframes conn-breathe { 50% { opacity: .45; box-shadow: 0 0 0 4px color-mix(in srgb, var(--done) 20%, transparent), 0 0 14px color-mix(in srgb, var(--done) 50%, transparent); } }
 /* The line dropped: a small glass strip under the header, sticky so it stays in view (the header dot says it too). */
 .banner { position: sticky; top: calc(env(safe-area-inset-top) + 4px); z-index: 5; display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 12px;
           border-radius: var(--r-sm); background: var(--glass-strong); border: 1px solid color-mix(in srgb, var(--stalled) 55%, var(--glass-line)); color: var(--text);
@@ -487,9 +490,25 @@ body.has-summary.has-usage.usage-open { padding-bottom: calc(env(safe-area-inset
 .gate .slow { color: var(--text-soft); font-size: var(--fs-md); font-weight: 600; margin: 14px auto 10px; }
 .gate .btn.ghost[data-gate="retry"] { min-height: 44px; font-size: var(--fs-base); }
 .gate .meta { margin-bottom: 6px; color: var(--text-dim); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+/* Where an unlock is: a quiet row of steps under its button, the one under way lit, the ones behind it ticked. */
+.steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; list-style: none; margin: 14px auto 2px; padding: 0; max-width: 34em;
+         font-size: var(--fs-sm); color: var(--text-dim); }
+.steps li { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.steps i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--glass-line-strong); }
+.steps .done { color: var(--text-soft); }
+.steps .done i { background: var(--done); }
+.steps .now { color: var(--text); font-weight: 600; }
+.steps .now i { background: var(--brand); box-shadow: 0 0 0 3px var(--brand-glow); animation: conn-breathe 1.6s var(--ease) infinite; }
+.steps .secs { color: var(--text-dim); font-weight: 400; font-variant-numeric: tabular-nums; }
+/* An open room a restarted session cannot reach: one line and an Unlock, not a whole gate. */
+.gate.slim { display: flex; align-items: center; gap: 12px; padding: 10px 14px; text-align: left; box-shadow: none; }
+.gate.slim::before { display: none; }
+.gate.slim p { margin: 0; flex: 1; font-size: var(--fs-md); }
+.gate.slim .btn { min-height: 40px; font-size: var(--fs-base); padding: 0 18px; }
 .gate > .meta:first-child { margin-top: -6px; }
 .lock { color: var(--dim); font-size: var(--fs-sm); text-align: center; margin: 18px 0 0; }
 .empty { color: var(--text-dim); text-align: center; padding: 24px 0 40px; font-size: var(--fs-lg); text-wrap: balance; }
+.empty.opening { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: var(--fs-base); }
 .empty .motif { display: block; width: calc(100% + 32px); max-width: 720px; aspect-ratio: 5 / 2; max-height: 260px; margin: 0 -16px 20px; background: url("strands.svg") center / cover no-repeat;
                 -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent); mask-image: linear-gradient(180deg, #000 70%, transparent); }
 @media (min-width: 760px) { .empty .motif { margin: 0 auto 20px; width: 100%; } }

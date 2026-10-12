@@ -3,7 +3,7 @@
 import { isInFlight, keyOf, SENT_MS, SLOW_MS, streamKey, type State, isUnseen } from '../state'
 import { flowDetail, flowSub, progress } from './flows'
 import { md } from './markdown'
-import { clock, color, esc, GLYPH, kindOf, lineText, slowText, STATE_COLOR, stageLine, type Stream } from './util'
+import { clock, color, esc, GLYPH, kindOf, lineText, slowText, STATE_COLOR, stageLine, waitLine, type Stream } from './util'
 
 const ROW_CLASS: Record<string, string> = { prompt: 'prompt', reply: 'reply', tool: 'tool', agent: 'agent-row', loop: 'loop', notice: 'notice' }
 
@@ -14,8 +14,8 @@ const sentNote = (s: State, key: string, now: number): string => {
   if (t.stage === 'done') return now - t.at < SENT_MS ? '<span class="sent" role="status">Sent ✓</span>' : ''
   if (t.stage === 'failed') return stageLine(t.why ?? 'Not sent. Try again.', false)
   if (t.stage === 'queued') return stageLine('Offline: sends when you reconnect…')
-  if (now - t.at < SLOW_MS) return stageLine('Sent: waiting for your Mac…')
-  return `${stageLine(slowText(s.sessions[keyOf(t.room, t.sessionId)]?.snapshot.session), false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
+  if (now - t.at < SLOW_MS) return stageLine(waitLine(now - t.at))
+  return `${stageLine(`Still trying. ${slowText(s.sessions[keyOf(t.room, t.sessionId)]?.snapshot.session)}`, false)}<button class="btn ghost" data-retry="${esc(key)}">Retry</button>`
 }
 
 export function replyBox(s: State, key: string): string {
@@ -70,11 +70,14 @@ export function card(s: State, sessionKey: string, x: Stream, now: number, mode:
   // nothing active is archived by a stray thumb. The wide layout's list and detail pane do not swipe.
   // An active card swipes a little and says why it stays, so a swipe never seems to just fail.
   const swipe = mode !== 'inline' ? '' : ` data-swipe="${FINISHED.includes(kind) ? 'archive' : 'hold'}" data-stream="${esc(key)}"`
+  // A swipe the Mac refused puts the card back: it says why, briefly, rather than seem to bounce for no reason.
+  const refused = s.taps[`${key}|archive`]
+  const refusal = refused?.stage === 'failed' && now - refused.at < REFUSED_MS ? stageLine(`Not archived: ${refused.why ?? 'your Mac said no'}`, false) : ''
   return `<section${swipe} class="card st-${kind} ${isOpen ? 'open' : ''} ${isFull ? 'full' : 'compact'} ${mode !== 'inline' ? mode : ''} ${isSelected ? 'sel' : ''}" style="--c:${color(x.color)}">
     <div class="head" ${act}>${icon}
       <div class="title"><div class="name">${esc(x.name)}${mode !== 'detail' && isUnseen(s, sessionKey, x) ? '<span class="new-dot" role="img" aria-label="changed since you looked"></span>' : ''}</div>${line}</div>
       <span class="badge bg-${kind} k-${kind}">${kind === 'waiting' ? 'waiting' : esc(x.state)}</span>${style}${chev}</div>
-    ${x.workflow ? progress(x.workflow) : ''}${question}${body}
+    ${refusal}${x.workflow ? progress(x.workflow) : ''}${question}${body}
   </section>`
 }
 
@@ -113,6 +116,9 @@ export function archivedList(s: State, sessionKey: string, archived: readonly { 
     : ''
   return `<div class="archived"><div class="archived-head" data-toggle="${esc(key)}" role="button" tabindex="0" aria-expanded="${isOpen}">Archived · ${archived.length}<span class="chev" aria-hidden="true">▸</span></div>${rows}</div>`
 }
+
+/** How long a refused archive says why on its card. */
+const REFUSED_MS = 10_000
 
 /** The states a stream may be archived from by a swipe. */
 const FINISHED: readonly string[] = ['done', 'idle', 'stalled', 'error']
