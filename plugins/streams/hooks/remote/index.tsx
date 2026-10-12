@@ -5,7 +5,7 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, type Device, type Link } from './link'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import {
   HEARTBEAT_MS,
@@ -55,6 +55,8 @@ const focusA = atom({ plugin: 'streams', key: 'focus' } as const, '')
 const viewA = atom({ plugin: 'streams', key: 'view' } as const, '')
 const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
+/** This session's open channels with devices, kept across a reload of the plugin ($.state outlives it; link.ts `kept`). */
+const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { room: '', session: '', conns: [] as KeptConn[] })
 /** How long the band says the session chose for the person. */
 const NOTE_MS = 2 * 60_000
 
@@ -84,6 +86,8 @@ let me: Snapshot['session'] | undefined
 let myCwd = ''
 /** The sealed link to the devices, made once the account has an identity. */
 let link: Link | undefined
+/** What was last kept of the link's channels in $.state (`remoteConnsA`), to write them only when that changes. */
+let keptMark = ''
 /** A tick is running: the next one waits, so two posts never race on the same link. */
 let isTicking = false
 /** When the running tick began: one still running after TICK_STUCK_MS is given up on (see remoteTick). */
@@ -182,7 +186,12 @@ async function remoteTick($: $) {
       $.store.get(STORE.invites).then(invitesOf),
     ])
     if (!identity) return
-    if (link?.room !== identity.room) link = createLink({ identity, session: me.id, origin: originOf(options.relayUrl), project: myCwd })
+    if (link?.room !== identity.room) {
+      // After /reload-plugins the channels this session had are taken up again: the phones still hold theirs.
+      const was = await read($, remoteConnsA)
+      const kept = was.room === identity.room && was.session === me.id ? was.conns : []
+      link = createLink({ identity, session: me.id, origin: originOf(options.relayUrl), project: myCwd, kept })
+    }
     let devices = stored
     // No device could answer, or the relay is backing off: no snapshot is made, and the relay is not asked.
     if (link.isQuiet({ devices, pairing, invites, now })) return
@@ -225,6 +234,15 @@ async function remoteTick($: $) {
       const isAcking: boolean = got.commands.length > 0 && !hasAcked
       hasAcked ||= isAcking
       post = got.again || isAcking ? link.next({ devices, pairing, invites, now, snapshot, isHolding: held.size > 0 }) : undefined
+      // Kept when they change in a way a reload must not lose: a channel opened or gone, a box from a phone opened
+      // (exact, so a reload cannot take a replayed command), or the send count past what the reload's margin
+      // (KEPT_MARGIN) covers. Not after every post: a working session posts every 2 s.
+      const conns = link.kept()
+      const mark = conns.map(c => `${c.device.id}:${c.peerEph}:${c.lastOpened}:${Math.floor(c.sent / (KEPT_MARGIN / 2))}`).join('|')
+      if (mark !== keptMark) {
+        keptMark = mark
+        await update($, remoteConnsA, () => ({ room: identity.room, session: me!.id, conns }))
+      }
     }
   } finally {
     isTicking = false
@@ -506,9 +524,11 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     return { ok: false, why: settled.get(c.requestId)?.why ?? 'unknown request' }
   }
   if (c.kind === 'archive' || c.kind === 'restore') {
-    // Only a stream this session has, and only a change: archiving an archived stream is no news.
+    // Only a stream this session has. One already so (the phone sent it again, or another device did it first) is
+    // what was asked: acked as done, so the phone keeps the card where the swipe put it.
     const st = (await read($, streamsA)).find(x => x.id === c.streamId)
-    if (!st || !!st.archived === (c.kind === 'archive')) return { ok: false }
+    if (!st) return { ok: false, why: 'no such stream' }
+    if (!!st.archived === (c.kind === 'archive')) return { ok: true }
     // As the pane's ✕ and restore do (ui/pane.tsx setArchived): $ calls stay in this file, at the call site.
     const archived = c.kind === 'archive'
     const now = await $.clock.now()
@@ -571,7 +591,7 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
   }
   // Files go first: a prompt is sent only with all of them on disk, for Claude to read by path.
   const paths = c.files?.length ? await saveFiles($, c.files) : []
-  if (!paths) return { ok: false, why: 'file missing' }
+  if (!paths) return { ok: false, why: RETRY_WHY }
   const text = paths.length ? `${c.text.trim()}\n\n${paths.map(p => `[Attached from my phone: ${p}]`).join('\n')}`.trim() : c.text
   // The stream is made current first, so the answer is filed where it was asked; '' is a new prompt routing files.
   if ((await read($, streamsA)).some(st => st.id === c.streamId)) await update($, currentA, () => c.streamId)

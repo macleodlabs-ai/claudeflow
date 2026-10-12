@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { ACTIVE_POLL_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { FETCH_MS, STORE, TICK_MS, TICK_STUCK_MS } from '../hooks/remote/index'
 import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
@@ -164,17 +164,18 @@ describe('pairing and unlocking', () => {
     const relay = room([a])
     const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
     relay.from(a, a.hello({ now: T0 - 7 * 60_000 }))
-    relay.from(a, a.hello({ now: T0 + 2 * 60_000 }))
+    relay.from(a, a.hello({ now: T0 + 4 * 60_000 }))
     relay.from(a, a.hello({ now: T0, origin: 'https://evil.example' }))
     relay.from(a, a.hello({ now: T0, key: p256.utils.randomSecretKey() }))
     const r = cycle(link, relay, { devices: [a.stored()], now: T0 })
     expect(r.frames.map(f => f.data)).toEqual(Array(4).fill({ t: 'denied', why: 'passkey not verified' }))
   })
 
-  test('a hello that waited in the room a few minutes, or comes from a phone clock a minute fast, still unlocks', () => {
+  test('a hello that waited in the room a few minutes, or comes from a phone clock up to 3 minutes fast, still unlocks', () => {
     // A phone back from the background, or a Mac waking or backing off, must not leave Face ID failing until re-paired.
+    // Phone clocks drift: one 2.5 min ahead was refused when only a minute was allowed (the chaos run's skew-ahead).
     const me = account()
-    for (const at of [T0 - 4 * 60_000, T0 + 60_000]) {
+    for (const at of [T0 - 4 * 60_000, T0 + 60_000, T0 + 150_000]) {
       const a = phone(me, 'iPhone')
       const relay = room([a])
       const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
@@ -196,6 +197,91 @@ describe('pairing and unlocking', () => {
     const r = cycle(link, relay, { devices: [], pairing, now: T0 + HEARTBEAT_MS, snapshot: snapshot(T0, { status: [{ id: 'x', area: 'x', state: 'x', detail: 'news' }] }) })
     expect(r.commands).toEqual([])
     expect(r.frames.filter(f => tOf(f) === 'box')).toEqual([])
+  })
+})
+
+describe('a phone\'s line heals itself', () => {
+  // Phones drop sockets, resend, and outlive the sessions they talk to. None of that may leave the phone and a session
+  // on different keys, where every command is dropped unread and the phone waits on a Mac that never answers.
+  const PROJECT = '/work/claudeflow'
+  const posted = (link: ReturnType<typeof createLink>, relay: ReturnType<typeof room>, a: ReturnType<typeof phone>, now: number, deliver: boolean) => {
+    const post = link.next({ devices: [a.stored()], now, snapshot: snapshot(now), isHolding: true })
+    if (post && deliver) relay.deliver(post.frames)
+    link.answered(JSON.stringify(relay.answer()), now)
+    return post
+  }
+
+  test('the same hello twice gets the same welcome: a phone that missed the first, or read both, keeps one working channel', () => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const hello = a.hello({ now: T0 })
+    relay.from(a, hello)
+    cycle(link, relay, { devices: [a.stored()], now: T0 })
+    relay.from(a, a.command({ id: 'c1', kind: 'stop' }))
+    expect(cycle(link, relay, { devices: [a.stored()], now: T0 + 1000 }).commands.map(c => c.command.id)).toEqual(['c1'])
+    // The phone sends its hello again (it heard nothing for a while); this time the welcome is lost on the way.
+    relay.from(a, hello)
+    posted(link, relay, a, T0 + 2000, false)
+    relay.from(a, a.command({ id: 'c2', kind: 'stop' }))
+    expect(cycle(link, relay, { devices: [a.stored()], now: T0 + 3000 }).commands.map(c => c.command.id)).toEqual(['c2'])
+    // And again, delivered this time: the phone reads the same welcome and keeps its channel's count.
+    relay.from(a, hello)
+    cycle(link, relay, { devices: [a.stored()], now: T0 + 4000 })
+    relay.from(a, a.command({ id: 'c3', kind: 'stop' }))
+    expect(cycle(link, relay, { devices: [a.stored()], now: T0 + 5000 }).commands.map(c => c.command.id)).toEqual(['c3'])
+  })
+
+  test('a session that restarted asks an unlocked phone to say hello again, and the same hello opens its channel', () => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const relay = room([a])
+    const before = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const hello = a.hello({ now: T0 })
+    relay.from(a, hello)
+    cycle(before, relay, { devices: [a.stored()], now: T0 })
+    expect(a.isUnlocked()).toBe(true)
+    // /reload-plugins: the session's link starts over, with no channel, while the phone still holds its own. The
+    // phone's command, sealed for the old channel, cannot be read: the session asks for the hello again instead.
+    const after = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    relay.from(a, a.command({ id: 'c1', kind: 'stop' }))
+    const asked = cycle(after, relay, { devices: [a.stored()], now: T0 + 60_000 })
+    expect(asked.commands).toEqual([])
+    expect([...(asked.read.get(a.id) ?? [])]).toContainEqual({ t: 'rehello', session: SESSION })
+    // The phone says the same hello again and resends the command under its id: it runs, once.
+    relay.from(a, hello)
+    cycle(after, relay, { devices: [a.stored()], now: T0 + 62_000 })
+    relay.from(a, a.command({ id: 'c1', kind: 'stop' }))
+    expect(cycle(after, relay, { devices: [a.stored()], now: T0 + 63_000 }).commands.map(c => c.command.id)).toEqual(['c1'])
+  })
+
+  test('when the relay holds frames back (a photo\'s chunks), the session asks again at once rather than next tick', () => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    const known = { devices: [a.stored()], now: T0, snapshot: snapshot(T0), isHolding: false }
+    const answer = (more: boolean) => JSON.stringify({ frames: [{ seq: 1, from: a.id, data: { t: 'noise' } }], devices: [], ...(more ? { more } : {}) })
+    expect(link.next(known)).toBeDefined()
+    expect(link.answered(answer(true), T0).again).toBe(true)
+    expect(link.next(known)?.since).toBe(1)
+    expect(link.answered(answer(false), T0).again).toBe(false)
+  })
+
+  test('a quiet session with a paired phone posts every 15 s, so a phone opened just after a post is seen within 15 s', () => {
+    // Unlock waited on the 30 s heartbeat: a phone opened just after a post sat on "Syncing…" for most of it.
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const relay = room([])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: PROJECT })
+    let now = T0
+    const posts = (step: number) => {
+      now += step
+      return cycle(link, relay, { devices: [a.stored()], now, snapshot: snapshot(T0), isHolding: false, active: [] }).posts.length
+    }
+    expect(posts(0)).toBe(1)
+    expect(posts(IDLE_POLL_MS - 2000)).toBe(0)
+    expect(posts(2000)).toBe(1)
   })
 })
 
@@ -329,15 +415,17 @@ describe('the session on the relay', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]?.url).toBe(`${RELAY}/v1/room/${me.room}/up`)
     expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [] })
-    // Nothing changed and no device looks: no request until the heartbeat, which carries the cursor on.
-    await clock.advance(HEARTBEAT_MS - TICK_MS)
+    // Nothing changed and no device looks: no request until the quiet pace's next post (on the first 2 s tick past
+    // it), which carries the cursor on.
+    const due = Math.ceil(IDLE_POLL_MS / TICK_MS) * TICK_MS
+    await clock.advance(due - TICK_MS)
     expect(sent).toHaveLength(1)
     await clock.advance(TICK_MS)
     expect(sent).toHaveLength(2)
     expect(sent[1]?.body.since).toBe(7)
-    // The relay fails at the next heartbeat: retried after 4 s, then 8 s, not every tick.
+    // The relay fails at the next post: retried after 4 s, then 8 s, not every tick.
     isUp = false
-    await clock.advance(HEARTBEAT_MS)
+    await clock.advance(due)
     expect(sent).toHaveLength(3)
     await clock.advance(TICK_MS)
     expect(sent).toHaveLength(3)
@@ -516,6 +604,11 @@ describe('the session on the relay', () => {
     expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
     expect(seen.at(-1)!.streams.map(s => s.id)).not.toContain('docs')
     expect(seen.at(-1)!.archived?.map(s => s.id)).toEqual(['docs'])
+    // Archived again (another device swiped it too, or the phone resent it under a new id): what was asked, so done.
+    relay.from(a, a.command({ id: 'c1b', kind: 'archive', streamId: 'docs' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'c1b')).toMatchObject({ ok: true })
     relay.from(a, a.command({ id: 'c2', kind: 'restore', streamId: 'docs' }))
     await clock.advance(ACTIVE_POLL_MS)
     await clock.advance(ACTIVE_POLL_MS)
@@ -523,12 +616,12 @@ describe('the session on the relay', () => {
     expect(seen.at(-1)!.archived ?? []).toEqual([])
   })
 
-  test('a phone cannot archive a stream the session does not have', OPTIONS, async ($, on) => {
+  test('a phone cannot archive a stream the session does not have, and is told why', OPTIONS, async ($, on) => {
     const { a, relay, clock, acked } = await withPhone($, on)
     relay.from(a, a.command({ id: 'c1', kind: 'archive', streamId: 'nope' }))
     await clock.advance(ACTIVE_POLL_MS)
     await clock.advance(ACTIVE_POLL_MS)
-    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: false })
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: false, why: 'no such stream' })
   })
 
   test('a prompt naming a file that has not fully arrived is not sent, and the phone is told', OPTIONS, async ($, on) => {
@@ -541,6 +634,13 @@ describe('the session on the relay', () => {
     await clock.advance(ACTIVE_POLL_MS)
     expect(submitted).toEqual([])
     expect(acked.find(x => x.id === 'c2')).toMatchObject({ ok: false, why: 'file missing' })
+    // The phone resends the part that went astray, then the same prompt: it goes, once.
+    relay.from(a, a.command({ id: 'k1', kind: 'chunk', blob: 'b2', part: 1, of: 2, data: 'AAAA' }))
+    relay.from(a, a.command({ id: 'c2', kind: 'answer', streamId: '', text: 'look', files: [{ blob: 'b2', name: 'a.png', type: 'image/png' }] }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(submitted.length).toBe(1)
+    expect(String(submitted[0])).toContain('look')
   })
 
   /** A Bash call the mode's decider passed on to the person: tool.check said `ask`, then PermissionRequest fired. */
