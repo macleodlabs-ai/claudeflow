@@ -993,6 +993,34 @@ describe('/streams connect', () => {
     expect(asked.filter(x => x.path === '/v1/connect/token')).toHaveLength(3)
   })
 
+  // People sign in and type the next command straight away, before the clock's poll has picked the token up. Telling
+  // them to run /streams connect again then is wrong: the command asks the service itself, and says to finish signing
+  // in while the browser has not been through yet.
+  test('a command right after signing in asks for the token itself instead of saying to connect again', ENGINE, async ($, on) => {
+    session(on)
+    const kept = store(on)
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }) as never)
+    let signedIn = false
+    const asked = service(on, path =>
+      path === '/v1/connect'
+        ? { status: 200, body: { code: 'ABCD-EFGH', device: 'dev-secret', url: `${RELAY}/connect?code=ABCD-EFGH`, interval: 30, expiresIn: 600 } }
+        : path === '/v1/connect/token'
+          ? signedIn
+            ? { status: 200, body: { token: 'sr1.a.b.c', account: { login: 'octo' } } }
+            : { status: 428, body: { status: 'pending' } }
+          : { status: 200, body: { url: `${SITE}/account?t=x` } },
+    )
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await run($, 'connect')
+    const waiting = (await run($, 'account')).text
+    expect(waiting).toContain('finish signing in')
+    expect(waiting).not.toContain('run `/streams connect`')
+    signedIn = true
+    expect((await run($, 'account')).text).toContain('Opened your Streams account')
+    expect(kept.get(STORE.token)).toBe(`${RELAY}#sr1.a.b.c`)
+    expect(asked.filter(x => x.path === '/v1/account').map(x => x.auth)).toEqual(['Bearer sr1.a.b.c'])
+  })
+
   test('a sign-in page on another site is never opened', ENGINE, async ($, on) => {
     session(on)
     store(on)
