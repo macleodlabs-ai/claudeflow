@@ -145,7 +145,7 @@ Claude Code sessions ──HTTPS──► relay (Cloudflare Worker + Durable Obj
 
 **1. Install the plugin** (see [Install](#-install)).
 
-**2. Run `/streams connect`.** It opens the Streams sign-in page in your browser: continue with GitHub or an email link. Signing up starts a **3-day free trial**; after that Streams Remote is **$25 a month** at [streams.macleodlabs.com](https://streams.macleodlabs.com). The session connects by itself once you have signed in. `/streams disconnect` signs this account out.
+**2. Run `/streams connect`.** It opens the Streams sign-in page in your browser: continue with GitHub or an email link. Signing up starts a **3-day free trial**; after that Streams Remote is **$25 a month** at [streams.macleodlabs.com](https://streams.macleodlabs.com). The session connects by itself once you have signed in. `/streams billing` subscribes or manages your plan; `/streams disconnect` signs this account out.
 
 Streams on your phone works from **macOS and Linux**; Windows is not supported yet (the local mod runs there as anywhere).
 
@@ -260,6 +260,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
 | `/streams connect` | Sign in to Streams (GitHub or email) so your phone can reach this account; starts the 3-day free trial |
+| `/streams billing` | Subscribe to Streams Remote, or manage or cancel your plan |
 | `/streams disconnect` | Sign this account out of Streams |
 | `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
 | `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
@@ -348,7 +349,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| The app says **Connecting…** | Check the relay address loads in the phone's browser. If you deployed your own, run `npx wrangler deploy` again from `relay/cloudflare`. |
+| The app says **Connecting…** | Check the relay address loads in the phone's browser, and that `/streams connect` has signed this account in. |
 | `/streams phone` says to set the relay address | Run `/streams phone relay https://relay.<you>.workers.dev`, or set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)) and `/reload-plugins`. |
 | **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
 | **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |

@@ -62,7 +62,24 @@ const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { 
 const NOTE_MS = 2 * 60_000
 /** What the band says when the service refuses this account, and for how long after each refusal. */
 export const REFUSED_TOKEN = 'Streams did not accept this account: run /streams connect to sign in again.'
-export const REFUSED_PLAN = 'Your Streams trial has ended: subscribe at streams.macleodlabs.com to keep your phone connected.'
+export const REFUSED_PLAN = 'Your Streams trial has ended: run /streams billing to subscribe and keep your phone connected.'
+export const REFUSED_ROOM = "Streams refused this computer's phone room: another Streams account holds it. Run /streams connect with the account that set it up."
+/** The Streams site: the hosted relay builds its sign-in and billing pages here, not on its own origin. */
+export const SITE = 'https://streams.macleodlabs.com'
+/** The hosted relay, whose pages are on SITE. */
+export const HOSTED_RELAY = 'https://relay.claudeflow.workers.dev'
+/** Where `/streams billing` may send the browser: Stripe's own pages, or the site's sign-in for billing. */
+const BILLING_ORIGINS = ['https://checkout.stripe.com', 'https://billing.stripe.com', SITE]
+
+/**
+ * The `token` setting holds `<origin>#<token>`: the relay that issued it. A token is only ever sent there, so setting
+ * another relay (or a mistyped one) never hands it to someone else; that relay needs its own `/streams connect`.
+ */
+export function tokenFor(stored: string, relayUrl: string): string {
+  const at = stored.indexOf('#')
+  const [origin, token] = at < 0 ? [HOSTED_RELAY, stored] : [stored.slice(0, at), stored.slice(at + 1)]
+  return token && origin === originOf(relayUrl) ? token : ''
+}
 const REFUSED_NOTE_MS = 10 * 60_000
 
 /** Where the account's remote state is kept in $.store (one per config dir, shared by its sessions). */
@@ -280,7 +297,7 @@ async function remoteTick($: $) {
         $.clock.sleep(FETCH_MS).then(() => undefined, () => undefined),
       ])
       // The service turned this account away: say why above the prompt, rather than back off without a word.
-      const refusal = r?.status === 401 ? REFUSED_TOKEN : r?.status === 402 ? REFUSED_PLAN : undefined
+      const refusal = r?.status === 401 ? REFUSED_TOKEN : r?.status === 402 ? REFUSED_PLAN : r?.status === 403 ? REFUSED_ROOM : undefined
       if (refusal) await update($, remoteNoteA, n => (n.text === refusal && now < n.until ? n : { text: refusal, until: now + REFUSED_NOTE_MS }))
       const got = link.answered(r?.ok ? r.text : undefined, now)
       if (got.paired.length) {
@@ -699,7 +716,7 @@ async function setRelay($: $, arg: string | undefined): Promise<string> {
  * them; `relay <url|off>` sets the relay. Says what it did, or what is missing.
  */
 /** A `/streams connect` under way: the secret its polls carry, when it gives up, and when it may poll next. */
-let connecting: { device: string; until: number; every: number; nextAt: number } | undefined
+let connecting: { relay: string; device: string; until: number; every: number; nextAt: number } | undefined
 
 /** What `/streams phone` says before this account has signed in to Streams. */
 export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run `/streams connect` to sign in with GitHub or email (3-day free trial).'
@@ -721,13 +738,14 @@ async function connect($: $): Promise<string> {
   try {
     c = r?.ok ? JSON.parse(r.text) : {}
   } catch {}
-  // The page opened must be the service's own: a relay that names another site gets no browser opened.
-  if (typeof c.code !== 'string' || typeof c.device !== 'string' || typeof c.url !== 'string' || !c.url.startsWith(`${originOf(relay)}/`)) {
+  // The page opened must be the service's own (the hosted relay's is on the site): another site gets no browser opened.
+  const pages = [originOf(relay), ...(originOf(relay) === HOSTED_RELAY ? [SITE] : [])]
+  if (typeof c.code !== 'string' || typeof c.device !== 'string' || typeof c.url !== 'string' || !pages.some(o => c.url!.toString().startsWith(`${o}/`))) {
     return `Could not reach the Streams service at ${relay}. Try \`/streams connect\` again in a minute.`
   }
   const now = await $.clock.now()
   const every = Math.max(2, Math.min(30, Number(c.interval) || 2)) * 1000
-  connecting = { device: c.device, until: now + Math.min(15 * 60, Number(c.expiresIn) || 600) * 1000, every, nextAt: now + every }
+  connecting = { relay: originOf(relay), device: c.device, until: now + Math.min(15 * 60, Number(c.expiresIn) || 600) * 1000, every, nextAt: now + every }
   const open = openArgv(platform, c.url)
   const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
   const where = opened?.exitCode === 0 ? 'Opened the sign-in page in your browser' : `Open ${c.url} in a browser`
@@ -763,8 +781,28 @@ async function connectTick($: $) {
   const who = typeof got.account?.login === 'string' ? got.account.login : typeof got.account?.email === 'string' ? got.account.email : 'your account'
   const rows = await $.config.list()
   const key = rows.find(x => x.key.endsWith('.token') && x.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.token'
-  const set = await $.config.set({ key, value: got.token })
+  const set = await $.config.set({ key, value: `${c.relay}#${got.token}` })
   $.ui.toast(set.deny ? `Signed in, but the token could not be kept: ${set.deny}` : `Connected to Streams as ${who}. /streams phone pairs your phone.`)
+}
+
+/**
+ * `/streams billing`: subscribe (Stripe Checkout), or, for someone who already pays, the site's sign-in that leads to
+ * Stripe's Portal. Opens only Stripe's pages or the site's.
+ */
+async function billing($: $): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
+  if (!options.token) return NOT_CONNECTED
+  const relay = options.relayUrl.replace(/\/+$/, '')
+  const r = await $.http.fetch(`${relay}/v1/billing`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } }).catch(() => undefined)
+  if (r?.status === 401) return REFUSED_TOKEN
+  let url: unknown
+  try {
+    url = r?.ok ? (JSON.parse(r.text) as { url?: unknown }).url : undefined
+  } catch {}
+  if (typeof url !== 'string' || !BILLING_ORIGINS.some(o => url.toString().startsWith(`${o}/`))) return `Could not reach Streams billing. Try again in a minute, or go to ${SITE}/billing.`
+  const open = openArgv(platform, url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  return opened?.exitCode === 0 ? 'Opened Streams billing in your browser.' : `Open ${url} in a browser.`
 }
 
 /** `/streams disconnect`: gives the token back to the service and forgets it here. */
@@ -815,7 +853,7 @@ async function remotePair($: $, args: string[]): Promise<string> {
 }
 
 export function wireRemote(on: On, opts: RemoteOptions) {
-  options = opts
+  options = { ...opts, token: tokenFor(opts.token, opts.relayUrl) }
   // Interactive sessions only: a headless run has no one watching from a phone.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     await remoteStart($, e)
@@ -854,6 +892,7 @@ export function wireRemote(on: On, opts: RemoteOptions) {
     const [verb, ...rest] = e.args.trim().split(/\s+/)
     if (verb === 'connect') return { text: await connect($) }
     if (verb === 'disconnect') return { text: await disconnect($) }
+    if (verb === 'billing') return { text: await billing($) }
     if (verb !== 'phone') return next(e)
     return { text: await remotePair($, rest) }
   })
