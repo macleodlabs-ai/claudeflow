@@ -1,4 +1,4 @@
-import { channel, connectionKeys, newIdentity, pairingProof, passkeyChallenge, randomId } from './seal'
+import { channel, connectionKeys, newIdentity, pairingProof, passkeyChallenge, randomId, relayHash, relayPairToken } from './seal'
 import { ackOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 
 // One device's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), shared by the app and the tests
@@ -40,7 +40,15 @@ export const proofParts = (device: { id: string; pk: string }, reg: { credential
  * a hello (`pairHello`, or `unlockChallenge` then `unlockHello`); each session that welcomes it gets its own sealed
  * channel. The channels outlive the socket (the relay only carries sealed frames): `reset` is for locking.
  */
-export function createDevice(o: { device: DeviceKeys; room: string; accountPk: string; label?: string }) {
+/**
+ * The WebSocket protocol a device opens its relay socket with, `sr.<relay key>[.<pairing token>]`: its relay key,
+ * which the relay checks against the hash its sessions admitted, and while it pairs, the token derived from the
+ * link's secret (never the secret). One protocol: some clients fail a handshake that offers several.
+ */
+export const relayProtocols = (relayKey: string, secret?: string): string[] => [`sr.${relayKey}${secret ? `.${relayPairToken(secret)}` : ''}`]
+
+/** `relayKey`: this device's key for the room's relay sockets (random, kept with its pairing); its hash goes in every hello. */
+export function createDevice(o: { device: DeviceKeys; room: string; accountPk: string; label?: string; relayKey?: string }) {
   /** The hello sent on this connection, which welcomes and denials answer. */
   let hello: (Keys & { isPairing: boolean }) | undefined
   /** Keys made for an unlock while Face ID is up, sent with its hello. */
@@ -54,7 +62,8 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
     hello = { ...k, isPairing }
     channels.clear()
     const label = name ? { label: name } : {}
-    return { to: '*', data: { t: 'hello', device: o.device.id, pk: o.device.pk, eph: k.eph.pk, nonce: k.nonce, ...label, ...extra } }
+    const rk = o.relayKey ? { rk: relayHash(o.relayKey) } : {}
+    return { to: '*', data: { t: 'hello', device: o.device.id, pk: o.device.pk, eph: k.eph.pk, nonce: k.nonce, ...label, ...rk, ...extra } }
   }
 
   return {

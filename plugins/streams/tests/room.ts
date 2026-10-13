@@ -7,14 +7,18 @@ import type { PhoneCommand, Snapshot } from '../hooks/remote/snapshot'
 import { authenticator } from './authenticator'
 
 export const RELAY = 'https://relay.example.workers.dev'
+/** The Streams token the tests' sessions hold (`/streams connect`); the fake relay does not check it. */
+export const BEARER = 'sr1.testaccount0000000.testtoken000000000.sig'
+/** The `token` setting as /streams connect keeps it: the relay that issued it, then the token. */
+export const TOKEN = `${RELAY}#${BEARER}`
 export const ORIGIN = RELAY
 export const SESSION = 'sess-1'
 
 /** A phone or tablet as the app runs it: device.ts with its own id and keys, and a passkey for Face ID. */
-export function phone(account: Identity, label: string, o: { browser?: boolean } = {}) {
+export function phone(account: Identity, label: string, o: { browser?: boolean; relayKey?: string } = {}) {
   const keys = { id: randomId(), ...newIdentity() }
   const passkey = authenticator(ORIGIN, `cred-${label}`, o.browser)
-  const core = createDevice({ device: keys, room: account.room, accountPk: publicKeyOf(account.sk), label })
+  const core = createDevice({ device: keys, room: account.room, accountPk: publicKeyOf(account.sk), label, ...(o.relayKey ? { relayKey: o.relayKey } : {}) })
   return {
     id: keys.id,
     pk: keys.pk,

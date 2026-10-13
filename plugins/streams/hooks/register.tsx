@@ -32,7 +32,7 @@ export const register: Register = (on, options) => {
   wireSession(on, { autoArchiveHours: archiveHoursOf(options.autoArchiveHours) })
   wireWorker(on)
   wireUpdates(on)
-  wireRemote(on, { relayUrl: typeof options.relayUrl === 'string' ? options.relayUrl.trim() : DEFAULT_RELAY })
+  wireRemote(on, { relayUrl: typeof options.relayUrl === 'string' ? options.relayUrl.trim() : DEFAULT_RELAY, token: typeof options.token === 'string' ? options.token.trim() : '' })
   wireBar(on)
   wireFlows(on)
   wireCheck(on, { isOn: options.completionCheck !== false })

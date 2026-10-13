@@ -6,7 +6,7 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
   <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
@@ -145,28 +145,9 @@ Claude Code sessions ──HTTPS──► relay (Cloudflare Worker + Durable Obj
 
 **1. Install the plugin** (see [Install](#-install)).
 
-**2. The relay: nothing to do.** Streams uses the hosted relay, `https://relay.claudeflow.workers.dev`, by default. It only passes sealed messages between your sessions and your devices, and nothing calls it until you pair a device.
+**2. Run `/streams connect`.** It opens the Streams sign-in page in your browser: continue with GitHub or an email link. Signing up starts a **3-day free trial**; after that Streams Remote is **$25 a month** at [streams.macleodlabs.com](https://streams.macleodlabs.com). The session connects by itself once you have signed in. `/streams billing` subscribes or manages your plan; `/streams disconnect` signs this account out.
 
-**Or run your own** on your Cloudflare account (the free plan is enough). You need [Node](https://nodejs.org) 22 or later and [Bun](https://bun.sh) on the Mac you deploy from:
-
-```bash
-git clone https://github.com/macleodlabs-ai/claudeflow
-cd claudeflow/relay/cloudflare
-npx wrangler login            # once: signs this Mac in to your Cloudflare account
-npm ci && ../../app/build.sh && npx wrangler deploy
-```
-
-`wrangler deploy` prints your relay's address, for example `https://relay.<you>.workers.dev`. Run the last line again after you update the checkout.
-
-For **Notify me**, give the relay a push key once: `bun vapid.ts --secret-only | npx wrangler secret put VAPID_PRIVATE_KEY` (in `relay/cloudflare`) makes one and pipes it straight into the Worker secret, so the key is never printed. Without it the relay works as before and the app does not offer notifications.
-
-Then point streams at it: type `/streams phone relay https://relay.<you>.workers.dev` (`/streams phone relay off` turns the remote off), or set it in `/config` → **streams** → **Relay address**, or in `settings.json`:
-
-```json
-{ "pluginConfigs": { "streams@claudeflow": { "options": { "relayUrl": "https://relay.<you>.workers.dev" } } } }
-```
-
-Then `/reload-plugins` in running sessions.
+Streams on your phone works from **macOS and Linux**; Windows is not supported yet (the local mod runs there as anywhere).
 
 **3. Run `/streams phone`.** It opens a **Pair** page in your Mac's browser with a QR code. The code works for 10 minutes, for as many devices as you scan it with.
 
@@ -174,7 +155,7 @@ Then `/reload-plugins` in running sessions.
 
 From then on, each time the app connects it shows **Locked**: tap **Unlock** and Face ID opens it. One unlock covers every session of that account, and every answer you send from it: Face ID is asked only to unlock.
 
-**Several accounts?** Run `/streams phone` from each (with your own relay, set the same `relayUrl` in each first). A device can pair with all of them; each account is its own room on the relay, and the app shows the sessions of all of them side by side.
+**Several accounts?** Run `/streams connect` and `/streams phone` from each. A device can pair with all of them; each account is its own room on the relay, and the app shows the sessions of all of them side by side.
 
 **Manage devices:** `/streams phone devices` lists the paired ones, `/streams phone forget <id>` removes one (`forget all` removes every one). A forgotten device has to scan a new code.
 
@@ -278,6 +259,10 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
+| `/streams connect` | Sign in to Streams (GitHub or email) so your phone can reach this account; starts the 3-day free trial |
+| `/streams billing` | Subscribe to Streams Remote, or manage or cancel your plan |
+| `/streams disconnect` | Sign this account out of Streams |
+| `/streams delete-account` | Delete your Streams account (on the site, after signing in) |
 | `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
 | `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
 | `/streams phone devices` | List the paired phones and tablets |
@@ -353,12 +338,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (201 tests) and `claude plugin validate --strict .` |
-| The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (25 tests: 15 against a real `wrangler dev`, 10 of Web Push on its own) |
-| The phone and tablet app | `app` | `bun test` (62 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
-| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (27 checks) |
-
-`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing (a double tap included), unlocking, answering, allowing on a slow Mac, a prompt answered on the Mac, and a question with options. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
+| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (251 tests) and `claude plugin validate --strict .` |
 
 ---
 
@@ -370,7 +350,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| The app says **Connecting…** | Check the relay address loads in the phone's browser. If you deployed your own, run `npx wrangler deploy` again from `relay/cloudflare`. |
+| The app says **Connecting…** | Check the relay address loads in the phone's browser, and that `/streams connect` has signed this account in. |
 | `/streams phone` says to set the relay address | Run `/streams phone relay https://relay.<you>.workers.dev`, or set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)) and `/reload-plugins`. |
 | **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
 | **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |

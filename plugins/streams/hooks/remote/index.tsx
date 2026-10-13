@@ -7,6 +7,7 @@ import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
 import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
+import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv, type Platform } from './platform'
 import {
   HEARTBEAT_MS,
   NO_DEVICE_MS,
@@ -59,6 +60,27 @@ const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { te
 const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { room: '', session: '', conns: [] as KeptConn[] })
 /** How long the band says the session chose for the person. */
 const NOTE_MS = 2 * 60_000
+/** What the band says when the service refuses this account, and for how long after each refusal. */
+export const REFUSED_TOKEN = 'Streams did not accept this account: run /streams connect to sign in again.'
+export const REFUSED_PLAN = 'Your Streams trial has ended: run /streams billing to subscribe and keep your phone connected.'
+export const REFUSED_ROOM = "Streams refused this computer's phone room: another Streams account holds it. Run /streams connect with the account that set it up."
+/** The Streams site: the hosted relay builds its sign-in and billing pages here, not on its own origin. */
+export const SITE = 'https://streams.macleodlabs.com'
+/** The hosted relay, whose pages are on SITE. */
+export const HOSTED_RELAY = 'https://relay.claudeflow.workers.dev'
+/** Where `/streams billing` may send the browser: Stripe's own pages, or the site's sign-in for billing. */
+const BILLING_ORIGINS = ['https://checkout.stripe.com', 'https://billing.stripe.com', SITE]
+
+/**
+ * The `token` setting holds `<origin>#<token>`: the relay that issued it. A token is only ever sent there, so setting
+ * another relay (or a mistyped one) never hands it to someone else; that relay needs its own `/streams connect`.
+ */
+export function tokenFor(stored: string, relayUrl: string): string {
+  const at = stored.indexOf('#')
+  const [origin, token] = at < 0 ? [HOSTED_RELAY, stored] : [stored.slice(0, at), stored.slice(at + 1)]
+  return token && origin === originOf(relayUrl) ? token : ''
+}
+const REFUSED_NOTE_MS = 10 * 60_000
 
 /** Where the account's remote state is kept in $.store (one per config dir, shared by its sessions). */
 export const STORE = {
@@ -78,6 +100,8 @@ export const TICK_MS = 2000
 export type RemoteOptions = {
   /** The Claudeflow relay's address (the `relayUrl` setting), e.g. https://relay.<you>.workers.dev; '' when unset. */
   relayUrl: string
+  /** This account's Streams token (the `token` setting, kept in secure storage), from `/streams connect`; '' when none. */
+  token: string
 }
 
 /** This session as the devices see it; set at session start. */
@@ -148,7 +172,11 @@ function settle(id: string, why: AckWhy, at: number, label?: string) {
   if (settled.size > 50) settled.delete(settled.keys().next().value!)
 }
 
-let options: RemoteOptions = { relayUrl: '' }
+let options: RemoteOptions = { relayUrl: '', token: '' }
+/** Which system this session runs on (platform.ts), found at session start. */
+let platform: Platform = 'darwin'
+/** What the phone side says on a system it does not run on yet. */
+export const NOT_ON_WINDOWS = 'Streams on your phone does not run on Windows yet: it works from macOS and Linux.'
 
 /**
  * A pairing write must not lose to history: when the engine refuses it (the shared store is past 4 MiB), drop the
@@ -172,9 +200,13 @@ async function remoteStart($: $, e: { cwd: string }) {
   const [id, configDir] = await Promise.all([$.session.id(), $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)])
   me = { id, account: accountOf(configDir ?? ''), project: e.cwd.split('/').pop() || e.cwd, busy: false }
   myCwd = e.cwd
+  const osEnv = await $.env.get('OS').catch(() => undefined)
+  const uname = osEnv === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s'], { timeoutMs: 5000 }).catch(() => undefined)
+  platform = platformOf(osEnv, uname?.exitCode === 0 ? uname.stdout : undefined)
   $.clock.every(TICK_MS, () => {
     void remoteTick($).catch(() => {})
     void remoteWait($).catch(() => {})
+    void connectTick($).catch(() => {})
   })
 }
 
@@ -184,7 +216,7 @@ async function remoteStart($: $, e: { cwd: string }) {
  * of at the next poll (6 s while looking, 15 s otherwise). The polls still run: a wait only makes the next one early.
  */
 async function remoteWait($: $) {
-  if (isWaiting || !link || !waitAs || !me || !options.relayUrl || !link.isWatched()) return
+  if (isWaiting || !link || !waitAs || !me || !options.relayUrl || !options.token || !link.isWatched()) return
   const now = await $.clock.now()
   if (now < waitOffUntil) return
   isWaiting = true
@@ -193,7 +225,7 @@ async function remoteWait($: $) {
       $.http
         .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/room/${waitAs.room}/wait`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
           body: JSON.stringify({ token: waitAs.token, session: me.id, since: link.cursor() }),
         })
         .catch(() => undefined),
@@ -218,7 +250,8 @@ async function remoteWait($: $) {
  * taking back hellos and commands. Only the effects are here: $.store, the post itself, and the commands.
  */
 async function remoteTick($: $) {
-  if (!options.relayUrl || !me) return
+  // No Streams token, no traffic: the phone is the Streams service's, and `/streams connect` signs in to it.
+  if (!options.relayUrl || !options.token || !me || platform === 'win32') return
   const now = await $.clock.now()
   if (isTicking && now - tickAt < TICK_STUCK_MS) return
   isTicking = true
@@ -257,12 +290,15 @@ async function remoteTick($: $) {
         $.http
           .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/room/${identity.room}/up`, {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
             body: JSON.stringify(post),
           })
           .catch(() => undefined),
         $.clock.sleep(FETCH_MS).then(() => undefined, () => undefined),
       ])
+      // The service turned this account away: say why above the prompt, rather than back off without a word.
+      const refusal = r?.status === 401 ? REFUSED_TOKEN : r?.status === 402 ? REFUSED_PLAN : r?.status === 403 ? REFUSED_ROOM : undefined
+      if (refusal) await update($, remoteNoteA, n => (n.text === refusal && now < n.until ? n : { text: refusal, until: now + REFUSED_NOTE_MS }))
       const got = link.answered(r?.ok ? r.text : undefined, now)
       if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
@@ -353,10 +389,13 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
 async function awaitAnswer<T>($: $, answered: Promise<T>, stop: AbortSignal): Promise<T | undefined> {
   const got = answered.then(v => ({ v }))
   let quietSince: number | undefined
+  const sleep = sleepArgv(platform, TICK_MS / 1000)
+  // With no sleep to wait in, the hook would run past its budget: the terminal asks, as with no phone.
+  if (!sleep) return undefined
   while (!stop.aborted) {
     const step = Promise.all([
       $.clock.sleep(TICK_MS, { signal: stop }).catch(() => undefined),
-      $.process.run(['/bin/sleep', String(TICK_MS / 1000)], { timeoutMs: 10_000 }).catch(() => undefined),
+      $.process.run(sleep, { timeoutMs: 10_000 }).catch(() => undefined),
     ])
     const r = await Promise.race([got, step.then(() => undefined)])
     if (r) return r.v
@@ -519,10 +558,14 @@ async function saveFiles($: $, files: readonly PhoneFile[]): Promise<string[] | 
   for (const [i, f] of files.entries()) {
     const dir = `${home}/.claudeflow/uploads/${f.blob}`
     const path = `${dir}/${f.name}`
-    await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 10_000 })
+    const mkdir = mkdirArgv(platform, dir)
+    const decode = decodeArgv(platform, `${path}.b64`, path)
+    const remove = removeArgv(platform, `${path}.b64`)
+    if (!mkdir || !decode || !remove) return undefined
+    await $.process.run(mkdir, { timeoutMs: 10_000 })
     await $.fs.write(`${path}.b64`, done[i]!.parts.join(''))
-    const r = await $.process.run(['/usr/bin/base64', '-D', '-i', `${path}.b64`, '-o', path], { timeoutMs: 20_000 })
-    await $.process.run(['/bin/rm', '-f', `${path}.b64`], { timeoutMs: 10_000 }).catch(() => undefined)
+    const r = await $.process.run(decode, { timeoutMs: 20_000 })
+    await $.process.run(remove, { timeoutMs: 10_000 }).catch(() => undefined)
     if (r.exitCode !== 0) return undefined
     uploads.delete(f.blob)
     paths.push(path)
@@ -672,10 +715,124 @@ async function setRelay($: $, arg: string | undefined): Promise<string> {
  * pairing page with its QR code in the Mac's browser. `devices` lists the paired ones; `forget <id|all>` removes
  * them; `relay <url|off>` sets the relay. Says what it did, or what is missing.
  */
+/** A `/streams connect` under way: the secret its polls carry, when it gives up, and when it may poll next. */
+let connecting: { relay: string; device: string; until: number; every: number; nextAt: number } | undefined
+
+/** What `/streams phone` says before this account has signed in to Streams. */
+export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run `/streams connect` to sign in with GitHub or email (3-day free trial).'
+
+/**
+ * `/streams connect`: asks the service for a sign-in code, opens its sign-in page in the browser, and polls on the
+ * session's clock until the person has signed in (connectTick), then keeps the token in the `token` setting, which
+ * Claude Code holds in secure storage. Says what it did, or what is missing.
+ */
+async function connect($: $): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
+  const relay = options.relayUrl.replace(/\/+$/, '')
+  if (!originOf(relay)) return NO_RELAY
+  const label = `${me?.account ?? 'Claude Code'} (Claude Code)`
+  const r = await $.http
+    .fetch(`${relay}/v1/connect`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label }) })
+    .catch(() => undefined)
+  let c: { code?: unknown; device?: unknown; url?: unknown; interval?: unknown; expiresIn?: unknown } = {}
+  try {
+    c = r?.ok ? JSON.parse(r.text) : {}
+  } catch {}
+  // The page opened must be the service's own (the hosted relay's is on the site): another site gets no browser opened.
+  const pages = [originOf(relay), ...(originOf(relay) === HOSTED_RELAY ? [SITE] : [])]
+  if (typeof c.code !== 'string' || typeof c.device !== 'string' || typeof c.url !== 'string' || !pages.some(o => c.url!.toString().startsWith(`${o}/`))) {
+    return `Could not reach the Streams service at ${relay}. Try \`/streams connect\` again in a minute.`
+  }
+  const now = await $.clock.now()
+  const every = Math.max(2, Math.min(30, Number(c.interval) || 2)) * 1000
+  connecting = { relay: originOf(relay), device: c.device, until: now + Math.min(15 * 60, Number(c.expiresIn) || 600) * 1000, every, nextAt: now + every }
+  const open = openArgv(platform, c.url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  const where = opened?.exitCode === 0 ? 'Opened the sign-in page in your browser' : `Open ${c.url} in a browser`
+  return `${where}. Check it shows ${c.code}, then sign in with GitHub or email. This session connects by itself once you have.`
+}
+
+/** Polls a `/streams connect` under way; keeps the token once the person has signed in. */
+async function connectTick($: $) {
+  const c = connecting
+  if (!c) return
+  const now = await $.clock.now()
+  if (now < c.nextAt) return
+  c.nextAt = now + c.every
+  if (now > c.until) {
+    connecting = undefined
+    $.ui.toast('Streams sign-in expired. Run /streams connect to try again.')
+    return
+  }
+  const r = await $.http
+    .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/connect/token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ device: c.device }) })
+    .catch(() => undefined)
+  // Not signed in yet, or the service is down for a moment: ask again at the next poll.
+  if (!r || r.status === 428 || r.status >= 500) return
+  connecting = undefined
+  let got: { token?: unknown; account?: { email?: unknown; login?: unknown } } = {}
+  try {
+    got = r.ok ? JSON.parse(r.text) : {}
+  } catch {}
+  if (typeof got.token !== 'string') {
+    $.ui.toast('Streams sign-in expired. Run /streams connect to try again.')
+    return
+  }
+  const who = typeof got.account?.login === 'string' ? got.account.login : typeof got.account?.email === 'string' ? got.account.email : 'your account'
+  const rows = await $.config.list()
+  const key = rows.find(x => x.key.endsWith('.token') && x.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.token'
+  const set = await $.config.set({ key, value: `${c.relay}#${got.token}` })
+  $.ui.toast(set.deny ? `Signed in, but the token could not be kept: ${set.deny}` : `Connected to Streams as ${who}. /streams phone pairs your phone.`)
+}
+
+/**
+ * `/streams billing`: subscribe (Stripe Checkout), or, for someone who already pays, the site's sign-in that leads to
+ * Stripe's Portal. Opens only Stripe's pages or the site's.
+ */
+async function billing($: $): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
+  if (!options.token) return NOT_CONNECTED
+  const relay = options.relayUrl.replace(/\/+$/, '')
+  const r = await $.http.fetch(`${relay}/v1/billing`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } }).catch(() => undefined)
+  if (r?.status === 401) return REFUSED_TOKEN
+  let url: unknown
+  try {
+    url = r?.ok ? (JSON.parse(r.text) as { url?: unknown }).url : undefined
+  } catch {}
+  if (typeof url !== 'string' || !BILLING_ORIGINS.some(o => url.toString().startsWith(`${o}/`))) return `Could not reach Streams billing. Try again in a minute, or go to ${SITE}/billing.`
+  const open = openArgv(platform, url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  return opened?.exitCode === 0 ? 'Opened Streams billing in your browser.' : `Open ${url} in a browser.`
+}
+
+/**
+ * `/streams delete-account`: opens the site's page for deleting the Streams account. Deleting needs a fresh sign-in
+ * there, never just this session's token. Run /streams disconnect afterwards to clear the token here too.
+ */
+async function deleteAccount($: $): Promise<string> {
+  const url = `${SITE}/account/delete`
+  const open = platform === 'win32' ? undefined : openArgv(platform, url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  return `${opened?.exitCode === 0 ? 'Opened' : 'Open'} ${url} to delete your Streams account: sign in there and confirm. Then run /streams disconnect here.`
+}
+
+/** `/streams disconnect`: gives the token back to the service and forgets it here. */
+async function disconnect($: $): Promise<string> {
+  if (!options.token) return 'This account is not connected to Streams.'
+  const relay = options.relayUrl.replace(/\/+$/, '')
+  if (originOf(relay)) await $.http.fetch(`${relay}/v1/token/revoke`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } }).catch(() => undefined)
+  const rows = await $.config.list()
+  const key = rows.find(x => x.key.endsWith('.token') && x.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.token'
+  const r = await $.config.set({ key, value: '' })
+  return r.deny ? `Could not clear the token: ${r.deny}` : 'Disconnected from Streams: this account no longer talks to the Streams service.'
+}
+
 async function remotePair($: $, args: string[]): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
   if (args[0] === 'relay') return setRelay($, args[1])
   const relay = options.relayUrl.replace(/\/+$/, '')
   if (!originOf(relay)) return NO_RELAY
+  if (!options.token && args[0] !== 'devices' && args[0] !== 'forget') return NOT_CONNECTED
   const devices = devicesOf(await $.store.get(STORE.devices))
   if (args[0] === 'devices') {
     if (!devices.length) return 'No devices paired. `/streams phone` pairs one.'
@@ -699,14 +856,15 @@ async function remotePair($: $, args: string[]): Promise<string> {
   await saveRemote($, STORE.pairing, { secret, until: (await $.clock.now()) + PAIRING_MS })
   // Everything after `#` stays in the browser: the relay never sees the secret.
   const url = `${relay}/pair#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}`
-  const r = await $.process.run(['/usr/bin/open', url], { timeoutMs: 10_000 }).catch(() => undefined)
+  const open = openArgv(platform, url)
+  const r = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
   return r?.exitCode === 0
     ? `Opened the pairing page from ${relay} in your browser. Scan its QR code with each phone or tablet within 10 minutes.`
     : 'Could not open your browser for the pairing page. Run `/streams phone` again once a browser can open.'
 }
 
 export function wireRemote(on: On, opts: RemoteOptions) {
-  options = opts
+  options = { ...opts, token: tokenFor(opts.token, opts.relayUrl) }
   // Interactive sessions only: a headless run has no one watching from a phone.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     await remoteStart($, e)
@@ -743,6 +901,10 @@ export function wireRemote(on: On, opts: RemoteOptions) {
 
   on('command.run', { command: 'streams' }, async ($, e, next) => {
     const [verb, ...rest] = e.args.trim().split(/\s+/)
+    if (verb === 'connect') return { text: await connect($) }
+    if (verb === 'disconnect') return { text: await disconnect($) }
+    if (verb === 'billing') return { text: await billing($) }
+    if (verb === 'delete-account') return { text: await deleteAccount($) }
     if (verb !== 'phone') return next(e)
     return { text: await remotePair($, rest) }
   })
