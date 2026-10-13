@@ -11,6 +11,11 @@ import { updateControl } from '../updates/control'
 import { TICKET_ROWS } from './look'
 import { statusCard } from './statusCard'
 
+/** Streams Remote's plan, written by the remote module (remote/index.tsx) and read here for the status card. */
+const remoteAccountA = atom({ plugin: 'streams', key: 'remoteAccount' } as const, { who: '', trialEndsAt: 0, paidUntil: 0, status: '', at: 0 })
+/** This mod's version (remote/index.tsx reads it at session start), small in the status card's corner. */
+const versionA = atom({ plugin: 'streams', key: 'version' } as const, { v: '' })
+
 // The band above the prompt: every stream a colour-coded pill, its colour the heartbeat's verdict; the #tag
 // being typed and what it completes to; and the status card.
 
@@ -162,7 +167,8 @@ export function wireBar(on: On) {
     }
     if (!e.props.hasSurvey && (await read($, statusOpenA))) {
       const rows = cardOf(now, { git: (await read($, statusGitA)).lines, rateLimits: (await $.session.usage().catch(() => undefined))?.rateLimits })
-      const card = { streams, git: rows.git, tickets: rows.tickets.slice(0, TICKET_ROWS), streamLines: rows.lines, limits: rows.limits, width: e.props.bodyColumns, now: facts.now }
+      const [account, version] = await Promise.all([read($, remoteAccountA), read($, versionA)])
+      const card = { streams, git: rows.git, tickets: rows.tickets.slice(0, TICKET_ROWS), streamLines: rows.lines, limits: rows.limits, account, version: version.v, width: e.props.bodyColumns, now: facts.now }
       return statusCard(ui, card, {
         close: () => update($, statusOpenA, () => false),
         open: id => openStream($, id),

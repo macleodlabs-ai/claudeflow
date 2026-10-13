@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.2" src="https://img.shields.io/badge/version-2.0.2-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 274 passing" src="https://img.shields.io/badge/tests-274%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -16,20 +16,15 @@
 <p>
   <a href="#-install"><img alt="Installs" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmacleodlabs-ai%2Fclaudeflow%2Fstats%2Finstalls.json&style=for-the-badge&logo=download&logoColor=white"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ff94d1&label=stars"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=ffb88a"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/watchers"><img alt="Watchers" src="https://img.shields.io/github/watchers/macleodlabs-ai/claudeflow?style=for-the-badge&logo=github&color=6ff0c0"></a>
 </p>
 <p>
   <img alt="Claude Code mod" src="https://img.shields.io/badge/Claude%20Code-mod-b9a2ff?style=flat-square">
-  <img alt="Platform macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-6ff0c0?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Platform macOS | Linux | Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6ff0c0?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white">
   <img alt="Classifier Haiku" src="https://img.shields.io/badge/classifier-Haiku-f2d6a2?style=flat-square">
   <a href="https://github.com/macleodlabs-ai/claudeflow/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/macleodlabs-ai/claudeflow?style=flat-square&color=ffb88a"></a>
   <a href="https://github.com/macleodlabs-ai/claudeflow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/macleodlabs-ai/claudeflow?style=flat-square&color=8a90c8"></a>
   <a href="https://macleodlabs.ai"><img alt="Made by Macleod Labs" src="https://img.shields.io/badge/made%20by-Macleod%20Labs-1a2050?style=flat-square"></a>
-</p>
-<p>
-  <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20us-Claude%20Code%20%26%20agent%20workflows%20built%20for%20your%20team%20%E2%86%92-ff94d1?style=for-the-badge&labelColor=070a1f"></a>
 </p>
 
 <p>
@@ -38,8 +33,25 @@
   <a href="#-use">Use</a> ·
   <a href="#%EF%B8%8F-configure">Configure</a> ·
   <a href="#-troubleshooting">Troubleshooting</a> ·
-  <a href="#-work-with-macleod-labs"><b>Hire us</b></a>
+  <a href="#-work-with-macleod-labs">Work with us</a>
 </p>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<sub>STREAMS REMOTE</sub><br>
+<b>Every session, on your phone.</b><br>
+Answer Claude, approve prompts and send photos from your phone or tablet. End-to-end encrypted.<br>
+<a href="https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Start the 3-day free trial →</b></a>
+</td>
+<td width="50%" valign="top">
+<sub>MACLEOD LABS</sub><br>
+<b>Built by the people who make Streams.</b><br>
+Claude Code mods, agent workflows and AI tooling, built for your team.<br>
+<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Work with us →</b></a>
+</td>
+</tr>
+</table>
 
 </div>
 
@@ -108,78 +120,14 @@ Type `status` (the word on its own), or press `status` in the bar, and a card op
 - **Plan limits at the bottom**: each window (5-hour, week) as a bar and percent, green, then yellow from 50%, red from 80%, with how long until it resets and the weekday and time it does.
 - **Click a stream's name** to open it in the pane. `✕ close` (top right) or your next prompt hides the card.
 - **Scroll a long card** with the wheel, or press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to move focus to it: then <kbd>↑</kbd> <kbd>↓</kbd> scroll and <kbd>q</kbd> closes it, without touching Claude's turn.
-- **On your phone or tablet** the app's **Status** switch shows the same card.
 
-### 📱 On your phone and tablet
+### 📱 Streams Remote
 
-Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Streams app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
+Want your sessions on your phone? **Streams Remote** puts every running session on your phone and tablet: answer Claude, approve permission prompts, send prompts and photos, and share a project with a teammate. It is a paid add-on to this free mod, with a 3-day free trial.
 
-<p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Streams app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
+<p align="center"><img src="assets/phone-app.jpg" width="300" alt="Streams Remote on a phone: a session's streams, a permission prompt with Allow and Deny, and a waiting question"></p>
 
-- **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
-- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.streams/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
-- **Share a project:** ☰ → Share: *Invite to watch* or *Invite to contribute* makes a link (Share… or Copy) for one person: within 24 hours they join that project only, for 7 days, giving their name and using Face ID. Opening it again (say, from the Home Screen app after Safari) moves their access to that device. The app speaks to them about your project and you, never about a Mac or pairing. A watcher sees the project's streams and nothing else, with no controls; the Mac refuses anything it sends. A contributor can reply, prompt and answer permission prompts. Under ☰ you switch each person between Watch and Contribute, give them 7 more days, or remove them; only your own devices can share.
-- **Swipe to archive:** a finished stream (done, idle, stalled or failed) swipes left to archive; archived streams fold under the list, and each swipes right (or taps ↺) to restore. Running, looping and waiting streams do not swipe.
-- **Locked means hidden:** while an account is locked, the app shows only its Unlock, nothing of its sessions. It locks itself after 5 minutes put away or 15 minutes on screen untouched; Face ID opens it again.
-- **Compact or full:** ≡/▤ on an open stream switches every stream between one line a row and whole rows, with replies drawn as markdown (headings, lists, code), as the terminal's pane does.
-- **News from other projects:** a red count by the project name says how many other projects have streams that changed since you looked, with red dots on them in the list and the tabs. Within a project, a changed stream wears a red dot until you open it or leave the project. The 🔔 in the header mutes and unmutes the other projects' news.
-- **Switch project from the header:** the header names the shown project. Swipe it sideways for the next or previous session, or hold it for the list of every session, across every account the device is paired with.
-- **What needs you first:** a waiting stream's question shows on its card without opening it.
-- **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
-- **Streams | Status:** switch to the status card, as on the terminal: git, tickets, then every stream and what it is doing.
-- **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
-- **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. What you send is filed in that stream.
-- **Stop** a running turn (tap twice, so a stray touch doesn't).
-- **Allow or deny permission prompts.** Only a prompt that needs you reaches the phone: one your rules and auto mode's classifier did not settle, the moment Claude Code shows its own dialog. That dialog stays up on the Mac, with "also on your phone" under it; the first answer, on either, wins. No second Face ID: the unlock covers it. Claude's questions with options show on the phone too; unanswered for 2 minutes, Claude takes the option it marked recommended and says so.
-- **Notify me:** turn it on under a session and the phone buzzes when Claude needs you (a permission prompt or a question with options held for the phone, at once; a new open question), when a workflow finishes or fails, or when a quiet loop finds something. An open question at the end of a turn buzzes only once it has waited two minutes unanswered, so answering at the Mac never buzzes the phone. A prompt that moves to the Mac after 2 minutes never buzzes again. Never while you are looking, at most once a minute (Claude needing you is never held back) and 30 times a day. The notification says only "Claude needs you", "Something finished" or "Something failed": nothing from the session passes through the relay or the push service. On an iPhone or iPad it works once the app is on the Home Screen.
-
-#### How it connects
-
-Nothing runs on your Mac beyond the plugin, and nothing on your Mac listens for connections. Each Claude Code session posts to a small **relay** on Cloudflare's free plan; each phone or tablet keeps one WebSocket open to the same relay. The relay passes sealed messages between them and serves the app itself.
-
-```
-Claude Code sessions ──HTTPS──► relay (Cloudflare Worker + Durable Object) ◄──WebSocket── phones, tablets
-```
-
-#### Set up (about 5 minutes, once)
-
-**1. Install the plugin** (see [Install](#-install)).
-
-**2. Run `/streams connect`.** It opens the Streams sign-in page in your browser: continue with GitHub or an email link. Signing up starts a **3-day free trial**; after that Streams Remote is **$25 a month** at [streams.macleodlabs.com](https://streams.macleodlabs.com). The session connects by itself once you have signed in. `/streams billing` subscribes or manages your plan; `/streams disconnect` signs this account out.
-
-Streams on your phone works from **macOS and Linux**; Windows is not supported yet (the local mod runs there as anywhere).
-
-**3. Run `/streams phone`.** It opens a **Pair** page in your Mac's browser with a QR code. The code works for 10 minutes, for as many devices as you scan it with.
-
-**4. Scan it with each phone or tablet.** (Already using the app from your Home Screen, which keeps its own storage apart from Safari? Tap **📷 Scan pairing code** in the app and point it at the code: it pairs right there.) The app opens in Safari (or Chrome on Android). Tap **Create passkey**: the device makes a passkey for the relay's address, saved with Face ID or your passcode. Then **Share → Add to Home Screen** so it opens like an app.
-
-From then on, each time the app connects it shows **Locked**: tap **Unlock** and Face ID opens it. One unlock covers every session of that account, and every answer you send from it: Face ID is asked only to unlock.
-
-**Several accounts?** Run `/streams connect` and `/streams phone` from each. A device can pair with all of them; each account is its own room on the relay, and the app shows the sessions of all of them side by side.
-
-**Manage devices:** `/streams phone devices` lists the paired ones, `/streams phone forget <id>` removes one (`forget all` removes every one). A forgotten device has to scan a new code.
-
-<details>
-<summary><b>What the relay can and cannot see</b></summary>
-
-The relay is a Cloudflare Worker with one Durable Object per account (a "room"). It routes frames; it holds no keys.
-
-**It can see:** the room id, device ids and session ids; when each device connects and whether it is on screen; the size and timing of every message; the SHA-256 of the account's relay token; and the public values in a device's hello (its public keys, its passkey's public key, and passkey signatures).
-
-**It cannot:**
-- **read** snapshots, answers, permission decisions or anything else after the hello. Each session and device seal every message with XChaCha20-Poly1305 under keys from X25519 (fresh ephemeral keys mixed with the long-term ones) and HKDF-SHA256.
-- **change or replay** a message. Each sealed message carries a counter; anything altered, repeated or reordered is dropped.
-- **pair a device of its own.** Pairing needs the QR code's secret, which travels after the `#` in the link, and browsers never send that part to any server, the relay included.
-- **pose as your Mac.** The device checks the session's long-term key from the QR code; a relay that swaps in its own key derives different keys and can open nothing.
-- **approve anything.** Your Mac keeps each device's passkey public key and checks every unlock itself, against a fresh challenge and Face ID; only a device it unlocked can send it anything.
-
-**Notifications** carry no content either. A session tells the relay which devices to wake and why in one word (`needs-you`, `done` or `failed`); the relay keeps each device's push subscription (an endpoint at Apple, Google or Mozilla, and the keys to seal for) and sends that word sealed for the device (RFC 8291, signed with the relay's VAPID key). The push service sees that a push happened and to whom; the relay sees the word.
-
-**It can still** drop or delay messages, as any network can. Then the phone shows your tap as sent and waiting, with Retry, and the prompt can still be answered on the Mac.
-
-Session to relay traffic is budgeted for the free plan (100,000 requests a day): a session posts when its snapshot changes and every 30 seconds otherwise, every 2 seconds only while a device is looking, and not at all while the account has no paired device and no open pairing. Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters before sealing.
-
-</details>
+<p align="center"><a href="https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Learn more and start the free trial →</b></a></p>
 
 ### 🔄 Updates without a restart
 
@@ -239,7 +187,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 </details>
 
-**Want streams on your phone or tablet?** After installing, run `/streams phone` and scan the code (see [Set up](#set-up-about-5-minutes-once)).
+**Want streams on your phone or tablet?** That is [Streams Remote](https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams), with a 3-day free trial.
 
 ### Update or remove
 
@@ -259,13 +207,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
-| `/streams connect` | Sign in to Streams (GitHub or email) so your phone can reach this account; starts the 3-day free trial |
-| `/streams billing` | Subscribe to Streams Remote, or manage or cancel your plan |
-| `/streams disconnect` | Sign this account out of Streams |
-| `/streams delete-account` | Delete your Streams account (on the site, after signing in) |
-| `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
-| `/streams phone devices` | List the paired phones and tablets |
-| `/streams phone forget <id>` | Unpair one device (`all` unpairs every one) |
+| Streams Remote's commands | See [streams.macleodlabs.com](https://streams.macleodlabs.com) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
@@ -336,7 +278,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (251 tests) and `claude plugin validate --strict .` |
+| The streams mod | `plugins/streams` | `claude plugin test .` (274 tests) and `claude plugin validate --strict .` |
 
 ---
 
@@ -348,10 +290,6 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| The app says **Connecting…** | Check `/streams connect` has signed this account in, and that the phone has a network connection. |
-| **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
-| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another address. Run `/streams phone` and pair it again. |
-| A session is missing on the phone | That session runs an older streams, or another account with no device paired: update the plugin and `/reload-plugins`, or run `/streams phone` in that account. |
 
 ---
 
@@ -363,7 +301,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 **Streams is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
 
-<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
+<a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=streams"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
 
 </td>
 </tr>

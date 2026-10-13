@@ -1,7 +1,7 @@
 import { channel, connectionKeys, newIdentity, pairingProof, passkeyChallenge, randomId, relayHash, relayPairToken } from './seal'
 import { ackOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 
-// One device's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), shared by the app and the tests
+// One device's side of the protocol, shared by the app and the tests
 // like seal.ts: the hello, the welcome or denial, the sealed snapshots and commands. No socket and no WebAuthn in it:
 // it gives the challenges to sign, takes the signed passkey assertions as data, and says what to send. The app's
 // transport.ts does the WebSocket and Face ID.
@@ -48,7 +48,10 @@ export const proofParts = (device: { id: string; pk: string }, reg: { credential
 export const relayProtocols = (relayKey: string, secret?: string): string[] => [`sr.${relayKey}${secret ? `.${relayPairToken(secret)}` : ''}`]
 
 /** `relayKey`: this device's key for the room's relay sockets (random, kept with its pairing); its hash goes in every hello. */
-export function createDevice(o: { device: DeviceKeys; room: string; accountPk: string; label?: string; relayKey?: string }) {
+/** What a device says of itself in its hello, for the connection lists: its system, browser, app build, Home Screen. */
+export type DeviceEnv = { os?: string; browser?: string; app?: string; home?: boolean }
+
+export function createDevice(o: { device: DeviceKeys; room: string; accountPk: string; label?: string; relayKey?: string; env?: DeviceEnv }) {
   /** The hello sent on this connection, which welcomes and denials answer. */
   let hello: (Keys & { isPairing: boolean }) | undefined
   /** Keys made for an unlock while Face ID is up, sent with its hello. */
@@ -63,7 +66,8 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
     channels.clear()
     const label = name ? { label: name } : {}
     const rk = o.relayKey ? { rk: relayHash(o.relayKey) } : {}
-    return { to: '*', data: { t: 'hello', device: o.device.id, pk: o.device.pk, eph: k.eph.pk, nonce: k.nonce, ...label, ...rk, ...extra } }
+    const env = o.env ? { env: o.env } : {}
+    return { to: '*', data: { t: 'hello', device: o.device.id, pk: o.device.pk, eph: k.eph.pk, nonce: k.nonce, ...label, ...rk, ...env, ...extra } }
   }
 
   return {

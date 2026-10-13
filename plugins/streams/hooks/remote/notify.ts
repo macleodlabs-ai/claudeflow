@@ -1,11 +1,11 @@
 import type { Snapshot } from './snapshot'
 
-// When a session asks the relay to wake a phone by Web Push (ARCHITECTURE.md, "Notifications"). Pure: it compares
+// When a session asks the relay to wake a phone by Web Push Pure: it compares
 // each snapshot with what it saw before and names a kind, never any text, so the relay and the push service learn
 // only that something happened. It spots news and skips devices that are looking; how often a device may be woken
-// is the relay's alone (relay/cloudflare/src/push.ts `mayPush`), since only the relay sees every session.
+// is the service's alone, since only it sees every session.
 
-/** Also in relay/cloudflare/src/push.ts and app/src/push.ts (separate packages): change all three together. */
+/** The service and the app keep the same list: change them together. */
 export type NotifyKind = 'needs-you' | 'done' | 'failed'
 /** The plaintext hint in the session's `up` body: which devices to wake, and why in one word. */
 export type Hint = { notify: string[]; kind: NotifyKind }
