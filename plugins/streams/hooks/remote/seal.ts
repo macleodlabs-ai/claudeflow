@@ -35,6 +35,13 @@ function concat(...parts: Bytes[]): Bytes {
 /** A random id of n bytes, b64u (16 bytes → 22 chars: rooms, devices; 32 for tokens, secrets, nonces). */
 export const randomId = (n = 16): string => b64u(randomBytes(n))
 
+/** A code a person reads and types (ABCD-EFGH): no 0/O or 1/I. 32 letters, so each byte picks one evenly. */
+export function pairCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const c = [...randomBytes(8)].map(b => alphabet[b % 32]).join('')
+  return `${c.slice(0, 4)}-${c.slice(4)}`
+}
+
 /** A fresh X25519 key pair, b64u: an account identity, a device, or a connection's ephemeral key. */
 export function newIdentity(): { sk: string; pk: string } {
   const sk = x25519.utils.randomSecretKey()

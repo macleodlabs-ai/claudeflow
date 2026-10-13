@@ -1206,6 +1206,29 @@ describe('/streams connect', () => {
     expect(kept.has(STORE.welcomed)).toBe(true)
   })
 
+  test('/streams phone also gives a code to type, kept by the service for those minutes; approve lets the device in', ENGINE, async ($, on) => {
+    session(on)
+    const kept = store(on, { [STORE.token]: TOKEN })
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    const asked = service(on, () => ({ status: 200, body: { ok: true } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    const said = (await run($, 'phone')).text
+    const sent = JSON.parse(asked.find(x => x.path === '/v1/paircode')!.body) as { code: string; r: string; k: string; s: string }
+    expect(sent.code).toMatch(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/)
+    expect(said).toContain(sent.code)
+    expect(said).toContain(`${SITE}/app`)
+    const pairing = kept.get(STORE.pairing) as Pairing
+    // The service holds the code's secret, never the QR code's.
+    expect(sent.s).toBe(pairing.codeSecret)
+    expect(sent.s).not.toBe(pairing.secret)
+    expect(opened[0]![1]).toContain(`&c=${sent.code}`)
+    expect((await run($, 'phone approve')).text).toContain('No device is waiting')
+  })
+
   // The browser page opens with the system's own opener: `open` on macOS, `xdg-open` on Linux.
   test('on Linux the sign-in page opens with xdg-open', ENGINE, async ($, on) => {
     session(on)
@@ -1373,5 +1396,34 @@ describe('device details in the connection lists', () => {
     const first = cycle(link, relay, { devices: [], pairing, now: T0 })
     expect(first.paired[0]!.env).toEqual({ os: 'iOS 18', browser: 'Safari', app: 'v1' })
     expect(rosterOf(first.paired)[0]!.env).toEqual({ os: 'iOS 18', browser: 'Safari', app: 'v1' })
+  })
+})
+
+describe('pairing by a typed code, for a tablet with no camera', () => {
+  test('a device that typed the code waits for approval in Claude Code; approved it pairs, denied it is told so; the QR code needs none', () => {
+    const me = account()
+    const a = phone(me, 'iPad', { relayKey: randomId(32) })
+    const b = phone(me, 'Kindle', { relayKey: randomId(32) })
+    const c = phone(me, 'iPhone', { relayKey: randomId(32) })
+    const relay = room([a, b, c])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
+    const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS, code: 'ABCD-EFGH', codeSecret: randomId(32), approved: [], denied: [] }
+    relay.from(a, a.hello({ now: T0, secret: pairing.codeSecret }))
+    relay.from(c, c.hello({ now: T0, secret: pairing.secret }))
+    const first = cycle(link, relay, { devices: [], pairing, now: T0 })
+    // The QR code pairs as ever; the typed code is held, and asked about.
+    expect(first.paired.map(d => d.label)).toEqual(['iPhone'])
+    expect(link.waitingApproval().map(p => p.label)).toEqual(['iPad'])
+    // The code's own token opens a hello-only socket, as the QR code's does.
+    expect(guardOf({ devices: [], pairing, now: T0 }).pairs).toContain(relayHash(relayPairToken(pairing.codeSecret!)))
+    // Approved: its next hello pairs.
+    relay.from(a, a.hello({ now: T0 + 1000, secret: pairing.codeSecret }))
+    const approved = cycle(link, relay, { devices: first.paired, pairing: { ...pairing, approved: [a.id] }, now: T0 + 1000 })
+    expect(approved.paired.map(d => d.label)).toEqual(['iPad'])
+    // Denied: told so, and never paired.
+    relay.from(b, b.hello({ now: T0 + 2000, secret: pairing.codeSecret }))
+    const denied = cycle(link, relay, { devices: [...first.paired, ...approved.paired], pairing: { ...pairing, denied: [b.id] }, now: T0 + 2000 })
+    expect(denied.paired).toEqual([])
+    expect(denied.frames.some(f => f.to === b.id && (f.data as { why?: string }).why === 'pairing denied')).toBe(true)
   })
 })

@@ -5,8 +5,8 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, envLine, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
-import { newIdentity, publicKeyOf, randomId } from './seal'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, envLine, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link, type PendingPair } from './link'
+import { newIdentity, pairCode, publicKeyOf, randomId } from './seal'
 import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv, type Platform } from './platform'
 import {
   HEARTBEAT_MS,
@@ -61,6 +61,9 @@ const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { 
 /** This mod's version, read from its plugin.json at session start: shown small on the status card, sent with the roster. */
 const versionA = atom({ plugin: 'streams', key: 'version' } as const, { v: '' })
 let modVersion = ''
+
+/** Devices that asked to pair by the typed code, waiting for `/streams phone approve` or `deny`; gone when the pairing ends. */
+const pairAskA = atom({ plugin: 'streams', key: 'pairAsk' } as const, { asks: [] as PendingPair[], until: 0 })
 
 /** The welcome above the prompt, in the first session after installing, until the first prompt. */
 const welcomeA = atom({ plugin: 'streams', key: 'welcome' } as const, { show: false, remote: true })
@@ -399,6 +402,12 @@ async function remoteTick($: $) {
       const refusal = r?.status === 401 ? REFUSED_TOKEN : r?.status === 402 ? REFUSED_PLAN : r?.status === 403 ? REFUSED_ROOM : undefined
       if (refusal) await update($, remoteNoteA, n => (n.text === refusal && now < n.until ? n : { text: refusal, until: now + REFUSED_NOTE_MS }))
       const got = link.answered(r?.ok ? r.text : undefined, now)
+      // A device that typed the code: shown above the prompt until approved, denied, or the pairing ends.
+      const asks = link.waitingApproval()
+      if (asks.length) {
+        const until = pairingOf(await $.store.get(STORE.pairing))?.until ?? now
+        await update($, pairAskA, a => ({ asks: [...a.asks.filter(x => !asks.some(n => n.id === x.id)), ...asks].slice(-5), until }))
+      }
       if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
         devices = devicesOf(withPaired(devicesOf(await $.store.get(STORE.devices)), got.paired))
@@ -970,6 +979,19 @@ async function remotePair($: $, args: string[]): Promise<string> {
     await saveRemote($, STORE.devices, kept)
     return `${d.label} can see ${projectName(d.project)} until ${day(kept.find(x => x.id === d.id)!.until!)}.`
   }
+  if (args[0] === 'approve' || args[0] === 'deny') {
+    const pairing = pairingOf(await $.store.get(STORE.pairing))
+    const asks = (await read($, pairAskA)).asks
+    const which = args.slice(1).join(' ').toLowerCase()
+    const chosen = asks.filter(a => !which || a.id === which || a.label.toLowerCase() === which)
+    if (!pairing || now >= pairing.until || !chosen.length) return 'No device is waiting to pair by code. `/streams phone` shows a new code.'
+    const ids = chosen.map(a => a.id)
+    const kept = args[0] === 'approve' ? { ...pairing, approved: [...(pairing.approved ?? []), ...ids] } : { ...pairing, denied: [...(pairing.denied ?? []), ...ids] }
+    await saveRemote($, STORE.pairing, kept)
+    await update($, pairAskA, a => ({ ...a, asks: a.asks.filter(x => !ids.includes(x.id)) }))
+    const names = chosen.map(a => a.label).join(', ')
+    return args[0] === 'approve' ? `Approved ${names}: it pairs as soon as it says hello again (a few seconds).` : `Denied ${names}: it cannot pair with this code.`
+  }
   if (args[0] === 'invite') {
     const role = args[1] === 'collaborator' || args[1] === 'contributor' ? 'contributor' : args[1] === 'viewer' ? 'viewer' : undefined
     if (!role) return 'Invite as `viewer` (watches this project) or `collaborator` (also answers and prompts): `/streams phone invite viewer`.'
@@ -987,14 +1009,28 @@ async function remotePair($: $, args: string[]): Promise<string> {
     await saveRemote($, STORE.identity, identity)
   }
   const secret = randomId(32)
-  await saveRemote($, STORE.pairing, { secret, until: (await $.clock.now()) + PAIRING_MS })
-  // Everything after `#` stays in the browser: the relay never sees the secret.
-  const url = `${relay}/pair#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}`
+  const until = (await $.clock.now()) + PAIRING_MS
+  // A code to type instead, for a tablet with no camera: its own secret, which the service holds for these minutes
+  // to hand to whoever types the code; a device pairing by it waits for /streams phone approve.
+  const code = pairCode()
+  const codeSecret = randomId(32)
+  const pk = publicKeyOf(identity.sk)
+  const registered = await $.http
+    .fetch(`${relay}/v1/paircode`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+      body: JSON.stringify({ code, r: identity.room, k: pk, s: codeSecret, until }),
+    })
+    .catch(() => undefined)
+  await saveRemote($, STORE.pairing, { secret, until, ...(registered?.ok ? { code, codeSecret } : {}), approved: [], denied: [] })
+  // Everything after `#` stays in the browser: the relay never sees the QR code's secret.
+  const url = `${relay}/pair#r=${identity.room}&k=${pk}&s=${secret}${registered?.ok ? `&c=${code}` : ''}`
   const open = openArgv(platform, url)
   const r = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  const typed = registered?.ok ? ` No camera? On the device open ${SITE}/app, tap Enter a code and type ${code}; you approve it here.` : ''
   return r?.exitCode === 0
-    ? `Opened the pairing page from ${relay} in your browser. Scan its QR code with each phone or tablet within 10 minutes.`
-    : 'Could not open your browser for the pairing page. Run `/streams phone` again once a browser can open.'
+    ? `Opened the pairing page in your browser. Scan its QR code with each phone or tablet within 10 minutes.${typed}`
+    : `Could not open your browser for the pairing page. Run \`/streams phone\` again once a browser can open.${typed}`
 }
 
 export function wireRemote(on: On, opts: RemoteOptions) {
@@ -1038,9 +1074,10 @@ export function wireRemote(on: On, opts: RemoteOptions) {
 
   // After the session chose an absent person's question for them, the band says so.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [note, welcome, now] = await Promise.all([read($, remoteNoteA), read($, welcomeA), $.clock.now()])
+    const [note, welcome, ask, now] = await Promise.all([read($, remoteNoteA), read($, welcomeA), read($, pairAskA), $.clock.now()])
     const hasNote = !!note.text && now < note.until
-    if (e.props.hasSurvey || (!hasNote && !welcome.show)) return next(e)
+    const asks = now < ask.until ? ask.asks : []
+    if (e.props.hasSurvey || (!hasNote && !welcome.show && !asks.length)) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
     return (
@@ -1067,6 +1104,15 @@ export function wireRemote(on: On, opts: RemoteOptions) {
             </Text>
           </Box>
         ) : null}
+        {asks.map(a => (
+          <Text key={`pair-ask:${a.id}`}>
+            <Text bold color="#ffb88a">{`Pair ${a.label}${a.env ? ` (${envLine(a.env)})` : ''}? `}</Text>
+            <Text dimColor>It typed your pairing code. </Text>
+            <Text bold>/streams phone approve</Text>
+            <Text dimColor> or </Text>
+            <Text bold>deny</Text>
+          </Text>
+        ))}
         {hasNote ? <Text key="remote-note" dimColor>{note.text}</Text> : null}
         {below}
       </Box>
