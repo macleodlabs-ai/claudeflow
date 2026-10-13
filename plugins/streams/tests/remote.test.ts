@@ -1258,8 +1258,8 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
 
   test('a device opens its socket with its relay key, and while pairing with the pairing token, never the secret', () => {
     const secret = randomId(32)
-    expect(relayProtocols('KEY', secret)).toEqual(['rk.KEY', `pp.${relayPairToken(secret)}`])
+    expect(relayProtocols('KEY', secret)).toEqual([`sr.KEY.${relayPairToken(secret)}`])
     expect(relayProtocols('KEY', secret).join()).not.toContain(secret)
-    expect(relayProtocols('KEY')).toEqual(['rk.KEY'])
+    expect(relayProtocols('KEY')).toEqual(['sr.KEY'])
   })
 })

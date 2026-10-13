@@ -41,10 +41,11 @@ export const proofParts = (device: { id: string; pk: string }, reg: { credential
  * channel. The channels outlive the socket (the relay only carries sealed frames): `reset` is for locking.
  */
 /**
- * The WebSocket protocols a device opens its relay socket with: its relay key (`rk.`), which the relay checks against
- * the hash its sessions admitted, and while it pairs, the pairing token (`pp.`) derived from the link's secret.
+ * The WebSocket protocol a device opens its relay socket with, `sr.<relay key>[.<pairing token>]`: its relay key,
+ * which the relay checks against the hash its sessions admitted, and while it pairs, the token derived from the
+ * link's secret (never the secret). One protocol: some clients fail a handshake that offers several.
  */
-export const relayProtocols = (relayKey: string, secret?: string): string[] => [`rk.${relayKey}`, ...(secret ? [`pp.${relayPairToken(secret)}`] : [])]
+export const relayProtocols = (relayKey: string, secret?: string): string[] => [`sr.${relayKey}${secret ? `.${relayPairToken(secret)}` : ''}`]
 
 /** `relayKey`: this device's key for the room's relay sockets (random, kept with its pairing); its hash goes in every hello. */
 export function createDevice(o: { device: DeviceKeys; room: string; accountPk: string; label?: string; relayKey?: string }) {
