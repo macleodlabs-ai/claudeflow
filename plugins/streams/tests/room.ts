@@ -7,6 +7,8 @@ import type { PhoneCommand, Snapshot } from '../hooks/remote/snapshot'
 import { authenticator } from './authenticator'
 
 export const RELAY = 'https://relay.example.workers.dev'
+/** The Streams token the tests' sessions hold (`/streams connect`); the fake relay does not check it. */
+export const TOKEN = 'sr1.testaccount0000000.testtoken000000000.sig'
 export const ORIGIN = RELAY
 export const SESSION = 'sess-1'
 

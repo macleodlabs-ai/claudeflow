@@ -10,7 +10,7 @@ import { FETCH_MS, STORE, TICK_MS, TICK_STUCK_MS } from '../hooks/remote/index'
 import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
 import { TRIM_MS } from '../hooks/streams/session'
 import { spkiOf } from './authenticator'
-import { ORIGIN, RELAY, SESSION, T0, account, cycle, phone, room, snapshot, tOf } from './room'
+import { ORIGIN, RELAY, SESSION, TOKEN, T0, account, cycle, phone, room, snapshot, tOf } from './room'
 
 // The relay forwards every frame and could replay, reorder or forge any of them; the session's side must let in only
 // devices that paired with the QR code's secret or prove their passkey now, and run an Allow only with Face ID.
@@ -395,7 +395,7 @@ describe('what a phone may send', () => {
 })
 
 describe('the session on the relay', () => {
-  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY } }
+  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }
 
   test('posts up with its token and cursor, stays quiet when nothing changed, and backs off while the relay fails', OPTIONS, async ($, on) => {
     const me = account()
@@ -780,7 +780,7 @@ function store(on: On, entries: Record<string, unknown> = {}, limit = Infinity):
 }
 
 describe('sharing through the session', () => {
-  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY } }
+  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }
 
   test('the owner invites, the guest joins and moves to the Home Screen app, then is removed and told so', OPTIONS, async ($, on) => {
     // The whole share as index.tsx runs it, with $.store: what the owner and the guest each end up with.
@@ -841,7 +841,7 @@ describe('/streams phone', () => {
   const run = ($: Engine, args: string) =>
     $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never) as Promise<{ text: string }>
 
-  test('opens the pairing page with the room, the account key and a fresh ten-minute secret', { ...ENGINE, options: { relayUrl: `${RELAY}/` } }, async ($, on) => {
+  test('opens the pairing page with the room, the account key and a fresh ten-minute secret', { ...ENGINE, options: { relayUrl: `${RELAY}/`, token: TOKEN } }, async ($, on) => {
     // The secret travels only after `#`, so the relay never learns it; a new identity is made the first time.
     const clock = mock.clock(on, { now: T0 })
     const kept = store(on)
@@ -905,7 +905,7 @@ describe('/streams phone', () => {
     expect(set).toHaveLength(2)
   })
 
-  test('lists the paired devices and forgets one or all', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('lists the paired devices and forgets one or all', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
@@ -919,4 +919,132 @@ describe('/streams phone', () => {
     expect(kept.get(STORE.devices)).toEqual([])
     expect((await run($, 'phone devices')).text).toContain('No devices paired')
   })
+})
+
+describe('/streams connect', () => {
+  const run = ($: Engine, args: string) =>
+    $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never) as Promise<{ text: string }>
+  /** The service's answers, by path, and every request the session made of it, with its headers. */
+  const service = (on: On, answer: (path: string, body: string, n: number) => { status: number; body?: unknown }) => {
+    const asked: { path: string; auth?: string; body: string }[] = []
+    on('http.fetch', async (_$, e) => {
+      const path = new URL(e.url).pathname
+      const body = String(e.init?.body ?? '')
+      const headers = (e.init?.headers ?? {}) as Record<string, string>
+      asked.push({ path, ...(headers.authorization ? { auth: headers.authorization } : {}), body })
+      const a = answer(path, body, asked.filter(x => x.path === path).length)
+      return { value: { status: a.status, ok: a.status < 300, headers: {}, text: JSON.stringify(a.body ?? {}) } } as never
+    })
+    return asked
+  }
+  const configured = (on: On) => {
+    const set: [string, unknown][] = []
+    on('config.list', async () => ({ value: [{ key: 'streams.token', label: 'Streams token', kind: 'text', value: '', provider: { plugin: 'streams', tier: 'user' }, isLocked: false }] }) as never)
+    on('config.set', async (_$, e) => {
+      set.push([e.key, e.value])
+      return { value: e.value } as never
+    })
+    return set
+  }
+
+  // The phone is the Streams service's: with no account, a session never reaches it, whatever it has paired.
+  test('with no token the session never calls the relay, and /streams phone says to connect first', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(IDLE_POLL_MS * 2)
+    expect(asked).toEqual([])
+    expect((await run($, 'phone')).text).toContain('/streams connect')
+  })
+
+  test('every relay request carries the Streams token', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(TICK_MS)
+    expect(asked.length).toBeGreaterThan(0)
+    expect(asked.every(x => x.auth === `Bearer ${TOKEN}`)).toBe(true)
+  })
+
+  // Signing in happens in the browser; the session polls on its own clock and keeps the token in the plugin's
+  // sensitive `token` setting (secure storage), which reloads the plugin with it.
+  test('connect opens the sign-in page, waits for the person, then keeps the token in the token setting', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    const clock = session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    const set = configured(on)
+    const asked = service(on, (path, _body, n) =>
+      path === '/v1/connect'
+        ? { status: 200, body: { code: 'ABCD-EFGH', device: 'dev-secret', url: `${RELAY}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }
+        : n < 3
+          ? { status: 428, body: { status: 'pending' } }
+          : { status: 200, body: { token: 'sr1.a.b.c', account: { login: 'octo' } } },
+    )
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    const r = await run($, 'connect')
+    expect(r.text).toContain('ABCD-EFGH')
+    expect(opened).toEqual([['/usr/bin/open', `${RELAY}/connect?code=ABCD-EFGH`]])
+    await clock.advance(TICK_MS * 4)
+    expect(asked.filter(x => x.path === '/v1/connect/token').map(x => JSON.parse(x.body).device)).toEqual(['dev-secret', 'dev-secret', 'dev-secret'])
+    expect(set).toEqual([['streams.token', 'sr1.a.b.c']])
+    // Kept once: no more polls after the token came.
+    await clock.advance(TICK_MS * 4)
+    expect(asked.filter(x => x.path === '/v1/connect/token')).toHaveLength(3)
+  })
+
+  test('a sign-in page on another site is never opened', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    let opened = 0
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened++
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: 'https://evil.example/connect?code=ABCD-EFGH', interval: 2, expiresIn: 600 } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'connect')).text).toContain('Could not reach')
+    expect(opened).toBe(0)
+  })
+
+  test('disconnect gives the token back to the service and clears it here', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    session(on)
+    store(on)
+    const set = configured(on)
+    const asked = service(on, () => ({ status: 200, body: { ok: true } }))
+    expect((await run($, 'disconnect')).text).toContain('Disconnected')
+    expect(asked.filter(x => x.path === '/v1/token/revoke').map(x => x.auth)).toEqual([`Bearer ${TOKEN}`])
+    expect(set).toEqual([['streams.token', '']])
+  })
+
+  // A revoked token or an ended trial must not look like a relay that is down: the band says what to do.
+  for (const [status, says] of [
+    [401, '/streams connect'],
+    [402, 'trial has ended'],
+  ] as const)
+    test(`a ${status} from the service is said above the prompt`, { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+      const me = account()
+      const a = phone(me, 'iPhone')
+      const clock = session(on)
+      store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+      on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+      service(on, () => ({ status }))
+      on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+      await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+      await clock.advance(TICK_MS)
+      const band = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false } as never })
+      const texts = (await band.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+      await band.unmount()
+      expect(texts).toContain(says)
+    })
 })
