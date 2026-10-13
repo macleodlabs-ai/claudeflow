@@ -1,6 +1,7 @@
 import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
+import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv } from '../hooks/remote/platform'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
@@ -351,9 +352,9 @@ describe('allowing a tool from a phone', () => {
 })
 
 /** The engine around a session: what its other modules ask at start, answered quietly. */
-function session(on: On) {
+function session(on: On, env: Record<string, string> = {}) {
   const clock = mock.clock(on, { now: T0 })
-  mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod', HOME: '/Users/me' })
+  mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod', HOME: '/Users/me', ...env })
   on('session.cwd', async () => ({ value: '/work/claudeflow' }))
   on('session.id', async () => ({ value: SESSION }))
   on('session.start', async (_$, e) => e as never)
@@ -1047,4 +1048,52 @@ describe('/streams connect', () => {
       await band.unmount()
       expect(texts).toContain(says)
     })
+
+  // The browser page opens with the system's own opener: `open` on macOS, `xdg-open` on Linux.
+  test('on Linux the sign-in page opens with xdg-open', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === 'uname') return { value: { exitCode: 0, stdout: 'Linux\n', stderr: '' } } as never
+      if (e.argv[0] === 'xdg-open' || e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: `${RELAY}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }))
+    await $.session.start({ cwd: '/home/me/p', surface: 'terminal', isInteractive: true })
+    await run($, 'connect')
+    expect(opened).toEqual([['xdg-open', `${RELAY}/connect?code=ABCD-EFGH`]])
+  })
+
+  // Not yet on Windows: said plainly, rather than running Mac paths that fail half way.
+  test('on Windows the phone side says it is not there yet, and never calls the relay', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on, { OS: 'Windows_NT' })
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
+    await $.session.start({ cwd: 'C:\\work\\p', surface: 'terminal', isInteractive: true })
+    await clock.advance(IDLE_POLL_MS * 2)
+    expect(asked).toEqual([])
+    expect((await run($, 'connect')).text).toContain('Windows')
+    expect((await run($, 'phone')).text).toContain('Windows')
+  })
+})
+
+describe('platform commands', () => {
+  test('the platform is read from OS (Windows) and uname (macOS, Linux); unknown is macOS', () => {
+    expect(platformOf('Windows_NT', undefined)).toBe('win32')
+    expect(platformOf(undefined, 'Linux\n')).toBe('linux')
+    expect(platformOf(undefined, 'Darwin\n')).toBe('darwin')
+    expect(platformOf(undefined, undefined)).toBe('darwin')
+  })
+  test('each platform gets its own commands, and Windows none yet', () => {
+    expect(openArgv('darwin', 'https://x')).toEqual(['/usr/bin/open', 'https://x'])
+    expect(openArgv('linux', 'https://x')).toEqual(['xdg-open', 'https://x'])
+    expect(decodeArgv('darwin', 'a.b64', 'a')).toEqual(['/usr/bin/base64', '-D', '-i', 'a.b64', '-o', 'a'])
+    // GNU base64 writes to stdout: the shell redirects it, the paths passed as arguments, never in the script.
+    expect(decodeArgv('linux', 'a b.b64', 'a b')).toEqual(['sh', '-c', 'base64 -d -- "$1" > "$2"', 'sh', 'a b.b64', 'a b'])
+    for (const f of [openArgv('win32', 'u'), sleepArgv('win32', 2), mkdirArgv('win32', 'd'), decodeArgv('win32', 'a', 'b'), removeArgv('win32', 'f')]) expect(f).toBeUndefined()
+  })
 })

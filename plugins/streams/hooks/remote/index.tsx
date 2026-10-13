@@ -7,6 +7,7 @@ import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
 import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
+import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv, type Platform } from './platform'
 import {
   HEARTBEAT_MS,
   NO_DEVICE_MS,
@@ -155,6 +156,10 @@ function settle(id: string, why: AckWhy, at: number, label?: string) {
 }
 
 let options: RemoteOptions = { relayUrl: '', token: '' }
+/** Which system this session runs on (platform.ts), found at session start. */
+let platform: Platform = 'darwin'
+/** What the phone side says on a system it does not run on yet. */
+export const NOT_ON_WINDOWS = 'Streams on your phone does not run on Windows yet: it works from macOS and Linux.'
 
 /**
  * A pairing write must not lose to history: when the engine refuses it (the shared store is past 4 MiB), drop the
@@ -178,6 +183,9 @@ async function remoteStart($: $, e: { cwd: string }) {
   const [id, configDir] = await Promise.all([$.session.id(), $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)])
   me = { id, account: accountOf(configDir ?? ''), project: e.cwd.split('/').pop() || e.cwd, busy: false }
   myCwd = e.cwd
+  const osEnv = await $.env.get('OS').catch(() => undefined)
+  const uname = osEnv === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s'], { timeoutMs: 5000 }).catch(() => undefined)
+  platform = platformOf(osEnv, uname?.exitCode === 0 ? uname.stdout : undefined)
   $.clock.every(TICK_MS, () => {
     void remoteTick($).catch(() => {})
     void remoteWait($).catch(() => {})
@@ -226,7 +234,7 @@ async function remoteWait($: $) {
  */
 async function remoteTick($: $) {
   // No Streams token, no traffic: the phone is the Streams service's, and `/streams connect` signs in to it.
-  if (!options.relayUrl || !options.token || !me) return
+  if (!options.relayUrl || !options.token || !me || platform === 'win32') return
   const now = await $.clock.now()
   if (isTicking && now - tickAt < TICK_STUCK_MS) return
   isTicking = true
@@ -364,10 +372,13 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
 async function awaitAnswer<T>($: $, answered: Promise<T>, stop: AbortSignal): Promise<T | undefined> {
   const got = answered.then(v => ({ v }))
   let quietSince: number | undefined
+  const sleep = sleepArgv(platform, TICK_MS / 1000)
+  // With no sleep to wait in, the hook would run past its budget: the terminal asks, as with no phone.
+  if (!sleep) return undefined
   while (!stop.aborted) {
     const step = Promise.all([
       $.clock.sleep(TICK_MS, { signal: stop }).catch(() => undefined),
-      $.process.run(['/bin/sleep', String(TICK_MS / 1000)], { timeoutMs: 10_000 }).catch(() => undefined),
+      $.process.run(sleep, { timeoutMs: 10_000 }).catch(() => undefined),
     ])
     const r = await Promise.race([got, step.then(() => undefined)])
     if (r) return r.v
@@ -530,10 +541,14 @@ async function saveFiles($: $, files: readonly PhoneFile[]): Promise<string[] | 
   for (const [i, f] of files.entries()) {
     const dir = `${home}/.claudeflow/uploads/${f.blob}`
     const path = `${dir}/${f.name}`
-    await $.process.run(['/bin/mkdir', '-p', dir], { timeoutMs: 10_000 })
+    const mkdir = mkdirArgv(platform, dir)
+    const decode = decodeArgv(platform, `${path}.b64`, path)
+    const remove = removeArgv(platform, `${path}.b64`)
+    if (!mkdir || !decode || !remove) return undefined
+    await $.process.run(mkdir, { timeoutMs: 10_000 })
     await $.fs.write(`${path}.b64`, done[i]!.parts.join(''))
-    const r = await $.process.run(['/usr/bin/base64', '-D', '-i', `${path}.b64`, '-o', path], { timeoutMs: 20_000 })
-    await $.process.run(['/bin/rm', '-f', `${path}.b64`], { timeoutMs: 10_000 }).catch(() => undefined)
+    const r = await $.process.run(decode, { timeoutMs: 20_000 })
+    await $.process.run(remove, { timeoutMs: 10_000 }).catch(() => undefined)
     if (r.exitCode !== 0) return undefined
     uploads.delete(f.blob)
     paths.push(path)
@@ -695,6 +710,7 @@ export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run
  * Claude Code holds in secure storage. Says what it did, or what is missing.
  */
 async function connect($: $): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
   const relay = options.relayUrl.replace(/\/+$/, '')
   if (!originOf(relay)) return NO_RELAY
   const label = `${me?.account ?? 'Claude Code'} (Claude Code)`
@@ -712,7 +728,8 @@ async function connect($: $): Promise<string> {
   const now = await $.clock.now()
   const every = Math.max(2, Math.min(30, Number(c.interval) || 2)) * 1000
   connecting = { device: c.device, until: now + Math.min(15 * 60, Number(c.expiresIn) || 600) * 1000, every, nextAt: now + every }
-  const opened = await $.process.run(['/usr/bin/open', c.url], { timeoutMs: 10_000 }).catch(() => undefined)
+  const open = openArgv(platform, c.url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
   const where = opened?.exitCode === 0 ? 'Opened the sign-in page in your browser' : `Open ${c.url} in a browser`
   return `${where}. Check it shows ${c.code}, then sign in with GitHub or email. This session connects by itself once you have.`
 }
@@ -762,6 +779,7 @@ async function disconnect($: $): Promise<string> {
 }
 
 async function remotePair($: $, args: string[]): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
   if (args[0] === 'relay') return setRelay($, args[1])
   const relay = options.relayUrl.replace(/\/+$/, '')
   if (!originOf(relay)) return NO_RELAY
@@ -789,7 +807,8 @@ async function remotePair($: $, args: string[]): Promise<string> {
   await saveRemote($, STORE.pairing, { secret, until: (await $.clock.now()) + PAIRING_MS })
   // Everything after `#` stays in the browser: the relay never sees the secret.
   const url = `${relay}/pair#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}`
-  const r = await $.process.run(['/usr/bin/open', url], { timeoutMs: 10_000 }).catch(() => undefined)
+  const open = openArgv(platform, url)
+  const r = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
   return r?.exitCode === 0
     ? `Opened the pairing page from ${relay} in your browser. Scan its QR code with each phone or tablet within 10 minutes.`
     : 'Could not open your browser for the pairing page. Run `/streams phone` again once a browser can open.'

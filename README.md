@@ -147,6 +147,8 @@ Claude Code sessions ──HTTPS──► relay (Cloudflare Worker + Durable Obj
 
 **2. Run `/streams connect`.** It opens the Streams sign-in page in your browser: continue with GitHub or an email link. Signing up starts a **3-day free trial**; after that Streams Remote is **$25 a month** at [streams.macleodlabs.com](https://streams.macleodlabs.com). The session connects by itself once you have signed in. `/streams disconnect` signs this account out.
 
+Streams on your phone works from **macOS and Linux**; Windows is not supported yet (the local mod runs there as anywhere).
+
 **3. Run `/streams phone`.** It opens a **Pair** page in your Mac's browser with a QR code. The code works for 10 minutes, for as many devices as you scan it with.
 
 **4. Scan it with each phone or tablet.** (Already using the app from your Home Screen, which keeps its own storage apart from Safari? Tap **📷 Scan pairing code** in the app and point it at the code: it pairs right there.) The app opens in Safari (or Chrome on Android). Tap **Create passkey**: the device makes a passkey for the relay's address, saved with Face ID or your passcode. Then **Share → Add to Home Screen** so it opens like an app.
