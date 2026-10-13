@@ -122,24 +122,6 @@ export const upOf = (text: string): UpResponse | undefined => {
   }
 }
 
-/**
- * `/streams phone relay <url|off>` read: the relay address to set, '' for off, or why it is refused. Only an https
- * origin: passkeys need a secure origin, and the relay serves at its root, so a path is a mistake.
- */
-export function relayArg(arg: string): { relayUrl: string } | { error: string } {
-  if (arg === 'off') return { relayUrl: '' }
-  const bad = { error: `"${arg}" is not a relay address. Give its https origin, e.g. https://relay.<you>.workers.dev, or \`off\`.` }
-  let u: URL
-  try {
-    u = new URL(arg)
-  } catch {
-    return bad
-  }
-  if (u.protocol !== 'https:') return { error: `The relay must be https (passkeys need a secure origin), e.g. https://${u.host || 'relay.<you>.workers.dev'}` }
-  if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) return { error: `The relay address has no path: give ${u.origin}` }
-  return u.hostname.includes('.') ? { relayUrl: u.origin } : bad
-}
-
 /** The origin passkeys are made on: the relay's scheme, host and port. */
 export const originOf = (relayUrl: string): string => /^https?:\/\/[^/?#]+/.exec(relayUrl)?.[0] ?? ''
 
