@@ -809,6 +809,10 @@ let connecting: { relay: string; device: string; until: number; every: number; n
 
 /** What `/streams phone` says before this account has signed in to Streams. */
 export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run `/streams connect` to sign in with GitHub or email (3-day free trial).'
+export const SIGNING_IN = 'Waiting for you to finish signing in to Streams in your browser. Run this again once you have.'
+
+/** What a command says without a token: to sign in, or, while a `/streams connect` is under way, to finish doing so. */
+const notConnected = () => (connecting ? SIGNING_IN : NOT_CONNECTED)
 
 /**
  * `/streams connect`: asks the service for a sign-in code, opens its sign-in page in the browser, and polls on the
@@ -878,7 +882,7 @@ async function connectTick($: $) {
  */
 async function billing($: $): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
-  if (!options.token) return NOT_CONNECTED
+  if (!options.token) return notConnected()
   const relay = options.relayUrl.replace(/\/+$/, '')
   const r = await $.http.fetch(`${relay}/v1/billing`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } }).catch(() => undefined)
   if (r?.status === 401) return REFUSED_TOKEN
@@ -909,7 +913,7 @@ async function deleteAccount($: $): Promise<string> {
  */
 async function account($: $): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
-  if (!options.token) return NOT_CONNECTED
+  if (!options.token) return notConnected()
   const r = await $.http
     .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/account`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } })
     .catch(() => undefined)
@@ -939,7 +943,7 @@ async function disconnect($: $): Promise<string> {
 async function remotePair($: $, args: string[]): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
   const relay = options.relayUrl.replace(/\/+$/, '')
-  if (!options.token && !['devices', 'forget', 'extend'].includes(args[0] ?? '')) return NOT_CONNECTED
+  if (!options.token && !['devices', 'forget', 'extend'].includes(args[0] ?? '')) return notConnected()
   const devices = devicesOf(await $.store.get(STORE.devices))
   const now = await $.clock.now()
   const day = (ms: number) => new Date(ms).toISOString().slice(0, 10)
@@ -1122,6 +1126,11 @@ export function wireRemote(on: On, opts: RemoteOptions) {
   on('command.run', { command: 'streams' }, async ($, e, next) => {
     const [verb, ...rest] = e.args.trim().split(/\s+/)
     options.token = tokenFor(String((await $.store.get(STORE.token)) ?? ''), options.relayUrl)
+    // Signed in a moment ago: ask for the token now rather than wait for the clock's next poll.
+    if (!options.token && connecting && verb !== 'connect') {
+      connecting.nextAt = 0
+      await connectTick($)
+    }
     if (verb === 'connect') return { text: await connect($) }
     if (verb === 'disconnect') return { text: await disconnect($) }
     if (verb === 'billing') return { text: await billing($) }
