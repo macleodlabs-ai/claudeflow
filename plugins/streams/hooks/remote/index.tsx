@@ -58,6 +58,58 @@ const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
 /** This session's open channels with devices, kept across a reload of the plugin ($.state outlives it; link.ts `kept`). */
 const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { room: '', session: '', conns: [] as KeptConn[] })
+/** The Streams account's plan as the service last said (every ROSTER_MS while connected), for the status card. */
+export const remoteAccountA = atom({ plugin: 'streams', key: 'remoteAccount' } as const, { who: '', trialEndsAt: 0, paidUntil: 0, status: '', at: 0 })
+
+/** How often a connected session tells the service its phones and guests (the account page) and hears its changes. */
+export const ROSTER_MS = 60_000
+/** When this session last did, and the account page's changes it applied since (sent back as done). */
+let rosterAt = 0
+let doneOps: string[] = []
+
+/** A change made on the account page: remove a device, or give a guest more days. */
+export type RosterOp = { id: string; kind: 'remove'; device: string } | { id: string; kind: 'extend'; device: string; days: number }
+
+/** The account page's changes as the service sent them; anything malformed is dropped. */
+export function opsOf(v: unknown): RosterOp[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap((o): RosterOp[] => {
+    const x = (o ?? {}) as Record<string, unknown>
+    if (typeof x.id !== 'string' || typeof x.device !== 'string') return []
+    if (x.kind === 'remove') return [{ id: x.id, kind: 'remove' as const, device: x.device }]
+    if (x.kind === 'extend' && typeof x.days === 'number' && x.days > 0 && x.days <= 365) return [{ id: x.id, kind: 'extend' as const, device: x.device, days: x.days }]
+    return []
+  })
+}
+
+/** A project as the service may see it: its folder's name, never the path. */
+export const projectName = (cwd: string | undefined): string | undefined => (cwd ? cwd.replace(/\/+$/, '').split(/[\\/]/).pop() || undefined : undefined)
+
+/** The phones and guests as the account page shows them: names, roles, project names and dates; no keys. */
+export const rosterOf = (devices: Device[]) =>
+  devices.map(d => ({
+    id: d.id,
+    label: d.label,
+    pairedAt: d.pairedAt,
+    ...(d.role ? { role: d.role, project: projectName(d.project) ?? 'a project' } : {}),
+    ...(d.until !== undefined ? { until: d.until } : {}),
+    ...(d.removed ? { removed: true } : {}),
+  }))
+
+/**
+ * Applies the account page's changes, as the phone's own share commands do: a guest removed stays as removed (so its
+ * next unlock is told), your own device is forgotten; a guest extended gets the days from today or its end, the later.
+ */
+export function applyOps(devices: Device[], ops: RosterOp[], now: number): { devices: Device[]; done: string[] } {
+  let out = devices
+  for (const op of ops) {
+    const d = out.find(x => x.id === op.device)
+    if (!d) continue
+    if (op.kind === 'remove') out = d.role ? out.map(x => (x.id === d.id ? { ...x, removed: true, until: now } : x)) : out.filter(x => x.id !== d.id)
+    else if (d.role && !d.removed) out = out.map(x => (x.id === d.id ? { ...x, until: Math.max(now, x.until ?? 0) + op.days * DAY_MS } : x))
+  }
+  return { devices: out, done: ops.map(o => o.id) }
+}
 /** How long the band says the session chose for the person. */
 const NOTE_MS = 2 * 60_000
 /** What the band says when the service refuses this account, and for how long after each refusal. */
@@ -259,6 +311,36 @@ async function remoteTick($: $) {
   options.token = tokenFor(String((await $.store.get(STORE.token)) ?? ''), options.relayUrl)
   // No Streams token, no traffic: the phone is the Streams service's, and `/streams connect` signs in to it.
   if (!options.relayUrl || !options.token || !me || platform === 'win32') return
+  // The account page's view of the phones and guests, and its changes, once a minute; the plan rides along.
+  const rosterNow = await $.clock.now()
+  // Nothing paired, shared or pairing: nothing for the page, and no traffic (as for the room itself).
+  const hasAny = devicesOf(await $.store.get(STORE.devices)).length > 0 || invitesOf(await $.store.get(STORE.invites)).length > 0 || !!pairingOf(await $.store.get(STORE.pairing))
+  if (hasAny && rosterNow - rosterAt >= ROSTER_MS) {
+    rosterAt = rosterNow
+    const r = await $.http
+      .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/roster`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+        body: JSON.stringify({ devices: rosterOf(devicesOf(await $.store.get(STORE.devices))), done: doneOps }),
+      })
+      .catch(() => undefined)
+    let got: { ops?: unknown; account?: { who?: unknown; trialEndsAt?: unknown; paidUntil?: unknown; status?: unknown } } = {}
+    try {
+      got = r?.ok ? JSON.parse(r.text) : {}
+    } catch {}
+    if (r?.ok) doneOps = []
+    const ops = opsOf(got.ops)
+    if (ops.length) {
+      const applied = applyOps(devicesOf(await $.store.get(STORE.devices)), ops, rosterNow)
+      await saveRemote($, STORE.devices, applied.devices)
+      doneOps = applied.done
+      // Said done at once, so the page stops saying it is waiting.
+      rosterAt = 0
+    }
+    const a = got.account
+    if (a && typeof a.trialEndsAt === 'number' && typeof a.paidUntil === 'number')
+      await update($, remoteAccountA, () => ({ who: typeof a.who === 'string' ? a.who : '', trialEndsAt: a.trialEndsAt as number, paidUntil: a.paidUntil as number, status: typeof a.status === 'string' ? a.status : '', at: rosterNow }))
+  }
   const now = await $.clock.now()
   if (isTicking && now - tickAt < TICK_STUCK_MS) return
   isTicking = true
@@ -802,6 +884,29 @@ async function deleteAccount($: $): Promise<string> {
   return `${opened?.exitCode === 0 ? 'Opened' : 'Open'} ${url} to delete your Streams account: sign in there and confirm. Then run /streams disconnect here.`
 }
 
+/**
+ * `/streams account`: opens the account page (plan, computers, phones and guests, data) with a one-time link the
+ * service makes for this session's token. Billing and deleting there ask for a fresh sign-in.
+ */
+async function account($: $): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
+  if (!options.token) return NOT_CONNECTED
+  const r = await $.http
+    .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/account`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } })
+    .catch(() => undefined)
+  if (r?.status === 401) return REFUSED_TOKEN
+  let got: { url?: unknown; plan?: unknown } = {}
+  try {
+    got = r?.ok ? JSON.parse(r.text) : {}
+  } catch {}
+  const url = got.url
+  if (typeof url !== 'string' || !url.startsWith(`${SITE}/account?`)) return `Could not reach your Streams account. Try again in a minute, or go to ${SITE}/account.`
+  const open = openArgv(platform, url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  const plan = typeof got.plan === 'string' ? ` ${got.plan}` : ''
+  return opened?.exitCode === 0 ? `Opened your Streams account in your browser.${plan}` : `Open ${url} in a browser (it works once, for 10 minutes).${plan}`
+}
+
 /** `/streams disconnect`: gives the token back to the service and forgets it here. */
 async function disconnect($: $): Promise<string> {
   if (!options.token) return 'This account is not connected to Streams.'
@@ -815,20 +920,55 @@ async function disconnect($: $): Promise<string> {
 async function remotePair($: $, args: string[]): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
   const relay = options.relayUrl.replace(/\/+$/, '')
-  if (!options.token && args[0] !== 'devices' && args[0] !== 'forget') return NOT_CONNECTED
+  if (!options.token && !['devices', 'forget', 'extend'].includes(args[0] ?? '')) return NOT_CONNECTED
   const devices = devicesOf(await $.store.get(STORE.devices))
-  if (args[0] === 'devices') {
-    if (!devices.length) return 'No devices paired. `/streams phone` pairs one.'
-    // A guest's device says whose project it shares; a removed one is kept only to tell it so.
-    const what = (d: Device) => (d.removed ? '  removed' : d.role ? `  ${d.role} of ${d.project}` : '')
-    return devices.map(d => `${d.label}  ${d.id}  paired ${new Date(d.pairedAt).toISOString().slice(0, 10)}${what(d)}`).join('\n')
+  const now = await $.clock.now()
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+  /** A device by its id, or its name (any case): `forget Sam`, `extend sam 14`. */
+  const named = (which: string) => devices.find(d => d.id === which) ?? devices.find(d => d.label.toLowerCase() === which.toLowerCase())
+  if (args[0] === 'devices' || args[0] === 'guests') {
+    const live = devices.filter(d => !d.removed)
+    if (!live.length) return 'No phones or guests. `/streams phone` pairs your phone; `/streams phone invite viewer|collaborator` shares this project.'
+    const what = (d: Device) =>
+      d.role ? `${d.role === 'viewer' ? 'viewer' : 'collaborator'} of ${projectName(d.project)}, until ${day(d.until ?? now)}` : `yours, paired ${day(d.pairedAt)}`
+    return [
+      ...live.map(d => `${d.label}  ${what(d)}  (${d.id})`),
+      '',
+      '`/streams phone forget <name>` removes one; `extend <name> [days]` gives a guest more time; or manage them at /streams account.',
+    ].join('\n')
   }
   if (args[0] === 'forget') {
-    const which = args[1] ?? ''
-    const kept = which === 'all' ? [] : devices.filter(d => d.id !== which)
-    if (kept.length === devices.length) return `No device "${which}" to forget. \`/streams phone devices\` lists them; \`/streams phone forget all\` forgets every one.`
+    const which = args.slice(1).join(' ')
+    if (which === 'all') {
+      await saveRemote($, STORE.devices, devices.map(d => (d.role ? { ...d, removed: true, until: now } : d)).filter(d => d.role))
+      return `Forgot every device and removed every guest. Each has to pair again with \`/streams phone\` or a new invite.`
+    }
+    const d = named(which)
+    if (!d || d.removed) return `No device or guest "${which}". \`/streams phone devices\` lists them; \`/streams phone forget all\` forgets every one.`
+    // A guest stays as removed, so its next unlock is told so; your own device is forgotten.
+    await saveRemote($, STORE.devices, applyOps(devices, [{ id: 'cli', kind: 'remove', device: d.id }], now).devices)
+    return d.role ? `Removed ${d.label}: they can no longer see ${projectName(d.project)}.` : `Forgot ${d.label}. It has to pair again with \`/streams phone\`.`
+  }
+  if (args[0] === 'extend') {
+    const days = Number(args[args.length - 1])
+    const hasDays = args.length > 2 && Number.isInteger(days) && days > 0 && days <= 365
+    const which = args.slice(1, hasDays ? -1 : undefined).join(' ')
+    const d = named(which)
+    if (!d || !d.role || d.removed) return `No guest "${which}" to extend. \`/streams phone devices\` lists them.`
+    const kept = applyOps(devices, [{ id: 'cli', kind: 'extend', device: d.id, days: hasDays ? days : SHARE_DAYS }], now).devices
     await saveRemote($, STORE.devices, kept)
-    return `Forgot ${devices.length - kept.length} of ${devices.length} devices. A forgotten device has to pair again with \`/streams phone\`.`
+    return `${d.label} can see ${projectName(d.project)} until ${day(kept.find(x => x.id === d.id)!.until!)}.`
+  }
+  if (args[0] === 'invite') {
+    const role = args[1] === 'collaborator' || args[1] === 'contributor' ? 'contributor' : args[1] === 'viewer' ? 'viewer' : undefined
+    if (!role) return 'Invite as `viewer` (watches this project) or `collaborator` (also answers and prompts): `/streams phone invite viewer`.'
+    const identity = identityOf(await $.store.get(STORE.identity))
+    if (!identity) return 'Pair your own phone first with `/streams phone`: an invite joins the room it made.'
+    const secret = randomId(32)
+    const open = invitesOf(await $.store.get(STORE.invites)).filter(i => now < i.until)
+    await saveRemote($, STORE.invites, [...open, { secret, until: now + INVITE_MS, project: myCwd, role, days: SHARE_DAYS }].slice(-20))
+    const link = `${HOSTED_RELAY}/#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}&p=${encodeURIComponent(projectName(myCwd) ?? 'project')}&o=${encodeURIComponent(me?.account ?? 'Streams')}`
+    return `Send this link to one person. It works once, for ${Math.round(INVITE_MS / 3_600_000)} hours, and lets them ${role === 'viewer' ? 'watch' : 'watch, answer and prompt in'} ${projectName(myCwd)} for ${SHARE_DAYS} days:\n${link}`
   }
   let identity = identityOf(await $.store.get(STORE.identity))
   if (!identity) {
@@ -889,6 +1029,7 @@ export function wireRemote(on: On, opts: RemoteOptions) {
     if (verb === 'disconnect') return { text: await disconnect($) }
     if (verb === 'billing') return { text: await billing($) }
     if (verb === 'delete-account') return { text: await deleteAccount($) }
+    if (verb === 'account') return { text: await account($) }
     if (verb !== 'phone') return next(e)
     return { text: await remotePair($, rest) }
   })

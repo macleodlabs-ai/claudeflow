@@ -6,9 +6,10 @@ import { relayProtocols } from '../hooks/remote/device'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId, relayHash, relayPairToken } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { ACTIVE_POLL_MS, DAY_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
-import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, tokenFor } from '../hooks/remote/index'
+import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, applyOps, opsOf, projectName, rosterOf, tokenFor } from '../hooks/remote/index'
+import { accountRow } from '../hooks/ui/statusCard'
 import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
 import { TRIM_MS } from '../hooks/streams/session'
 import { spkiOf } from './authenticator'
@@ -408,7 +409,7 @@ describe('the session on the relay', () => {
     let isUp = true
     const sent: Up[] = []
     on('http.fetch', async (_$, e) => {
-      sent.push({ url: e.url, body: JSON.parse(String(e.init?.body)) })
+      if (e.url.endsWith('/up')) sent.push({ url: e.url, body: JSON.parse(String(e.init?.body)) })
       if (!isUp) return { value: { status: 503, ok: false, headers: {}, text: '' } } as never
       return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ frames: [{ seq: 7, from: a.id, data: { here: 1 } }], devices: [] }) } } as never
     })
@@ -764,6 +765,9 @@ const STORE_LIMIT = 4 * 1024 * 1024
  * The plugin's $.store in memory, readable by the test (mock.store keeps its own out of reach). With `limit`, a write
  * that would take the whole store past it is refused, as the engine refuses it.
  */
+/** Puts `devices` back in a test store, as a session would have kept them. */
+const saveDevices = (kept: Map<string, unknown>, devices: Device[]) => kept.set(STORE.devices, devices)
+
 function store(on: On, entries: Record<string, unknown> = {}, limit = Infinity): Map<string, unknown> {
   const m = new Map(Object.entries(entries))
   on('store.get', async (_$, e) => ({ value: m.get(e.key) }) as never)
@@ -872,19 +876,39 @@ describe('/streams phone', () => {
   // there is one value and no override to forget. A wrong one is refused before it is written: an http or pathed
   // address would make passkeys fail on the phone with no hint why.
 
-  test('lists the paired devices and forgets one or all', ENGINE, async ($, on) => {
+  test('manage phones and guests from Claude Code: list, forget, extend, invite', ENGINE, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
-    mock.clock(on)
-    const kept = store(on, { [STORE.token]: TOKEN,  [STORE.devices]: [a.stored(), b.stored()] })
-    expect((await run($, 'phone devices')).text).toContain(`iPhone  ${a.id}`)
-    expect((await run($, 'phone forget nobody')).text).toContain('No device')
-    await run($, `phone forget ${a.id}`)
-    expect((kept.get(STORE.devices) as Device[]).map(d => d.label)).toEqual(['iPad'])
+    mock.clock(on, { now: T0 })
+    const sam: Device = { ...phone(me, 'Sam').stored(), role: 'viewer', project: '/Users/me/dev/secret-client/my-app', until: T0 + 3 * DAY_MS, via: 'inv' }
+    const kept = store(on, { [STORE.token]: TOKEN, [STORE.identity]: me, [STORE.devices]: [a.stored(), b.stored(), sam] })
+    const list = (await run($, 'phone devices')).text
+    expect(list).toContain('iPhone  yours, paired')
+    // A guest shows its role and its project's name, never the project's path.
+    expect(list).toContain('Sam  viewer of my-app, until')
+    expect(list).not.toContain('secret-client')
+    expect((await run($, 'phone forget nobody')).text).toContain('No device or guest')
+    // Your own device is forgotten; a guest is kept as removed, so their next unlock is told they were removed.
+    await run($, 'phone forget iphone')
+    await run($, 'phone forget Sam')
+    const after = kept.get(STORE.devices) as Device[]
+    expect(after.map(d => d.label)).toEqual(['iPad', 'Sam'])
+    expect(after.find(d => d.label === 'Sam')!.removed).toBe(true)
+    expect((await run($, 'phone extend Sam')).text).toContain('No guest')
+    // Extending a live guest adds days from their end.
+    await saveDevices(kept, [b.stored(), { ...sam }])
+    expect((await run($, 'phone extend sam 14')).text).toContain('Sam can see my-app until')
+    expect((kept.get(STORE.devices) as Device[]).find(d => d.label === 'Sam')!.until).toBe(T0 + 3 * DAY_MS + 14 * DAY_MS)
+    // An invite: a link to this room for one person, with the project's name only.
+    const invite = (await run($, 'phone invite viewer')).text
+    expect(invite).toContain(`https://relay.claudeflow.workers.dev/#r=${me.room}&k=`)
+    expect(invite).not.toContain('secret-client')
+    expect((kept.get(STORE.invites) as { role: string }[]).at(-1)!.role).toBe('viewer')
+    expect((await run($, 'phone invite boss')).text).toContain('Invite as `viewer`')
     await run($, 'phone forget all')
-    expect(kept.get(STORE.devices)).toEqual([])
-    expect((await run($, 'phone devices')).text).toContain('No devices paired')
+    expect((kept.get(STORE.devices) as Device[]).every(d => d.role && d.removed)).toBe(true)
+    expect((await run($, 'phone devices')).text).toContain('No phones or guests')
   })
 })
 
@@ -1114,6 +1138,34 @@ describe('/streams connect', () => {
     expect(asked).toHaveLength(0)
   })
 
+  test('/streams account opens the account page by its one-time link, and only one on the Streams site', ENGINE, async ($, on) => {
+    session(on)
+    store(on, { [STORE.token]: TOKEN })
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    let url = `${SITE}/account?t=one-time`
+    const asked = service(on, () => ({ status: 200, body: { url, plan: 'Free trial, ends Fri 17 Oct.' } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'account')).text).toContain('Opened your Streams account')
+    expect(opened).toEqual([['/usr/bin/open', url]])
+    expect(asked.filter(x => x.path === '/v1/account').map(x => x.auth)).toEqual([`Bearer ${BEARER}`])
+    url = 'https://evil.example/account?t=x'
+    expect((await run($, 'account')).text).toContain('Could not reach your Streams account')
+    expect(opened).toHaveLength(1)
+  })
+
+  test('/streams account is Streams Remote only: before connecting it says to connect, and calls nothing', ENGINE, async ($, on) => {
+    session(on)
+    store(on)
+    const asked = service(on, () => ({ status: 200 }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'account')).text).toContain('/streams connect')
+    expect(asked).toHaveLength(0)
+  })
+
   // The browser page opens with the system's own opener: `open` on macOS, `xdg-open` on Linux.
   test('on Linux the sign-in page opens with xdg-open', ENGINE, async ($, on) => {
     session(on)
@@ -1219,5 +1271,43 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
     expect(relayProtocols('KEY', secret)).toEqual([`sr.KEY.${relayPairToken(secret)}`])
     expect(relayProtocols('KEY', secret).join()).not.toContain(secret)
     expect(relayProtocols('KEY')).toEqual(['sr.KEY'])
+  })
+})
+
+describe('the account page and the status card (Streams Remote only)', () => {
+  const dev = (id: string, more: Partial<Device> = {}): Device => ({ id, pk: 'pk', credentialId: 'c', credentialKey: 'k', label: id, pairedAt: 0, ...more })
+
+  test("the page's changes apply as the phone's own do: a removed guest stays to be told, your own device goes, extend counts from the later end", () => {
+    const now = T0
+    const devices = [dev('mine'), dev('guest', { role: 'viewer', project: '/p', until: now + DAY_MS }), dev('late', { role: 'viewer', project: '/p', until: now - DAY_MS })]
+    const r = applyOps(devices, [{ id: 'o1', kind: 'remove', device: 'mine' }, { id: 'o2', kind: 'remove', device: 'guest' }, { id: 'o3', kind: 'extend', device: 'late', days: 7 }], now)
+    expect(r.devices.map(d => d.id)).toEqual(['guest', 'late'])
+    expect(r.devices[0]).toMatchObject({ removed: true, until: now })
+    // Its access had run out: seven days from today, not from its old end.
+    expect(r.devices[1]!.until).toBe(now + 7 * DAY_MS)
+    expect(r.done).toEqual(['o1', 'o2', 'o3'])
+    // A device the page names that is not here changes nothing, and is still said done.
+    expect(applyOps(devices, [{ id: 'o4', kind: 'remove', device: 'gone' }], now)).toEqual({ devices, done: ['o4'] })
+  })
+
+  test('only well-formed changes are taken from the service, and a project is sent as its folder name only', () => {
+    expect(opsOf([{ id: 'a', kind: 'remove', device: 'd' }, { id: 'b', kind: 'extend', device: 'd', days: 9999 }, { kind: 'remove' }, 'junk'])).toEqual([{ id: 'a', kind: 'remove', device: 'd' }])
+    expect(opsOf('nope')).toEqual([])
+    expect(projectName('/Users/me/dev/secret-client/my-app/')).toBe('my-app')
+    const sent = rosterOf([dev('g', { role: 'contributor', project: '/Users/me/dev/secret-client/my-app', until: 5 })])
+    expect(sent).toEqual([{ id: 'g', label: 'g', pairedAt: 0, role: 'contributor', project: 'my-app', until: 5 }])
+    // No keys or passkey material ever goes to the page.
+    expect(JSON.stringify(sent)).not.toMatch(/pk|credential|secret-client/)
+  })
+
+  test("the status card's Streams Remote row: trial, paid, payment failed, ended, and none at all without an account", () => {
+    const now = T0
+    expect(accountRow(undefined, now)).toBeUndefined()
+    expect(accountRow({ trialEndsAt: 0, paidUntil: 0, status: '', at: 0 }, now)).toBeUndefined()
+    expect(accountRow({ trialEndsAt: now + DAY_MS, paidUntil: 0, status: '', at: now }, now)).toMatchObject({ state: 'trial', hint: '/streams account', isLive: true })
+    expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'active', at: now }, now)).toMatchObject({ state: 'paid', isLive: true })
+    expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'past_due', at: now }, now)).toMatchObject({ state: 'payment failed', hint: '/streams billing' })
+    // Ended: the phone is off, and the row says the free mod is not.
+    expect(accountRow({ trialEndsAt: now - 1, paidUntil: 0, status: '', at: now }, now)).toMatchObject({ state: 'ended', hint: '/streams billing', isLive: false, detail: 'phone off, the free mod keeps working' })
   })
 })
