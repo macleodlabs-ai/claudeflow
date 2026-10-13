@@ -1134,6 +1134,22 @@ describe('/streams connect', () => {
     expect(opened).toHaveLength(1)
   })
 
+  test('/streams delete-account opens the site page that asks for a fresh sign-in, and calls the service for nothing', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    const asked = service(on, () => ({ status: 200 }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'delete-account')).text).toContain(`${SITE}/account/delete`)
+    expect(opened).toEqual([['/usr/bin/open', `${SITE}/account/delete`]])
+    // A session's token never deletes the account: nothing is sent to the service.
+    expect(asked.filter(x => x.path.includes('delete'))).toHaveLength(0)
+  })
+
   test('/streams billing before connecting says to connect, and calls nothing', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
     session(on)
     store(on)

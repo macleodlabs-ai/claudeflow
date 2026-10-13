@@ -262,6 +262,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `/streams connect` | Sign in to Streams (GitHub or email) so your phone can reach this account; starts the 3-day free trial |
 | `/streams billing` | Subscribe to Streams Remote, or manage or cancel your plan |
 | `/streams disconnect` | Sign this account out of Streams |
+| `/streams delete-account` | Delete your Streams account (on the site, after signing in) |
 | `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
 | `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
 | `/streams phone devices` | List the paired phones and tablets |

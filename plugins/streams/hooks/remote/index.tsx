@@ -805,6 +805,17 @@ async function billing($: $): Promise<string> {
   return opened?.exitCode === 0 ? 'Opened Streams billing in your browser.' : `Open ${url} in a browser.`
 }
 
+/**
+ * `/streams delete-account`: opens the site's page for deleting the Streams account. Deleting needs a fresh sign-in
+ * there, never just this session's token. Run /streams disconnect afterwards to clear the token here too.
+ */
+async function deleteAccount($: $): Promise<string> {
+  const url = `${SITE}/account/delete`
+  const open = platform === 'win32' ? undefined : openArgv(platform, url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  return `${opened?.exitCode === 0 ? 'Opened' : 'Open'} ${url} to delete your Streams account: sign in there and confirm. Then run /streams disconnect here.`
+}
+
 /** `/streams disconnect`: gives the token back to the service and forgets it here. */
 async function disconnect($: $): Promise<string> {
   if (!options.token) return 'This account is not connected to Streams.'
@@ -893,6 +904,7 @@ export function wireRemote(on: On, opts: RemoteOptions) {
     if (verb === 'connect') return { text: await connect($) }
     if (verb === 'disconnect') return { text: await disconnect($) }
     if (verb === 'billing') return { text: await billing($) }
+    if (verb === 'delete-account') return { text: await deleteAccount($) }
     if (verb !== 'phone') return next(e)
     return { text: await remotePair($, rest) }
   })
