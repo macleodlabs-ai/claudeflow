@@ -5,7 +5,7 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, envLine, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv, type Platform } from './platform'
 import {
@@ -58,6 +58,10 @@ const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
 /** This session's open channels with devices, kept across a reload of the plugin ($.state outlives it; link.ts `kept`). */
 const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { room: '', session: '', conns: [] as KeptConn[] })
+/** This mod's version, read from its plugin.json at session start: shown small on the status card, sent with the roster. */
+const versionA = atom({ plugin: 'streams', key: 'version' } as const, { v: '' })
+let modVersion = ''
+
 /** The welcome above the prompt, in the first session after installing, until the first prompt. */
 const welcomeA = atom({ plugin: 'streams', key: 'welcome' } as const, { show: false, remote: true })
 
@@ -97,6 +101,7 @@ export const rosterOf = (devices: Device[]) =>
     ...(d.role ? { role: d.role, project: projectName(d.project) ?? 'a project' } : {}),
     ...(d.until !== undefined ? { until: d.until } : {}),
     ...(d.removed ? { removed: true } : {}),
+    ...(d.env ? { env: d.env } : {}),
   }))
 
 /**
@@ -326,7 +331,7 @@ async function remoteTick($: $) {
       .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/roster`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
-        body: JSON.stringify({ devices: rosterOf(devicesOf(await $.store.get(STORE.devices))), done: doneOps }),
+        body: JSON.stringify({ devices: rosterOf(devicesOf(await $.store.get(STORE.devices))), done: doneOps, ...(modVersion ? { version: modVersion } : {}) }),
       })
       .catch(() => undefined)
     let got: { ops?: unknown; account?: { who?: unknown; trialEndsAt?: unknown; paidUntil?: unknown; status?: unknown } } = {}
@@ -937,7 +942,8 @@ async function remotePair($: $, args: string[]): Promise<string> {
     const what = (d: Device) =>
       d.role ? `${d.role === 'viewer' ? 'viewer' : 'collaborator'} of ${projectName(d.project)}, until ${day(d.until ?? now)}` : `yours, paired ${day(d.pairedAt)}`
     return [
-      ...live.map(d => `${d.label}  ${what(d)}  (${d.id})`),
+      ...live.map(d => `${d.label}  ${what(d)}${d.env ? `  ${envLine(d.env)}` : ''}  (${d.id})`),
+      ...(modVersion ? [`streams ${modVersion}`] : []),
       '',
       '`/streams phone forget <name>` removes one; `extend <name> [days]` gives a guest more time; or manage them at /streams account.',
     ].join('\n')
@@ -996,6 +1002,13 @@ export function wireRemote(on: On, opts: RemoteOptions) {
   // Interactive sessions only: a headless run has no one watching from a phone.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     await remoteStart($, e)
+    try {
+      const v = (JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: unknown }).version
+      if (typeof v === 'string') {
+        modVersion = v
+        await update($, versionA, () => ({ v }))
+      }
+    } catch {}
     // Once, ever, per account: what Streams is, the phone side, and who made it. Not for someone already connected.
     if (!(await $.store.get(STORE.welcomed))) {
       await $.store.set(STORE.welcomed, await $.clock.now())

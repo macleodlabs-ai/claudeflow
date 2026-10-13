@@ -34,7 +34,22 @@ export type Device = {
    * this device's id only with that key, once every device of the account has one (`guardOf`).
    */
   relayKey?: string
+  /** What the device said of itself in its last hello (system, browser, app build, Home Screen), for the lists. */
+  env?: { os?: string; browser?: string; app?: string; home?: boolean }
 }
+
+/** A device's own description from its hello, kept only in its expected shape: short strings, nothing else. */
+export function envOf(v: unknown): Device['env'] {
+  if (!v || typeof v !== 'object') return undefined
+  const x = v as Record<string, unknown>
+  const str40 = (s: unknown) => (typeof s === 'string' && s.length > 0 && s.length <= 40 && /^[\w .()+/-]+$/.test(s) ? s : undefined)
+  const env = { ...(str40(x.os) ? { os: str40(x.os) } : {}), ...(str40(x.browser) ? { browser: str40(x.browser) } : {}), ...(str40(x.app) ? { app: str40(x.app) } : {}), ...(x.home === true ? { home: true } : {}) }
+  return Object.keys(env).length ? env : undefined
+}
+
+/** A device's description as one short line: `iOS 18 · Safari · Home Screen · app 1a2b3c4`. */
+export const envLine = (env: Device['env']): string =>
+  env ? [env.os, env.browser, env.home ? 'Home Screen' : undefined, env.app ? `app ${env.app}` : undefined].filter(Boolean).join(' · ') : ''
 /** What a shared device may do: watch only, or act as the owner does in that project. */
 export type Role = 'viewer' | 'contributor'
 /** An open pairing: the QR code's secret, and when it stops working. */
@@ -140,6 +155,8 @@ type Hello = {
   registration?: { credentialId: string; publicKey: string; clientDataJSON: string }
   /** `relayHash` of the device's relay key (newer apps). */
   rk?: string
+  /** What the device says of itself (newer apps). */
+  env?: unknown
 }
 
 const helloOf = (data: unknown): Hello | undefined => {
@@ -426,8 +443,11 @@ export function createLink(o: { identity: Identity; session: string; origin: str
           continue
         }
         // A hello that names its relay key teaches it to the account, a paired device's included (its first since keys).
-        const admitted = typeof h.rk === 'string' && /^[A-Za-z0-9_-]{43}$/.test(h.rk) ? { ...got.device, relayKey: h.rk } : got.device
-        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey && d.relayKey === admitted.relayKey)) {
+        const keyed = typeof h.rk === 'string' && /^[A-Za-z0-9_-]{43}$/.test(h.rk) ? { ...got.device, relayKey: h.rk } : got.device
+        // Its own description too, as of this hello: an updated app or a new browser shows in the lists.
+        const env = envOf(h.env)
+        const admitted = env ? { ...keyed, env } : keyed
+        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey && d.relayKey === admitted.relayKey && JSON.stringify(d.env) === JSON.stringify(admitted.env))) {
           devices.splice(0, devices.length, ...withPaired(devices, [admitted]))
           out.paired.splice(0, out.paired.length, ...withPaired(out.paired, [admitted]))
         }

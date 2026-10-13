@@ -172,6 +172,8 @@ declare module 'claude-code' {
       asking: { id: string; tool: string; summary: string }[]
       /** What the session answered for the person (a recommended option nobody chose), shown in the band until `until`. */
       remoteNote: { text: string; until: number }
+      /** This mod's version, from its plugin.json, for the status card. */
+      version: { v: string }
       /** The welcome above the prompt, once after installing, until the first prompt (`remote`: offer Streams Remote). */
       welcome: { show: boolean; remote: boolean }
       /** The Streams account's plan as the service last said (Streams Remote only), for the status card. */

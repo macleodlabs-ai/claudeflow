@@ -15,6 +15,8 @@ export type Card = {
   limits: readonly LimitView[]
   /** Streams Remote's plan, once the service has said it (a connected account only; the free mod has none). */
   account?: { trialEndsAt: number; paidUntil: number; status: string; at: number }
+  /** This mod's version, shown small for debugging. */
+  version?: string
   width: number
   now: number
 }
@@ -133,6 +135,11 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
               <Text dimColor>{l.resetsAt ? ` · ${l.resetsAt}` : ''}</Text>
             </Box>
           ))}
+        </Box>
+      ) : null}
+      {c.version ? (
+        <Box key="version" justifyContent="flex-end">
+          <Text dimColor>{`streams ${c.version}`}</Text>
         </Box>
       ) : null}
     </Box>

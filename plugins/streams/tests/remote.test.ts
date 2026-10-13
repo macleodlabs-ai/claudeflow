@@ -6,7 +6,7 @@ import { relayProtocols } from '../hooks/remote/device'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId, relayHash, relayPairToken } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, DAY_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { ACTIVE_POLL_MS, DAY_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, envLine, envOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, applyOps, opsOf, projectName, rosterOf, tokenFor } from '../hooks/remote/index'
 import { accountRow } from '../hooks/ui/statusCard'
@@ -1349,5 +1349,29 @@ describe('the account page and the status card (Streams Remote only)', () => {
     expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'past_due', at: now }, now)).toMatchObject({ state: 'payment failed', hint: '/streams billing' })
     // Ended: the phone is off, and the row says the free mod is not.
     expect(accountRow({ trialEndsAt: now - 1, paidUntil: 0, status: '', at: now }, now)).toMatchObject({ state: 'ended', hint: '/streams billing', isLive: false, detail: 'phone off, the free mod keeps working' })
+  })
+})
+
+describe('device details in the connection lists', () => {
+  test("a device's own description is kept only in its shape, and reads as one line", () => {
+    expect(envOf({ os: 'iOS 18', browser: 'Safari', app: '1a2b3c4', home: true })).toEqual({ os: 'iOS 18', browser: 'Safari', app: '1a2b3c4', home: true })
+    // Anything else, overlong or with markup, is dropped: it is shown on a web page and in the terminal.
+    expect(envOf({ os: '<script>', browser: 'x'.repeat(41), extra: 'nope' })).toBeUndefined()
+    expect(envOf('junk')).toBeUndefined()
+    expect(envLine({ os: 'Android 15', browser: 'Chrome', home: true, app: 'abc' })).toBe('Android 15 · Chrome · Home Screen · app abc')
+    expect(envLine(undefined)).toBe('')
+  })
+
+  test("a hello's description is kept with the device, an updated app shows, and it goes to the account page's list", () => {
+    const me = account()
+    const a = phone(me, 'iPhone', { relayKey: randomId(32) })
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
+    const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
+    const hello = a.hello({ now: T0, secret: pairing.secret })
+    relay.from(a, { ...hello, env: { os: 'iOS 18', browser: 'Safari', app: 'v1' } })
+    const first = cycle(link, relay, { devices: [], pairing, now: T0 })
+    expect(first.paired[0]!.env).toEqual({ os: 'iOS 18', browser: 'Safari', app: 'v1' })
+    expect(rosterOf(first.paired)[0]!.env).toEqual({ os: 'iOS 18', browser: 'Safari', app: 'v1' })
   })
 })
