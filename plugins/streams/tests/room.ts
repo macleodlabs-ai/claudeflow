@@ -15,10 +15,10 @@ export const ORIGIN = RELAY
 export const SESSION = 'sess-1'
 
 /** A phone or tablet as the app runs it: device.ts with its own id and keys, and a passkey for Face ID. */
-export function phone(account: Identity, label: string, o: { browser?: boolean } = {}) {
+export function phone(account: Identity, label: string, o: { browser?: boolean; relayKey?: string } = {}) {
   const keys = { id: randomId(), ...newIdentity() }
   const passkey = authenticator(ORIGIN, `cred-${label}`, o.browser)
-  const core = createDevice({ device: keys, room: account.room, accountPk: publicKeyOf(account.sk), label })
+  const core = createDevice({ device: keys, room: account.room, accountPk: publicKeyOf(account.sk), label, ...(o.relayKey ? { relayKey: o.relayKey } : {}) })
   return {
     id: keys.id,
     pk: keys.pk,

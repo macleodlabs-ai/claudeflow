@@ -2,10 +2,11 @@ import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv } from '../hooks/remote/platform'
+import { relayProtocols } from '../hooks/remote/device'
 
 import { p256 } from '../hooks/vendor/noble'
-import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId, relayHash, relayPairToken } from '../hooks/remote/seal'
+import { ACTIVE_POLL_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, tokenFor } from '../hooks/remote/index'
 import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
@@ -415,7 +416,8 @@ describe('the session on the relay', () => {
     await clock.advance(TICK_MS)
     expect(sent).toHaveLength(1)
     expect(sent[0]?.url).toBe(`${RELAY}/v1/room/${me.room}/up`)
-    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [] })
+    // The guard is off: the paired phone has no relay key yet (an app from before keys), so nobody is shut out.
+    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [], guard: { on: false, admit: [], pairs: [] } })
     // Nothing changed and no device looks: no request until the quiet pace's next post (on the first 2 s tick past
     // it), which carries the cursor on.
     const due = Math.ceil(IDLE_POLL_MS / TICK_MS) * TICK_MS
@@ -1205,5 +1207,59 @@ describe('platform commands', () => {
     // GNU base64 writes to stdout: the shell redirects it, the paths passed as arguments, never in the script.
     expect(decodeArgv('linux', 'a b.b64', 'a b')).toEqual(['sh', '-c', 'base64 -d -- "$1" > "$2"', 'sh', 'a b.b64', 'a b'])
     for (const f of [openArgv('win32', 'u'), sleepArgv('win32', 2), mkdirArgv('win32', 'd'), decodeArgv('win32', 'a', 'b'), removeArgv('win32', 'f')]) expect(f).toBeUndefined()
+  })
+})
+
+describe('the relay guard: who may open the room\'s device sockets', () => {
+  test("a pairing hello teaches the account the device's relay key, and the session's posts hold the room to it", () => {
+    const me = account()
+    const rk = randomId(32)
+    const a = phone(me, 'iPhone', { relayKey: rk })
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
+    const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
+    relay.from(a, a.hello({ now: T0, secret: pairing.secret }))
+    const first = cycle(link, relay, { devices: [], pairing, now: T0 })
+    expect(first.paired[0]!.relayKey).toBe(relayHash(rk))
+    // While the pairing is open its token's hash is posted too, so a new phone can still reach the room to say hello.
+    expect(first.posts[0]!.guard).toEqual({ on: false, admit: [], pairs: [relayHash(relayPairToken(pairing.secret))] })
+    const later = cycle(link, relay, { devices: first.paired, now: T0 + PAIRING_MS + 1 })
+    expect(later.posts[0]!.guard).toEqual({ on: true, admit: [{ id: a.id, key: relayHash(rk) }], pairs: [] })
+    // The key itself never goes to the relay in a frame: only its hash, in the hello.
+    expect(JSON.stringify(first.posts)).not.toContain(rk)
+  })
+
+  test('a phone paired before relay keys learns one at its next unlock, and only then is the guard on', () => {
+    const me = account()
+    const old = phone(me, 'old iPhone')
+    const rk = randomId(32)
+    const upgraded = phone(me, 'old iPhone', { relayKey: rk })
+    const stored = old.stored()
+    expect(guardOf({ devices: [stored], now: T0 })).toEqual({ on: false, admit: [], pairs: [] })
+    // The same device (same keys and passkey) unlocking with a newer app: its hello carries the key's hash.
+    const hello = upgraded.hello({ now: T0 })
+    expect(hello.rk).toBe(relayHash(rk))
+  })
+
+  test("guardOf leaves out removed and expired guests, and an expired pairing or invite", () => {
+    const d = (id: string, more: Record<string, unknown> = {}) => ({ id, pk: 'pk', credentialId: 'c', credentialKey: 'k', label: id, pairedAt: 0, relayKey: relayHash(id), ...more })
+    const g = guardOf({
+      devices: [d('owner-device-000001'), d('guest-removed-00001', { role: 'viewer', project: '/p', until: T0 + 1, removed: true }), d('guest-expired-00001', { role: 'viewer', project: '/p', until: T0 - 1 })],
+      pairing: { secret: randomId(32), until: T0 - 1 },
+      invites: [{ secret: randomId(32), until: T0 + 1000, project: '/p', role: 'viewer', days: 7 }],
+      now: T0,
+    })
+    expect(g.admit.map(a => a.id)).toEqual(['owner-device-000001'])
+    expect(g.on).toBe(true)
+    expect(g.pairs).toHaveLength(1)
+    // Nothing paired at all: nothing to guard, so the room stays as it was.
+    expect(guardOf({ devices: [], now: T0 }).on).toBe(false)
+  })
+
+  test('a device opens its socket with its relay key, and while pairing with the pairing token, never the secret', () => {
+    const secret = randomId(32)
+    expect(relayProtocols('KEY', secret)).toEqual(['rk.KEY', `pp.${relayPairToken(secret)}`])
+    expect(relayProtocols('KEY', secret).join()).not.toContain(secret)
+    expect(relayProtocols('KEY')).toEqual(['rk.KEY'])
   })
 })

@@ -1,4 +1,4 @@
-import { b64u, channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, verifyPasskey } from './seal'
+import { b64u, channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, relayHash, relayPairToken, verifyPasskey } from './seal'
 import { proofParts } from './device'
 import { HEARTBEAT_MS, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 import { createNotifier, type Hint } from './notify'
@@ -29,6 +29,11 @@ export type Device = {
   removed?: boolean
   /** Joined with a key its browser keeps, not a passkey: no one checks who holds it, so it may only watch. */
   browserKey?: boolean
+  /**
+   * `relayHash` of the key the device opens its relay socket with, from its hello. The relay lets a socket in under
+   * this device's id only with that key, once every device of the account has one (`guardOf`).
+   */
+  relayKey?: string
 }
 /** What a shared device may do: watch only, or act as the owner does in that project. */
 export type Role = 'viewer' | 'contributor'
@@ -151,6 +156,8 @@ type Hello = {
   passkey?: PasskeyAssertion
   proof?: string
   registration?: { credentialId: string; publicKey: string; clientDataJSON: string }
+  /** `relayHash` of the device's relay key (newer apps). */
+  rk?: string
 }
 
 const helloOf = (data: unknown): Hello | undefined => {
@@ -200,8 +207,26 @@ type Taken = { send: OutFrame[]; paired: Device[]; commands: { device: string; c
 /** What the session knows of its devices on this tick, from $.store: the paired ones, and an open pairing. */
 export type Known = { devices: Device[]; pairing?: Pairing; invites?: Invite[]; now: number }
 
+/**
+ * Who the relay may let into the room's device sockets: each device that may reach this account with its relay key's
+ * hash, the hashes of the tokens an open pairing or invite opens a socket with, and `on`, whether to hold sockets to
+ * that at all. Off until every device has a relay key, so a phone paired before keys existed is never shut out: it
+ * sends one with its next hello, over the open room.
+ */
+export type Guard = { on: boolean; admit: { id: string; key: string }[]; pairs: string[] }
+
+export function guardOf(k: Pick<Known, 'devices' | 'pairing' | 'invites' | 'now'>): Guard {
+  const live = k.devices.filter(d => !d.removed && (!d.role || (d.until ?? 0) > k.now))
+  const pairs = [...(k.pairing && k.now < k.pairing.until ? [k.pairing.secret] : []), ...(k.invites ?? []).filter(i => k.now < i.until).map(i => i.secret)]
+  return {
+    on: live.length > 0 && live.every(d => !!d.relayKey),
+    admit: live.flatMap(d => (d.relayKey ? [{ id: d.id, key: d.relayKey }] : [])),
+    pairs: pairs.map(secret => relayHash(relayPairToken(secret))),
+  }
+}
+
 /** The body of `POST /v1/room/{room}/up`, with a push hint (`notify`, `kind`) when there is news for devices not looking. */
-export type UpBody = { token: string; session: string; since: number; frames: OutFrame[] } & Partial<Hint>
+export type UpBody = { token: string; session: string; since: number; frames: OutFrame[]; guard?: Guard } & Partial<Hint>
 
 export type Answered = {
   /** Devices that paired with this post's hellos: the adapter adds them to $.store (`withPaired`) for every session. */
@@ -409,8 +434,9 @@ export function createLink(o: { identity: Identity; session: string; origin: str
           out.send.push({ to: h.device, data: { t: 'denied', why: got } })
           continue
         }
-        const admitted = got.device
-        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey)) {
+        // A hello that names its relay key teaches it to the account, a paired device's included (its first since keys).
+        const admitted = typeof h.rk === 'string' && /^[A-Za-z0-9_-]{43}$/.test(h.rk) ? { ...got.device, relayKey: h.rk } : got.device
+        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey && d.relayKey === admitted.relayKey)) {
           devices.splice(0, devices.length, ...withPaired(devices, [admitted]))
           out.paired.splice(0, out.paired.length, ...withPaired(out.paired, [admitted]))
         }
@@ -529,7 +555,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       outbox = []
       acks = []
       isWoken = false
-      return { token: o.identity.token, session: o.session, since, frames, ...hint }
+      return { token: o.identity.token, session: o.session, since, frames, guard: guardOf(k), ...hint }
     },
 
     /**
