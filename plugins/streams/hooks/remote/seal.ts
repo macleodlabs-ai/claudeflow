@@ -105,6 +105,15 @@ export function channel(sendKey: Bytes, recvKey: Bytes, from: { sent: number; la
 export const pairingProof = (secret: string, ...parts: string[]): string =>
   b64u(hmac(sha256, fromB64u(secret), utf8(parts.join('|'))))
 
+/**
+ * What a device shows the relay when it opens a socket to pair: derived from the pairing secret, so the relay can check
+ * it against `relayHash` of it, which the session posts, and never learns the secret (which seals the pairing).
+ */
+export const relayPairToken = (secret: string): string => b64u(hmac(sha256, fromB64u(secret), utf8('streams relay pair')))
+
+/** What the relay keeps and compares for a device's relay key or a pairing token: its SHA-256, b64u. */
+export const relayHash = (value: string): string => b64u(sha256(utf8(value)))
+
 export const passkeyChallenge = (...parts: (string | number)[]): string => b64u(sha256(utf8(parts.join('|'))))
 
 const equalBytes = (a: Bytes, b: Bytes) => a.length === b.length && a.every((x, i) => x === b[i])

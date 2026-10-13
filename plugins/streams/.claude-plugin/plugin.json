@@ -1,6 +1,6 @@
 {
   "name": "streams",
-  "version": "1.6.0",
+  "version": "2.0.0",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {
@@ -44,6 +44,13 @@
       "title": "Relay address",
       "description": "The Claudeflow relay address your phones and tablets connect through. The hosted one by default; set your own (https://relay.<you>.workers.dev) if you deploy one. Empty: no remote.",
       "default": "https://relay.claudeflow.workers.dev"
+    },
+    "token": {
+      "type": "string",
+      "title": "Streams token",
+      "description": "Your Streams account's token, set by /streams connect and cleared by /streams disconnect. Kept in secure storage; keep it secret.",
+      "sensitive": true,
+      "default": ""
     }
   }
 }

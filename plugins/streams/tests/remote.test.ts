@@ -1,16 +1,18 @@
 import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
+import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv } from '../hooks/remote/platform'
+import { relayProtocols } from '../hooks/remote/device'
 
 import { p256 } from '../hooks/vendor/noble'
-import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId, relayHash, relayPairToken } from '../hooks/remote/seal'
+import { ACTIVE_POLL_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
-import { FETCH_MS, STORE, TICK_MS, TICK_STUCK_MS } from '../hooks/remote/index'
+import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, tokenFor } from '../hooks/remote/index'
 import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
 import { TRIM_MS } from '../hooks/streams/session'
 import { spkiOf } from './authenticator'
-import { ORIGIN, RELAY, SESSION, T0, account, cycle, phone, room, snapshot, tOf } from './room'
+import { BEARER, ORIGIN, RELAY, SESSION, TOKEN, T0, account, cycle, phone, room, snapshot, tOf } from './room'
 
 // The relay forwards every frame and could replay, reorder or forge any of them; the session's side must let in only
 // devices that paired with the QR code's secret or prove their passkey now, and run an Allow only with Face ID.
@@ -351,9 +353,9 @@ describe('allowing a tool from a phone', () => {
 })
 
 /** The engine around a session: what its other modules ask at start, answered quietly. */
-function session(on: On) {
+function session(on: On, env: Record<string, string> = {}) {
   const clock = mock.clock(on, { now: T0 })
-  mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod', HOME: '/Users/me' })
+  mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod', HOME: '/Users/me', ...env })
   on('session.cwd', async () => ({ value: '/work/claudeflow' }))
   on('session.id', async () => ({ value: SESSION }))
   on('session.start', async (_$, e) => e as never)
@@ -395,7 +397,7 @@ describe('what a phone may send', () => {
 })
 
 describe('the session on the relay', () => {
-  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY } }
+  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }
 
   test('posts up with its token and cursor, stays quiet when nothing changed, and backs off while the relay fails', OPTIONS, async ($, on) => {
     const me = account()
@@ -414,7 +416,8 @@ describe('the session on the relay', () => {
     await clock.advance(TICK_MS)
     expect(sent).toHaveLength(1)
     expect(sent[0]?.url).toBe(`${RELAY}/v1/room/${me.room}/up`)
-    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [] })
+    // The guard is off: the paired phone has no relay key yet (an app from before keys), so nobody is shut out.
+    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [], guard: { on: false, admit: [], pairs: [], told: [] } })
     // Nothing changed and no device looks: no request until the quiet pace's next post (on the first 2 s tick past
     // it), which carries the cursor on.
     const due = Math.ceil(IDLE_POLL_MS / TICK_MS) * TICK_MS
@@ -780,7 +783,7 @@ function store(on: On, entries: Record<string, unknown> = {}, limit = Infinity):
 }
 
 describe('sharing through the session', () => {
-  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY } }
+  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }
 
   test('the owner invites, the guest joins and moves to the Home Screen app, then is removed and told so', OPTIONS, async ($, on) => {
     // The whole share as index.tsx runs it, with $.store: what the owner and the guest each end up with.
@@ -841,7 +844,7 @@ describe('/streams phone', () => {
   const run = ($: Engine, args: string) =>
     $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never) as Promise<{ text: string }>
 
-  test('opens the pairing page with the room, the account key and a fresh ten-minute secret', { ...ENGINE, options: { relayUrl: `${RELAY}/` } }, async ($, on) => {
+  test('opens the pairing page with the room, the account key and a fresh ten-minute secret', { ...ENGINE, options: { relayUrl: `${RELAY}/`, token: TOKEN } }, async ($, on) => {
     // The secret travels only after `#`, so the relay never learns it; a new identity is made the first time.
     const clock = mock.clock(on, { now: T0 })
     const kept = store(on)
@@ -905,7 +908,7 @@ describe('/streams phone', () => {
     expect(set).toHaveLength(2)
   })
 
-  test('lists the paired devices and forgets one or all', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('lists the paired devices and forgets one or all', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
@@ -918,5 +921,350 @@ describe('/streams phone', () => {
     await run($, 'phone forget all')
     expect(kept.get(STORE.devices)).toEqual([])
     expect((await run($, 'phone devices')).text).toContain('No devices paired')
+  })
+})
+
+describe('/streams connect', () => {
+  const run = ($: Engine, args: string) =>
+    $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never) as Promise<{ text: string }>
+  /** The service's answers, by path, and every request the session made of it, with its headers. */
+  const service = (on: On, answer: (path: string, body: string, n: number) => { status: number; body?: unknown }) => {
+    const asked: { path: string; auth?: string; body: string }[] = []
+    on('http.fetch', async (_$, e) => {
+      const path = new URL(e.url).pathname
+      const body = String(e.init?.body ?? '')
+      const headers = (e.init?.headers ?? {}) as Record<string, string>
+      asked.push({ path, ...(headers.authorization ? { auth: headers.authorization } : {}), body })
+      const a = answer(path, body, asked.filter(x => x.path === path).length)
+      return { value: { status: a.status, ok: a.status < 300, headers: {}, text: JSON.stringify(a.body ?? {}) } } as never
+    })
+    return asked
+  }
+  const configured = (on: On) => {
+    const set: [string, unknown][] = []
+    on('config.list', async () => ({ value: [{ key: 'streams.token', label: 'Streams token', kind: 'text', value: '', provider: { plugin: 'streams', tier: 'user' }, isLocked: false }] }) as never)
+    on('config.set', async (_$, e) => {
+      set.push([e.key, e.value])
+      return { value: e.value } as never
+    })
+    return set
+  }
+
+  // The phone is the Streams service's: with no account, a session never reaches it, whatever it has paired.
+  test('with no token the session never calls the relay, and /streams phone says to connect first', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(IDLE_POLL_MS * 2)
+    expect(asked).toEqual([])
+    expect((await run($, 'phone')).text).toContain('/streams connect')
+  })
+
+  test('every relay request carries the Streams token', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(TICK_MS)
+    expect(asked.length).toBeGreaterThan(0)
+    expect(asked.every(x => x.auth === `Bearer ${BEARER}`)).toBe(true)
+  })
+
+  // Signing in happens in the browser; the session polls on its own clock and keeps the token in the plugin's
+  // sensitive `token` setting (secure storage), which reloads the plugin with it.
+  test('connect opens the sign-in page, waits for the person, then keeps the token in the token setting', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    const clock = session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    const set = configured(on)
+    const asked = service(on, (path, _body, n) =>
+      path === '/v1/connect'
+        ? { status: 200, body: { code: 'ABCD-EFGH', device: 'dev-secret', url: `${RELAY}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }
+        : n < 3
+          ? { status: 428, body: { status: 'pending' } }
+          : { status: 200, body: { token: 'sr1.a.b.c', account: { login: 'octo' } } },
+    )
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    const r = await run($, 'connect')
+    expect(r.text).toContain('ABCD-EFGH')
+    expect(opened).toEqual([['/usr/bin/open', `${RELAY}/connect?code=ABCD-EFGH`]])
+    await clock.advance(TICK_MS * 4)
+    expect(asked.filter(x => x.path === '/v1/connect/token').map(x => JSON.parse(x.body).device)).toEqual(['dev-secret', 'dev-secret', 'dev-secret'])
+    expect(set).toEqual([['streams.token', `${RELAY}#sr1.a.b.c`]])
+    // Kept once: no more polls after the token came.
+    await clock.advance(TICK_MS * 4)
+    expect(asked.filter(x => x.path === '/v1/connect/token')).toHaveLength(3)
+  })
+
+  test('a sign-in page on another site is never opened', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    let opened = 0
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened++
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: 'https://evil.example/connect?code=ABCD-EFGH', interval: 2, expiresIn: 600 } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'connect')).text).toContain('Could not reach')
+    expect(opened).toBe(0)
+  })
+
+  test('disconnect gives the token back to the service and clears it here', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    session(on)
+    store(on)
+    const set = configured(on)
+    const asked = service(on, () => ({ status: 200, body: { ok: true } }))
+    expect((await run($, 'disconnect')).text).toContain('Disconnected')
+    expect(asked.filter(x => x.path === '/v1/token/revoke').map(x => x.auth)).toEqual([`Bearer ${BEARER}`])
+    expect(set).toEqual([['streams.token', '']])
+  })
+
+  // A revoked token or an ended trial must not look like a relay that is down: the band says what to do.
+  for (const [status, says] of [
+    [401, '/streams connect'],
+    [402, 'trial has ended'],
+  ] as const)
+    test(`a ${status} from the service is said above the prompt`, { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+      const me = account()
+      const a = phone(me, 'iPhone')
+      const clock = session(on)
+      store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+      on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+      service(on, () => ({ status }))
+      on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+      await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+      await clock.advance(TICK_MS)
+      const band = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false } as never })
+      const texts = (await band.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+      await band.unmount()
+      expect(texts).toContain(says)
+    })
+
+  test('a 403 (another account holds this room) is said above the prompt, not taken for a relay that is down', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    service(on, () => ({ status: 403 }))
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(TICK_MS)
+    const band = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false } as never })
+    const texts = (await band.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    await band.unmount()
+    expect(texts).toContain('another Streams account holds it')
+  })
+
+  // The hosted token is a bearer for the account's plan and billing: it goes only to the relay that issued it.
+  test('a token is never sent to a relay other than the one that issued it', { ...ENGINE, options: { relayUrl: 'https://relay.other.workers.dev', token: TOKEN } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    const asked = service(on, () => ({ status: 200 }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(TICK_MS * 3)
+    expect(asked.filter(x => x.auth)).toHaveLength(0)
+    expect((await run($, 'phone')).text).toContain('/streams connect')
+  })
+
+  test('tokenFor: a stored token is used only with its own relay; one kept before origins were kept is the hosted relay\'s', () => {
+    expect(tokenFor(`${RELAY}#sr1.x`, `${RELAY}/`)).toBe('sr1.x')
+    expect(tokenFor(`${RELAY}#sr1.x`, 'https://relay.other.workers.dev')).toBe('')
+    expect(tokenFor('sr1.x', HOSTED_RELAY)).toBe('sr1.x')
+    expect(tokenFor('sr1.x', RELAY)).toBe('')
+    expect(tokenFor('', RELAY)).toBe('')
+  })
+
+  test("the hosted relay's sign-in page on the Streams site is opened; the site is not trusted for any other relay", { ...ENGINE, options: { relayUrl: HOSTED_RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    configured(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: `${SITE}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'connect')).text).toContain('ABCD-EFGH')
+    expect(opened).toEqual([['/usr/bin/open', `${SITE}/connect?code=ABCD-EFGH`]])
+  })
+
+  test('with a self-hosted relay, a sign-in page on the Streams site is not opened', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    let opened = 0
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open' || e.argv[0] === 'xdg-open') opened++
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: `${SITE}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'connect')).text).toContain('Could not reach')
+    expect(opened).toBe(0)
+  })
+
+  test('/streams billing opens the Stripe page the service names, and nothing on any other site', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    let url = 'https://checkout.stripe.com/c/pay/cs_test_1'
+    const asked = service(on, () => ({ status: 200, body: { url } }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'billing')).text).toContain('Opened Streams billing')
+    expect(opened).toEqual([['/usr/bin/open', url]])
+    expect(asked.filter(x => x.path === '/v1/billing').map(x => x.auth)).toEqual([`Bearer ${BEARER}`])
+    url = 'https://evil.example/pay'
+    expect((await run($, 'billing')).text).toContain('Could not reach Streams billing')
+    expect(opened).toHaveLength(1)
+  })
+
+  test('/streams delete-account opens the site page that asks for a fresh sign-in, and calls the service for nothing', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    const asked = service(on, () => ({ status: 200 }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'delete-account')).text).toContain(`${SITE}/account/delete`)
+    expect(opened).toEqual([['/usr/bin/open', `${SITE}/account/delete`]])
+    // A session's token never deletes the account: nothing is sent to the service.
+    expect(asked.filter(x => x.path.includes('delete'))).toHaveLength(0)
+  })
+
+  test('/streams billing before connecting says to connect, and calls nothing', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    const asked = service(on, () => ({ status: 200 }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect((await run($, 'billing')).text).toContain('/streams connect')
+    expect(asked).toHaveLength(0)
+  })
+
+  // The browser page opens with the system's own opener: `open` on macOS, `xdg-open` on Linux.
+  test('on Linux the sign-in page opens with xdg-open', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+    session(on)
+    store(on)
+    const opened: string[][] = []
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === 'uname') return { value: { exitCode: 0, stdout: 'Linux\n', stderr: '' } } as never
+      if (e.argv[0] === 'xdg-open' || e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    })
+    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: `${RELAY}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }))
+    await $.session.start({ cwd: '/home/me/p', surface: 'terminal', isInteractive: true })
+    await run($, 'connect')
+    expect(opened).toEqual([['xdg-open', `${RELAY}/connect?code=ABCD-EFGH`]])
+  })
+
+  // Not yet on Windows: said plainly, rather than running Mac paths that fail half way.
+  test('on Windows the phone side says it is not there yet, and never calls the relay', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on, { OS: 'Windows_NT' })
+    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
+    await $.session.start({ cwd: 'C:\\work\\p', surface: 'terminal', isInteractive: true })
+    await clock.advance(IDLE_POLL_MS * 2)
+    expect(asked).toEqual([])
+    expect((await run($, 'connect')).text).toContain('Windows')
+    expect((await run($, 'phone')).text).toContain('Windows')
+  })
+})
+
+describe('platform commands', () => {
+  test('the platform is read from OS (Windows) and uname (macOS, Linux); unknown is macOS', () => {
+    expect(platformOf('Windows_NT', undefined)).toBe('win32')
+    expect(platformOf(undefined, 'Linux\n')).toBe('linux')
+    expect(platformOf(undefined, 'Darwin\n')).toBe('darwin')
+    expect(platformOf(undefined, undefined)).toBe('darwin')
+  })
+  test('each platform gets its own commands, and Windows none yet', () => {
+    expect(openArgv('darwin', 'https://x')).toEqual(['/usr/bin/open', 'https://x'])
+    expect(openArgv('linux', 'https://x')).toEqual(['xdg-open', 'https://x'])
+    expect(decodeArgv('darwin', 'a.b64', 'a')).toEqual(['/usr/bin/base64', '-D', '-i', 'a.b64', '-o', 'a'])
+    // GNU base64 writes to stdout: the shell redirects it, the paths passed as arguments, never in the script.
+    expect(decodeArgv('linux', 'a b.b64', 'a b')).toEqual(['sh', '-c', 'base64 -d -- "$1" > "$2"', 'sh', 'a b.b64', 'a b'])
+    for (const f of [openArgv('win32', 'u'), sleepArgv('win32', 2), mkdirArgv('win32', 'd'), decodeArgv('win32', 'a', 'b'), removeArgv('win32', 'f')]) expect(f).toBeUndefined()
+  })
+})
+
+describe('the relay guard: who may open the room\'s device sockets', () => {
+  test("a pairing hello teaches the account the device's relay key, and the session's posts hold the room to it", () => {
+    const me = account()
+    const rk = randomId(32)
+    const a = phone(me, 'iPhone', { relayKey: rk })
+    const relay = room([a])
+    const link = createLink({ identity: me, session: SESSION, origin: ORIGIN, project: '/work/claudeflow' })
+    const pairing: Pairing = { secret: randomId(32), until: T0 + PAIRING_MS }
+    relay.from(a, a.hello({ now: T0, secret: pairing.secret }))
+    const first = cycle(link, relay, { devices: [], pairing, now: T0 })
+    expect(first.paired[0]!.relayKey).toBe(relayHash(rk))
+    // While the pairing is open its token's hash is posted too, so a new phone can still reach the room to say hello.
+    expect(first.posts[0]!.guard).toEqual({ on: false, admit: [], pairs: [relayHash(relayPairToken(pairing.secret))], told: [] })
+    const later = cycle(link, relay, { devices: first.paired, now: T0 + PAIRING_MS + 1 })
+    expect(later.posts[0]!.guard).toEqual({ on: true, admit: [{ id: a.id, key: relayHash(rk) }], pairs: [], told: [] })
+    // An expired pairing still opens a hello-only socket for a week, so a late scan is told it expired.
+    expect(guardOf({ devices: first.paired, pairing, now: T0 + PAIRING_MS + 1 }).pairs).toEqual([relayHash(relayPairToken(pairing.secret))])
+    // The key itself never goes to the relay in a frame: only its hash, in the hello.
+    expect(JSON.stringify(first.posts)).not.toContain(rk)
+  })
+
+  test('a phone paired before relay keys learns one at its next unlock, and only then is the guard on', () => {
+    const me = account()
+    const old = phone(me, 'old iPhone')
+    const rk = randomId(32)
+    const upgraded = phone(me, 'old iPhone', { relayKey: rk })
+    const stored = old.stored()
+    expect(guardOf({ devices: [stored], now: T0 })).toEqual({ on: false, admit: [], pairs: [], told: [] })
+    // The same device (same keys and passkey) unlocking with a newer app: its hello carries the key's hash.
+    const hello = upgraded.hello({ now: T0 })
+    expect(hello.rk).toBe(relayHash(rk))
+  })
+
+  test("guardOf leaves out removed and expired guests, and an expired pairing or invite", () => {
+    const d = (id: string, more: Record<string, unknown> = {}) => ({ id, pk: 'pk', credentialId: 'c', credentialKey: 'k', label: id, pairedAt: 0, relayKey: relayHash(id), ...more })
+    const g = guardOf({
+      devices: [d('owner-device-000001'), d('guest-removed-00001', { role: 'viewer', project: '/p', until: T0 + 1, removed: true }), d('guest-expired-00001', { role: 'viewer', project: '/p', until: T0 - 1 })],
+      pairing: { secret: randomId(32), until: T0 - 8 * 86_400_000 },
+      invites: [{ secret: randomId(32), until: T0 + 1000, project: '/p', role: 'viewer', days: 7 }],
+      now: T0,
+    })
+    expect(g.admit.map(a => a.id)).toEqual(['owner-device-000001'])
+    // The removed and the expired may still say hello, to be told they are out.
+    expect(g.told.map(a => a.id)).toEqual(['guest-removed-00001', 'guest-expired-00001'])
+    expect(g.on).toBe(true)
+    // The open invite; the pairing that expired over a week ago is gone.
+    expect(g.pairs).toHaveLength(1)
+    // Nothing paired at all: nothing to guard, so the room stays as it was.
+    expect(guardOf({ devices: [], now: T0 }).on).toBe(false)
+  })
+
+  test('a device opens its socket with its relay key, and while pairing with the pairing token, never the secret', () => {
+    const secret = randomId(32)
+    expect(relayProtocols('KEY', secret)).toEqual([`sr.KEY.${relayPairToken(secret)}`])
+    expect(relayProtocols('KEY', secret).join()).not.toContain(secret)
+    expect(relayProtocols('KEY')).toEqual(['sr.KEY'])
   })
 })
