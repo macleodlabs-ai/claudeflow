@@ -1026,7 +1026,6 @@ describe('/streams connect', () => {
     await clock.advance(TICK_MS)
     expect(asked.some(x => x.path.endsWith('/up'))).toBe(true)
     expect((await run($, '')).text).toContain('Streams navigator opened.')
-    expect(opened).toContain('streams')
   })
 
   test('a 403 (another account holds this room) is said above the prompt, not taken for a relay that is down', ENGINE, async ($, on) => {

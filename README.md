@@ -264,7 +264,6 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `/streams disconnect` | Sign this account out of Streams |
 | `/streams delete-account` | Delete your Streams account (on the site, after signing in) |
 | `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
-| `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
 | `/streams phone devices` | List the paired phones and tablets |
 | `/streams phone forget <id>` | Unpair one device (`all` unpairs every one) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
@@ -310,7 +309,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false, "relayUrl": "https://relay.claudeflow.workers.dev" }
+      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false }
     }
   }
 }
@@ -322,7 +321,6 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | `chatStyle` | `full` | How the pane draws a stream's chat, in its own view and in each card's recent rows: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `◉ full ○ compact` switch on a stream's header or any card's header changes it for the session. |
 | `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
-| `relayUrl` | `https://relay.claudeflow.workers.dev` | The relay your phones and tablets connect through: the hosted one, or your own (`https://relay.<you>.workers.dev`). Nothing calls it until a device is paired. Empty: no remote, and sessions never call any relay. |
 
 ### Model use
 
@@ -350,10 +348,9 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| The app says **Connecting…** | Check the relay address loads in the phone's browser, and that `/streams connect` has signed this account in. |
-| `/streams phone` says to set the relay address | Run `/streams phone relay https://relay.<you>.workers.dev`, or set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)) and `/reload-plugins`. |
+| The app says **Connecting…** | Check `/streams connect` has signed this account in, and that the phone has a network connection. |
 | **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
-| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |
+| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another address. Run `/streams phone` and pair it again. |
 | A session is missing on the phone | That session runs an older streams, or another account with no device paired: update the plugin and `/reload-plugins`, or run `/streams phone` in that account. |
 
 ---
