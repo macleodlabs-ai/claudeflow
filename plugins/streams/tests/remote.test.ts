@@ -619,7 +619,7 @@ describe('the session on the relay', () => {
     // Nothing is held, so the session takes commands on its active poll, then acks on the next post.
     await clock.advance(ACTIVE_POLL_MS)
     await clock.advance(ACTIVE_POLL_MS)
-    const path = '/Users/me/.claudeflow/uploads/b1/shot.png'
+    const path = '/Users/me/.streams/uploads/b1/shot.png'
     expect(written[`${path}.b64`] === b64).toBe(true)
     expect(runs.map(r => [...r])).toContainEqual(['/usr/bin/base64', '-D', '-i', `${path}.b64`, '-o', path])
     expect(submitted.at(-1)).toBe(`what is wrong here?\n\n[Attached from my phone: ${path}]`)

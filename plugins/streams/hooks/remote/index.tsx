@@ -103,7 +103,7 @@ export const STORE = {
 export const TICK_MS = 2000
 
 export type RemoteOptions = {
-  /** The Claudeflow relay's address (the `relayUrl` setting), e.g. https://relay.<you>.workers.dev; '' when unset. */
+  /** The Streams relay's address: the hosted one (HOSTED_RELAY), fixed. */
   relayUrl: string
   /** This account's Streams token (the `token` setting, kept in secure storage), from `/streams connect`; '' when none. */
   token: string
@@ -554,7 +554,7 @@ const uploads = new Map<string, { parts: string[]; got: number; at: number }>()
 const UPLOAD_MS = 10 * 60_000
 
 /**
- * Writes the files a prompt names to ~/.claudeflow/uploads/<blob>/<name> and gives their paths, or undefined if one
+ * Writes the files a prompt names to ~/.streams/uploads/<blob>/<name> and gives their paths, or undefined if one
  * has not fully arrived. fs.write takes text only, so the base64 is written and decoded by the system's base64.
  */
 async function saveFiles($: $, files: readonly PhoneFile[]): Promise<string[] | undefined> {
@@ -563,7 +563,7 @@ async function saveFiles($: $, files: readonly PhoneFile[]): Promise<string[] | 
   const home = (await $.env.get('HOME').catch(() => undefined)) || '/tmp'
   const paths: string[] = []
   for (const [i, f] of files.entries()) {
-    const dir = `${home}/.claudeflow/uploads/${f.blob}`
+    const dir = `${home}/.streams/uploads/${f.blob}`
     const path = `${dir}/${f.name}`
     const mkdir = mkdirArgv(platform, dir)
     const decode = decodeArgv(platform, `${path}.b64`, path)

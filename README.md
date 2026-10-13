@@ -1,8 +1,8 @@
 <div align="center">
 
-![claudeflow — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
+![Streams — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
 
-<h1>claudeflow</h1>
+<h1>Streams</h1>
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
@@ -112,12 +112,12 @@ Type `status` (the word on its own), or press `status` in the bar, and a card op
 
 ### 📱 On your phone and tablet
 
-Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Claudeflow app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
+Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Streams app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
 
-<p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Claudeflow app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
+<p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Streams app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
 
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
-- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.claudeflow/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
+- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.streams/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
 - **Share a project:** ☰ → Share: *Invite to watch* or *Invite to contribute* makes a link (Share… or Copy) for one person: within 24 hours they join that project only, for 7 days, giving their name and using Face ID. Opening it again (say, from the Home Screen app after Safari) moves their access to that device. The app speaks to them about your project and you, never about a Mac or pairing. A watcher sees the project's streams and nothing else, with no controls; the Mac refuses anything it sends. A contributor can reply, prompt and answer permission prompts. Under ☰ you switch each person between Watch and Contribute, give them 7 more days, or remove them; only your own devices can share.
 - **Swipe to archive:** a finished stream (done, idle, stalled or failed) swipes left to archive; archived streams fold under the list, and each swipes right (or taps ↺) to restore. Running, looping and waiting streams do not swipe.
 - **Locked means hidden:** while an account is locked, the app shows only its Unlock, nothing of its sessions. It locks itself after 5 minutes put away or 15 minutes on screen untouched; Face ID opens it again.
@@ -361,7 +361,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 <tr>
 <td>
 
-**claudeflow is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
+**Streams is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
 
 <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
 
