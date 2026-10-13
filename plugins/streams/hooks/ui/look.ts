@@ -5,7 +5,7 @@ import type { StatusKind } from '../status'
 // The colours, glyphs and sizes the terminal views share.
 
 /**
- * Status words as bold coloured text on the terminal's own background, in the brand's status hues (BRAND.md).
+ * Status words as bold coloured text on the terminal's own background, in the brand's status hues.
  * Running stays yellow and done green; their exact hex is pinned by tests/streams.test.ts.
  */
 export const STATUS_WORD: Record<BadgeKind, string> = {
