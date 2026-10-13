@@ -9,7 +9,7 @@ import { wireFiling } from './streams/filing'
 import { wireFlows } from './streams/flows'
 import { wireCheck } from './streams/check'
 import { wireUpdates } from './updates/check'
-import { wireRemote } from './remote/index'
+import { HOSTED_RELAY, wireRemote } from './remote/index'
 import { wireBar } from './ui/bar'
 import { wireTranscript } from './ui/transcript'
 import { wirePane } from './ui/pane'
@@ -22,8 +22,6 @@ import { wirePane } from './ui/pane'
 // runs before a prompt is filed; a workflow's agent is claimed for its run (flows) before filing asks where it
 // belongs; and `/streams <verb>` reaches the module that owns the verb (import, update,
 // phone, status) before the pane answers a bare `/streams`.
-/** The hosted relay, used until the person sets their own (or clears it: `/streams phone relay off`). */
-const DEFAULT_RELAY = 'https://relay.claudeflow.workers.dev'
 
 export const register: Register = (on, options) => {
   mem.isDiagnosing = options.diagnostics === true
@@ -32,7 +30,8 @@ export const register: Register = (on, options) => {
   wireSession(on, { autoArchiveHours: archiveHoursOf(options.autoArchiveHours) })
   wireWorker(on)
   wireUpdates(on)
-  wireRemote(on, { relayUrl: typeof options.relayUrl === 'string' ? options.relayUrl.trim() : DEFAULT_RELAY, token: typeof options.token === 'string' ? options.token.trim() : '' })
+  // The hosted relay, always: there is nothing to set. The token is read from $.store (`/streams connect`).
+  wireRemote(on, { relayUrl: HOSTED_RELAY, token: '' })
   wireBar(on)
   wireFlows(on)
   wireCheck(on, { isOn: options.completionCheck !== false })

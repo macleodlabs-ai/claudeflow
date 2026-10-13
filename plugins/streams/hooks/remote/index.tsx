@@ -5,7 +5,7 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, relayArg, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
 import { newIdentity, publicKeyOf, randomId } from './seal'
 import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv, type Platform } from './platform'
 import {
@@ -92,6 +92,11 @@ export const STORE = {
   pairing: 'remote:pairing',
   /** `[{ secret, until, project, role, days }]`: shared invites until they expire, one person each. */
   invites: 'remote:invites',
+  /**
+   * `<relay origin>#<token>`: the Streams token `/streams connect` got (tokenFor), shared by the account's sessions.
+   * Not a setting: settings are shown at install and in /config, and the token is nobody's to type.
+   */
+  token: 'remote:token',
 } as const
 
 /** How often the session looks for news to send and commands to take while a device is active. */
@@ -250,6 +255,8 @@ async function remoteWait($: $) {
  * taking back hellos and commands. Only the effects are here: $.store, the post itself, and the commands.
  */
 async function remoteTick($: $) {
+  // Read each tick: another session of the account may have connected or disconnected since.
+  options.token = tokenFor(String((await $.store.get(STORE.token)) ?? ''), options.relayUrl)
   // No Streams token, no traffic: the phone is the Streams service's, and `/streams connect` signs in to it.
   if (!options.relayUrl || !options.token || !me || platform === 'win32') return
   const now = await $.clock.now()
@@ -691,29 +698,10 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
   return { ok: true }
 }
 
-const NO_RELAY =
-  'Set the relay address first: `/streams phone relay https://relay.<you>.workers.dev`, or in /config, streams, relayUrl.'
-
-/**
- * `/streams phone relay <url|off>`: sets the plugin's own `relayUrl` option through the settings menu's row, so
- * /config shows the same value and the plugin reloads with it (options are fixed per activation). `relay` alone
- * says what is set.
- */
-async function setRelay($: $, arg: string | undefined): Promise<string> {
-  if (!arg) return options.relayUrl ? `The relay is ${options.relayUrl}. \`/streams phone relay off\` clears it.` : NO_RELAY
-  const want = relayArg(arg)
-  if ('error' in want) return want.error
-  const rows = await $.config.list()
-  const key = rows.find(r => r.key.endsWith('.relayUrl') && r.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.relayUrl'
-  const r = await $.config.set({ key, value: want.relayUrl })
-  if (r.deny) return `Could not set the relay: ${r.deny}`
-  return want.relayUrl ? `Relay set to ${want.relayUrl}. \`/streams phone\` pairs a phone or tablet.` : 'Relay cleared: this session no longer talks to a relay.'
-}
-
 /**
  * `/streams phone`: open a pairing (a secret valid ten minutes, for any number of devices) and show the relay's
  * pairing page with its QR code in the Mac's browser. `devices` lists the paired ones; `forget <id|all>` removes
- * them; `relay <url|off>` sets the relay. Says what it did, or what is missing.
+ * them. Says what it did, or what is missing.
  */
 /** A `/streams connect` under way: the secret its polls carry, when it gives up, and when it may poll next. */
 let connecting: { relay: string; device: string; until: number; every: number; nextAt: number } | undefined
@@ -729,7 +717,6 @@ export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run
 async function connect($: $): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
   const relay = options.relayUrl.replace(/\/+$/, '')
-  if (!originOf(relay)) return NO_RELAY
   const label = `${me?.account ?? 'Claude Code'} (Claude Code)`
   const r = await $.http
     .fetch(`${relay}/v1/connect`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label }) })
@@ -779,10 +766,9 @@ async function connectTick($: $) {
     return
   }
   const who = typeof got.account?.login === 'string' ? got.account.login : typeof got.account?.email === 'string' ? got.account.email : 'your account'
-  const rows = await $.config.list()
-  const key = rows.find(x => x.key.endsWith('.token') && x.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.token'
-  const set = await $.config.set({ key, value: `${c.relay}#${got.token}` })
-  $.ui.toast(set.deny ? `Signed in, but the token could not be kept: ${set.deny}` : `Connected to Streams as ${who}. /streams phone pairs your phone.`)
+  await $.store.set(STORE.token, `${c.relay}#${got.token}`)
+  options.token = got.token
+  $.ui.toast(`Connected to Streams as ${who}. /streams phone pairs your phone.`)
 }
 
 /**
@@ -821,17 +807,14 @@ async function disconnect($: $): Promise<string> {
   if (!options.token) return 'This account is not connected to Streams.'
   const relay = options.relayUrl.replace(/\/+$/, '')
   if (originOf(relay)) await $.http.fetch(`${relay}/v1/token/revoke`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } }).catch(() => undefined)
-  const rows = await $.config.list()
-  const key = rows.find(x => x.key.endsWith('.token') && x.provider.plugin.split('@')[0] === 'streams')?.key ?? 'streams.token'
-  const r = await $.config.set({ key, value: '' })
-  return r.deny ? `Could not clear the token: ${r.deny}` : 'Disconnected from Streams: this account no longer talks to the Streams service.'
+  await $.store.set(STORE.token, '')
+  options.token = ''
+  return 'Disconnected from Streams: this account no longer talks to the Streams service.'
 }
 
 async function remotePair($: $, args: string[]): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
-  if (args[0] === 'relay') return setRelay($, args[1])
   const relay = options.relayUrl.replace(/\/+$/, '')
-  if (!originOf(relay)) return NO_RELAY
   if (!options.token && args[0] !== 'devices' && args[0] !== 'forget') return NOT_CONNECTED
   const devices = devicesOf(await $.store.get(STORE.devices))
   if (args[0] === 'devices') {
@@ -901,6 +884,7 @@ export function wireRemote(on: On, opts: RemoteOptions) {
 
   on('command.run', { command: 'streams' }, async ($, e, next) => {
     const [verb, ...rest] = e.args.trim().split(/\s+/)
+    options.token = tokenFor(String((await $.store.get(STORE.token)) ?? ''), options.relayUrl)
     if (verb === 'connect') return { text: await connect($) }
     if (verb === 'disconnect') return { text: await disconnect($) }
     if (verb === 'billing') return { text: await billing($) }
