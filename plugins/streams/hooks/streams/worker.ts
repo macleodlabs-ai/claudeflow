@@ -51,6 +51,8 @@ async function save($: $) {
   await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
 
+/** Ticks (seconds) an import waits for its transcript to be written before it is given up. */
+const TRANSCRIPT_WAITS = 60
 let draining = false
 let isWorking = false
 
@@ -71,13 +73,24 @@ function work($: $, job?: Job) {
 async function drain($: $) {
   if (draining) return
   draining = true
+  const later: Job[] = []
   try {
     for (let job = jobs.shift(); job; job = jobs.shift()) {
-      if (job.kind === 'import') await importHistory($, job.path, job.isCurrent)
+      if (job.kind === 'import') {
+        try {
+          await importHistory($, job.path, job.isCurrent)
+        } catch (err) {
+          // A new session's first prompt names its transcript before Claude Code has written it: try again a tick
+          // later, for up to a minute, rather than drop the job and never file this session's history.
+          if ((job.waits ?? 0) >= TRANSCRIPT_WAITS || (await $.fs.exists(job.path).catch(() => true))) throw err
+          later.push({ ...job, waits: (job.waits ?? 0) + 1 })
+        }
+      }
       else if (job.kind === 'texts') await readTexts($)
       else await reroute($, job)
     }
   } finally {
+    jobs.push(...later)
     draining = false
   }
 }
