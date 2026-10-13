@@ -55,6 +55,25 @@ describe('the ☰ menu and sharing', () => {
     expect(html).toContain('value="https://relay.example/#r=x&amp;k=y&amp;s=z"')
     expect(html).toContain('data-share-link')
   })
+
+  test('Copy says it copied, so the person is not left wondering whether the tap did anything', () => {
+    const { s, t } = tabOf(snap())
+    const link = 'https://relay.example/#r=x&k=y&s=z'
+    expect(menuView(s, t, true, 0, { role: 'viewer', isBusy: false, link })).toContain('>Copy<')
+    const copied = menuView(s, t, true, 0, { role: 'viewer', isBusy: false, link, copied: 'yes' })
+    expect(copied).toContain('Copied ✓')
+    expect(copied).toContain('Copied to the clipboard.')
+    // A refused clipboard is said too: the link is selected for them, never a silent no-op.
+    expect(menuView(s, t, true, 0, { role: 'viewer', isBusy: false, link, copied: 'select' })).toContain('Selected: copy it')
+  })
+
+  test('a link the phone made shows at once, Share and Copy ready, while the Mac saves it', () => {
+    const { s, t } = tabOf(snap())
+    const html = menuView(s, t, true, 0, { role: 'viewer', isBusy: false, isConfirming: true, link: 'https://relay.example/#r=x' })
+    expect(html).toContain('data-copy-link')
+    expect(html).toContain('Saving it on your Mac…')
+    expect(html).not.toContain('Making the link…')
+  })
 })
 
 describe('accounts on this device', () => {

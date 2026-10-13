@@ -119,8 +119,8 @@ const links: RoomLink[] = Object.values(rooms).map(p =>
       if (asked && invite) {
         invitesSent.delete(ack.id)
         invite = ack.ok && ack.secret
-          ? { ...invite, isBusy: false, link: `${location.origin}/${linkFragment({ room: asked.room, pk: asked.pk, secret: ack.secret, guest: asked.guest })}` }
-          : { ...invite, isBusy: false, why: 'Your Mac could not make the invite. Try again.' }
+          ? { ...invite, isBusy: false, isConfirming: false, link: inviteLink(asked, ack.secret) }
+          : { role: invite.role, isBusy: false, why: 'Your Mac could not make the invite. Try again.' }
       }
       render()
     },
@@ -287,6 +287,25 @@ let isMenuOpen = false
 let invite: InviteView | undefined
 /** Invite commands on their way, by command id: the session's ack carries the secret the link is made from. */
 const invitesSent = new Map<string, { room: string; pk: string; guest: Guest }>()
+
+/** The link a guest opens: the room, the account's key, the invite's one-time secret and what they are joining. */
+const inviteLink = (to: { room: string; pk: string; guest: Guest }, secret: string) =>
+  `${location.origin}/${linkFragment({ room: to.room, pk: to.pk, secret, guest: to.guest })}`
+
+/** How long Copy says "Copied ✓". */
+const COPIED_MS = 2000
+
+/** Copies the invite link and says so; where the clipboard is refused, selects the link for the person to copy. */
+async function copyInvite(link: string) {
+  const isCopied = (await navigator.clipboard?.writeText(link).then(() => true, () => false)) ?? false
+  if (invite?.link !== link) return
+  invite = { ...invite, copied: isCopied ? 'yes' : 'select' }
+  render()
+  if (!isCopied) return document.querySelector<HTMLInputElement>('.invite-link')?.select()
+  setTimeout(() => {
+    if (invite?.link === link && invite.copied === 'yes') (invite = { ...invite, copied: undefined }), render()
+  }, COPIED_MS)
+}
 
 /** Sends an owner's sharing command for the shown project, acked like any tap. */
 function shareTap(command: PhoneCommand) {
@@ -630,17 +649,20 @@ document.addEventListener('click', e => {
     const id = randomId()
     const link = linkOf(inviteTab.room)
     if (!link) return
-    const { project, account } = inviteTab.snapshot.session
-    invitesSent.set(id, { room: inviteTab.room, pk: link.pairing().pk, guest: { project, owner: account } })
-    invite = { role, isBusy: true }
+    const { project, account, proto } = inviteTab.snapshot.session
+    const asked = { room: inviteTab.room, pk: link.pairing().pk, guest: { project, owner: account } }
+    invitesSent.set(id, asked)
+    // A session on PROTO 3 keeps the phone's own secret, so the link shows at once, not after the Mac's next post.
+    const secret = (proto ?? 0) >= 3 ? randomId(32) : undefined
+    invite = secret ? { role, isBusy: false, isConfirming: true, link: inviteLink(asked, secret) } : { role, isBusy: true }
     render()
-    return shareTap({ id, kind: 'invite', role })
+    return shareTap({ id, kind: 'invite', role, ...(secret ? { secret } : {}) })
   }
   if (at('[data-share-link]') && invite?.link) {
     const url = invite.link
-    return void (navigator.share ? navigator.share({ title: 'Watch this Claude project', url }).catch(() => {}) : navigator.clipboard?.writeText(url))
+    return void (navigator.share ? navigator.share({ title: 'Watch this Claude project', url }).catch(() => {}) : copyInvite(url))
   }
-  if (at('[data-copy-link]') && invite?.link) return void navigator.clipboard?.writeText(invite.link).catch(() => {})
+  if (at('[data-copy-link]') && invite?.link) return void copyInvite(invite.link)
   const roleBtn = at('[data-people-role]')
   if (roleBtn) return shareTap({ id: randomId(), kind: 'setRole', deviceId: roleBtn.dataset.peopleRole!, role: roleBtn.dataset.role === 'contributor' ? 'contributor' : 'viewer' })
   const extendBtn = at('[data-people-extend]')

@@ -508,7 +508,7 @@ describe('the session on the relay', () => {
       return { value: undefined } as never
     })
     on('tool.check', async () => ({ decision: 'ask' }) as never)
-    const st = { isLooking: true, dialog: undefined as undefined | ((label: string) => void) }
+    const st = { isLooking: true, hasWait: false, dialog: undefined as undefined | ((label: string) => void) }
     // The prompt box takes a fill: no dialog holds the keys (the engine refuses one while a dialog does).
     on('prompt.fill', async () => ({ isFilled: true, text: '' }) as never)
     on('classic.PermissionRequest', async () => ({}) as never)
@@ -522,6 +522,10 @@ describe('the session on the relay', () => {
     const acked: Ack[] = []
     relay.from(a, a.hello({ now: T0 }))
     on('http.fetch', async (_$, e) => {
+      // The relay's `wait`, for a test that asks for it (`st.hasWait`): answered at once, awake when a device frame waits;
+      // the real one holds it meanwhile. Otherwise 404, as an older relay answers, and the session stops asking.
+      if (e.url.endsWith('/wait'))
+        return { value: st.hasWait ? { status: 200, ok: true, headers: {}, text: JSON.stringify({ wake: relay.isWaiting() }) } : { status: 404, ok: false, headers: {}, text: '' } } as never
       const body = JSON.parse(String(e.init?.body)) as Up['body']
       for (const got of relay.deliver(body.frames).values())
         for (const m of got as { t?: string; snapshot: Snapshot; ack: Ack }[]) {
@@ -561,6 +565,32 @@ describe('the session on the relay', () => {
     expect(ack).toMatchObject({ ok: true })
     expect((kept.get(STORE.invites) as { secret: string }[]).map(i => i.secret)).toEqual([ack!.secret!])
     expect(kept.has(STORE.identity) && kept.has(STORE.devices)).toBe(true)
+  })
+
+  test('a tap reaches the session at once through the relay\'s wait, not at the next 6 s poll', OPTIONS, async ($, on) => {
+    const { a, relay, clock, acked, st } = await withPhone($, on)
+    st.hasWait = true
+    await clock.advance(ACTIVE_POLL_MS)
+    relay.from(a, a.command({ id: 'c1', kind: 'invite', role: 'viewer' }))
+    await clock.advance(TICK_MS)
+    await clock.advance(TICK_MS)
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
+  })
+
+  test("the phone's own invite secret is the one kept: its link is already on screen, so the Mac must accept exactly it", OPTIONS, async ($, on) => {
+    const { a, relay, clock, acked, kept } = await withPhone($, on)
+    const secret = 'S'.repeat(43)
+    relay.from(a, a.command({ id: 'c1', kind: 'invite', role: 'contributor', secret }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true, secret })
+    expect((kept.get(STORE.invites) as { secret: string; role: string }[]).map(i => [i.secret, i.role])).toEqual([[secret, 'contributor']])
+  })
+
+  test('an invite whose secret is not one the phone makes is refused, not kept: a guessable secret would let anyone in', () => {
+    expect(commandOf({ id: 'c1', kind: 'invite', role: 'viewer', secret: 'abc' })).toBe(undefined)
+    expect(commandOf({ id: 'c1', kind: 'invite', role: 'viewer', secret: 'S'.repeat(43) })).toMatchObject({ secret: 'S'.repeat(43) })
+    expect(commandOf({ id: 'c1', kind: 'invite', role: 'viewer' })).toEqual({ id: 'c1', kind: 'invite', role: 'viewer' })
   })
 
   test('history an older session writes back after this one started is cut down within minutes, so the store never fills', OPTIONS, async ($, on) => {

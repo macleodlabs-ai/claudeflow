@@ -103,6 +103,15 @@ export const FETCH_MS = 20_000
  */
 export const TICK_STUCK_MS = 60_000
 
+/** A `wait` is held at the relay: one at a time. */
+let isWaiting = false
+/** The room and its token, as the last tick read them: what a `wait` is asked with. */
+let waitAs: { room: string; token: string } | undefined
+/** A relay that does not answer `wait` (an older one, or failing) is not asked again until this time. */
+let waitOffUntil = 0
+/** How long `wait` rests after the relay did not answer it. */
+export const WAIT_OFF_MS = 5 * 60_000
+
 /** How long a removed guest's device is remembered as removed. */
 const REMOVED_DAYS = 30
 
@@ -163,7 +172,45 @@ async function remoteStart($: $, e: { cwd: string }) {
   const [id, configDir] = await Promise.all([$.session.id(), $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)])
   me = { id, account: accountOf(configDir ?? ''), project: e.cwd.split('/').pop() || e.cwd, busy: false }
   myCwd = e.cwd
-  $.clock.every(TICK_MS, () => void remoteTick($).catch(() => {}))
+  $.clock.every(TICK_MS, () => {
+    void remoteTick($).catch(() => {})
+    void remoteWait($).catch(() => {})
+  })
+}
+
+/**
+ * While a device is active, one `wait` is held at the relay, answered the moment that device sends anything: a tap,
+ * an Allow, a hello. Then the session posts at once, so what the person did reaches the Mac in about a second instead
+ * of at the next poll (6 s while looking, 15 s otherwise). The polls still run: a wait only makes the next one early.
+ */
+async function remoteWait($: $) {
+  if (isWaiting || !link || !waitAs || !me || !options.relayUrl || !link.isWatched()) return
+  const now = await $.clock.now()
+  if (now < waitOffUntil) return
+  isWaiting = true
+  try {
+    const r = await Promise.race([
+      $.http
+        .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/room/${waitAs.room}/wait`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: waitAs.token, session: me.id, since: link.cursor() }),
+        })
+        .catch(() => undefined),
+      $.clock.sleep(FETCH_MS).then(() => undefined, () => undefined),
+    ])
+    let isWoken: boolean | undefined
+    try {
+      isWoken = r?.ok ? (JSON.parse(r.text) as { wake?: unknown }).wake === true : undefined
+    } catch {}
+    if (isWoken === undefined) waitOffUntil = now + WAIT_OFF_MS
+    if (isWoken) {
+      link.wake()
+      await remoteTick($)
+    }
+  } finally {
+    isWaiting = false
+  }
 }
 
 /**
@@ -186,6 +233,7 @@ async function remoteTick($: $) {
       $.store.get(STORE.invites).then(invitesOf),
     ])
     if (!identity) return
+    waitAs = { room: identity.room, token: identity.token }
     if (link?.room !== identity.room) {
       // After /reload-plugins the channels this session had are taken up again: the phones still hold theirs.
       const was = await read($, remoteConnsA)
@@ -486,7 +534,8 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
   // Sharing this project (the owner's devices only; the link refuses these from shared ones).
   if (c.kind === 'invite') {
     const now = await $.clock.now()
-    const secret = randomId(32)
+    // The phone's own secret (PROTO 3): its link is already on screen, so this one must be the one kept.
+    const secret = c.secret ?? randomId(32)
     const open = invitesOf(await $.store.get(STORE.invites)).filter(i => now < i.until)
     await saveRemote($, STORE.invites, [...open, { secret, until: now + INVITE_MS, project: myCwd, role: c.role, days: SHARE_DAYS }].slice(-20))
     return { ok: true, secret }

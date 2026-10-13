@@ -273,6 +273,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
   }
   let connected = new Map<string, boolean>()
   let since = 0
+  /** The relay said a device sent something (`wait`): the next post is due now, whatever the cadence. */
+  let isWoken = false
   /** What was last posted and when, and when the relay may be tried again after it failed. */
   const poll = { lastBody: '', lastAt: 0, fails: 0, retryAt: 0, warmUntil: 0 }
   /** Welcomes and denials not yet posted. */
@@ -471,6 +473,15 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     /** Whether a device with an open channel is looking now: only then are permission prompts held for it. */
     isLooking: () => [...conns.keys()].some(id => connected.get(id) === true),
 
+    /** Whether any device is active on the relay now, channel or not (one unlocking has none yet): worth a `wait`. */
+    isWatched: () => [...connected.values()].some(Boolean),
+
+    /** The relay's cursor: a `wait` past it is answered when a device sends anything new. */
+    cursor: () => since,
+
+    /** A device sent something (the relay's `wait` said so): post now rather than at the next poll. */
+    wake: () => void (isWoken = true),
+
     isQuiet,
 
     /**
@@ -499,6 +510,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       hintAgain = undefined
       const isActive = k.now < poll.warmUntil || [...connected.values()].some(Boolean)
       const isDue =
+        isWoken ||
         round > 0 ||
         k.isHolding ||
         outbox.length > 0 ||
@@ -516,6 +528,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       sent = { frames, acks, body, known: { devices: k.devices, pairing: k.pairing, invites: k.invites, now: k.now }, ...(hint ? { hint } : {}) }
       outbox = []
       acks = []
+      isWoken = false
       return { token: o.identity.token, session: o.session, since, frames, ...hint }
     },
 
