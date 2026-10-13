@@ -12,7 +12,7 @@
 // stay green, and these copies add the knobs (lag, refusals, fetch timeouts) the faults need.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, loadavg, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerWebSocket } from 'bun'
 import { PAIRING_MS, createLink, withPaired, type Device, type Identity, type Pairing } from '../plugins/streams/hooks/remote/link'
@@ -247,7 +247,11 @@ type Page = Awaited<ReturnType<typeof openDevice>>
 async function openDevice(name: string, port: number) {
   const p = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(TMP, `chrome-${name}`)}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { detached: true, stdio: 'ignore' })
   procs.push(p)
-  const targets = await until(`${name} DevTools`, () => fetch(`http://127.0.0.1:${port}/json`).then(r => r.json() as Promise<{ type: string; webSocketDebuggerUrl: string }[]>, () => undefined), 60_000)
+  const targets = await until(`${name} DevTools`, () => fetch(`http://127.0.0.1:${port}/json`).then(r => r.json() as Promise<{ type: string; webSocketDebuggerUrl: string }[]>, () => undefined), 60_000).catch(e => {
+    // A Chrome that never answered still holds this profile: a retry's Chrome would hand off to it and exit.
+    p.kill('SIGKILL')
+    throw e
+  })
   const page = await attach(name, targets.find(t => t.type === 'page')!.webSocketDebuggerUrl)
   await page.setup()
   return {
@@ -706,13 +710,17 @@ const results: Result[] = []
 const stopLeftovers = () => {
   for (const pattern of [`${TMP}/chrome-`, `wrangler dev --port ${RELAY_PORT}`, `workerd serve.*:${RELAY_PORT}`]) spawnSync('pkill', ['-f', pattern])
 }
+/** A scenario whose browser or pairing never came up: usually the harness on a loaded Mac, so it is retried and counted apart. */
+const didNotStart = (r: Result) => r.attempts.length === 1 && r.attempts[0]!.final.startsWith('setup: ')
 async function runScenario(sc: Scenario, i: number) {
   const s = startSession()
   let extra: Session[] = []
-  const d = await openDevice(sc.name, 9421 + OFFSET + i)
+  let d: Awaited<ReturnType<typeof openDevice>> | undefined
   const result: Result = { name: sc.name, what: sc.what, attempts: [] }
   results.push(result)
   try {
+    // Inside the try: a browser that does not come up ends this scenario, not the wave and the run.
+    d = await openDevice(sc.name, 9421 + OFFSET + i)
     await d.goto(`${ORIGIN}/#r=${s.identity.room}&k=${s.pk}&s=${s.pairing.secret}`)
     await d.see('Create passkey', 30_000)
     await d.tap('[data-gate="pair"]')
@@ -735,7 +743,7 @@ async function runScenario(sc: Scenario, i: number) {
   } finally {
     s.isRunning = false
     for (const x of extra) x.isRunning = false
-    d.close()
+    d?.close()
   }
 }
 
@@ -750,12 +758,20 @@ try {
   startProxy()
   const chosen = SCENARIOS.filter(sc => !ONLY || ONLY.includes(sc.name))
   const local = chosen.filter(sc => !sc.isGlobal)
-  const WAVE = Number(process.env.CHAOS_WAVE ?? 8)
+  // Eight browsers at once on an idle Mac; fewer as it gets busy (at load ~17, eight never got past "Connecting…").
+  const WAVE = Number(process.env.CHAOS_WAVE ?? Math.max(2, Math.min(8, availableParallelism() - Math.round(loadavg()[0]!))))
   for (let i = 0; i < local.length; i += WAVE) {
     log(`wave: ${local.slice(i, i + WAVE).map(s => s.name).join(', ')}`)
     await Promise.all(local.slice(i, i + WAVE).map((sc, j) => runScenario(sc, i + j)))
   }
   for (const [j, sc] of chosen.filter(sc => sc.isGlobal).entries()) await runScenario(sc, 60 + j)
+  // Each scenario that never started gets one more go, alone, on a port of its own.
+  const again = results.filter(didNotStart)
+  for (const [j, r] of again.entries()) {
+    log(`again, alone: ${r.name}`)
+    results.splice(results.indexOf(r), 1)
+    await runScenario(SCENARIOS.find(sc => sc.name === r.name)!, 40 + j)
+  }
 } catch (e) {
   log('chaos run stopped:', (e as Error).message)
 } finally {
@@ -768,6 +784,10 @@ try {
   writeFileSync(join(TMP, 'chaos.json'), JSON.stringify(results, null, 1))
   console.log('\n==== chaos summary ====')
   for (const r of results) {
+    if (didNotStart(r)) {
+      console.log(`${r.name.padEnd(18)} never reached its first unlock (setup, counted apart): ${r.attempts[0]!.final}  — ${r.what}`)
+      continue
+    }
     const fails = r.attempts.filter(a => !a.ok)
     const errs = r.attempts.filter(a => a.ok && a.seen.length)
     const times = r.attempts.filter(a => a.ok).map(a => a.ms / 1000).sort((x, y) => x - y)
