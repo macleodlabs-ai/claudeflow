@@ -730,7 +730,8 @@ describe('the session on the relay', () => {
   test('a question with no recommended option stays with the terminal when nobody looks, and a looking device means no fallback', OPTIONS, async ($, on) => {
     const { clock, seen, st, watch } = await withPhone($, on)
     const r = watch($.tool.call(QUESTION(['Postgres', 'SQLite']) as never))
-    await clock.advance(10 * 60_000)
+    // Twice the no-device deadline: long enough that any fallback would have fired, short enough to run fast under load.
+    await clock.advance(2 * NO_DEVICE_MS)
     expect(r.value).toBeUndefined()
     expect(seen.at(-1)!.questions!.map(q => q.id)).toEqual(['toolu_q'])
     st.isLooking = false
