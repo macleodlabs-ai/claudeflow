@@ -118,9 +118,9 @@ export const mem = {
   pendingSpawn: '',
   /** What the next main-loop user row is: a prompt, a loop's tick or a task notice. */
   pendingKind: 'prompt' as StreamRowKind,
-  /** The main turn running now, for a remote stop. */
+  /** The main turn running now, for `$.streams.stopTurn` (api.ts). */
   runningTurn: '',
-  /** A loop tick a phone asked to run now (remote `runTick`): routing files that prompt as the loop's tick in its stream. */
+  /** A loop tick asked for now (`$.streams.runTick`, api.ts): routing files that prompt as the loop's tick in its stream. */
   runNow: { streamId: '', text: '' },
   /** One history import at a time; a reload starts a fresh one, which is safe. */
   importing: false,

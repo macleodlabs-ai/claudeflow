@@ -4,8 +4,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates/versions'
-import { PHONE_ROWS, accountOf, commandOf, permissionSummary, snapshotOf, type SnapshotInput } from '../hooks/remote/snapshot'
-import { snapshotKey } from '../hooks/remote/link'
+import { cardsOf } from '../hooks/view'
 import { completeTag, partialTag, tagMatches, NEXT_FOLD, PASTELS, STALL_MS, oneLine, rowKey, healthOf, nextPastel, pickReplyStream, isFollowUp, loopKey, parseTag, parseVerdict, slug, buildPrompt, FINISHED_MS, textKey } from '../hooks/classify'
 import { BATCH_SYSTEM, MERGE_SYSTEM, inParallel, itemsOf, parseBatch, parseMerge, readTranscript, rowOf } from '../hooks/history'
 import { importPlan } from '../hooks/streams/importPlan'
@@ -916,7 +915,8 @@ describe('the status card', () => {
     const asked = { id: 'r1', streamId: 'auth', kind: 'reply' as const, text: 'Shall I commit it?', at: 5 }
     const seen = (rows: Facts['rows']) => {
       const card = cardOf(streamsNow(facts(rows), streams), { git: [] })
-      const snap = snapshotOf({ session: { id: 's1', account: 'a', project: 'p', busy: false }, lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: [], rows: [], status: [], limits: [], updates: [], now: 100 })
+      // What $.streams.view() gives other surfaces (the phone add-on draws a waiting card's detail as its question).
+      const snap = { streams: cardsOf({ lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: [], rows: [], now: 100 }).map(c => ({ ...c, question: c.kind === 'waiting' ? c.detail : undefined })) }
       return { terminal: card.lines.find(l => l.id === 'auth')?.kind === 'waiting', phone: snap.streams.find(x => x.id === 'auth')?.question }
     }
     expect(seen([asked])).toEqual({ terminal: true, phone: 'Shall I commit it?' })
@@ -1233,144 +1233,10 @@ describe('status asked from the phone', () => {
   })
 })
 
-describe('what the phone is sent', () => {
-  const at = (n: number) => n * 1000
-  // The phone reads and answers: a waiting stream must carry its whole question, and every live agent its progress.
-  test('a snapshot carries what the phone draws: the question, live agents, and the latest rows cut short', () => {
-    const snap = snapshotOf({
-      session: { id: 's1', account: 'macleod', project: 'claudeflow', busy: true },
-      lines: [
-        { id: 'docs', area: 'Docs', kind: 'waiting', state: 'WAITING', detail: 'Shall I open a PR for it?' },
-        { id: 'auth-refactor', area: 'Auth refactor', kind: 'running', state: 'RUNNING', detail: '1 agent' },
-        { id: 'gone', area: 'Gone', kind: 'done', state: 'DONE', detail: '' },
-      ],
-      streams: [...STREAMS, { ...STREAMS[0]!, id: 'docs', name: 'Docs' }],
-      colorOf: () => '#a5d8ff',
-      agents: [
-        { id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 },
-        { id: 'a2', streamId: 'auth-refactor', description: 'Old run', status: 'done', startedAt: at(0), endedAt: at(1), lastAt: at(1), last: '', tools: 1 },
-      ],
-      rows: [
-        ...Array.from({ length: PHONE_ROWS + 3 }, (_, i) => ({ id: `r${i}`, streamId: 'docs', kind: 'reply' as const, text: `row ${i}`, at: at(i) })),
-        { id: 'long', streamId: 'docs', kind: 'reply', text: 'x'.repeat(5000), at: at(99) },
-      ],
-      status: [],
-      limits: [],
-      updates: [],
-      now: at(60 * 60),
-    })
-    // A stream the mod no longer has is not sent as a card with no name.
-    expect(snap.streams.map(s => s.id)).toEqual(['docs', 'auth-refactor'])
-    expect(snap.streams[0]?.question).toBe('Shall I open a PR for it?')
-    expect(snap.streams[1]?.question).toBe(undefined)
-    // The running agent is shown with its start, for the phone to count from; one that ended long ago is not news.
-    expect(snap.streams[1]?.agents.map(a => [a.id, a.startedAt, a.endedAt, a.tools])).toEqual([['a1', at(0), undefined, 4]])
-    expect(snap.streams[0]?.rows).toHaveLength(PHONE_ROWS)
-    // The newest rows go long enough for the phone's full view to show a whole reply, still cut well short of 5000;
-    // older rows stay short, so a snapshot stays small.
-    expect(snap.streams[0]?.rows.at(-1)?.text.length).toBe(2501)
-    expect(snap.streams[0]?.rows.slice(0, -3).every(r => r.text.length <= 601)).toBe(true)
-  })
-
-  // A clock in the text would make every snapshot differ from the last, so a quiet session would post every tick and
-  // spend the free plan's requests. Clocks travel as times; the terminal and the phone count them as they draw.
-  test('the same facts a few seconds later make the same snapshot, and each screen counts the clocks itself', () => {
-    const streams: Stream[] = [
-      { ...STREAMS[0]!, lastAt: at(48) },
-      { ...STREAMS[0]!, id: 'ci', name: 'CI', summary: 'check CI' },
-      { ...STREAMS[0]!, id: 'billing', name: 'Billing', summary: 'fix rounding' },
-    ]
-    const facts = (now: number): Facts => ({
-      busy: true,
-      current: 'billing',
-      agents: { a1: { id: 'a1', streamId: 'billing', description: 'trace rounding TL-9', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Grep toFixed', tools: 6 } },
-      inflight: {},
-      outcome: {},
-      rows: [],
-      loops: { ci: { kind: 'wakeup', nextAt: at(540), noopStreak: 0 } },
-      workflows: {},
-      verdicts: {},
-      now,
-    })
-    const rateLimits = [{ kind: 'five_hour', percentUsed: 38, resetsAt: new Date(at(3600)).toISOString() }]
-    const snapAt = (now: number) => {
-      const card = cardOf(streamsNow(facts(now), streams), { git: [], rateLimits })
-      const snap = snapshotOf({ session: { id: 's1', account: 'macleod', project: 'p', busy: true }, lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: Object.values(facts(now).agents), rows: [], status: [...card.git, ...card.tickets], limits: card.limits, updates: [], now })
-      return { card, snap }
-    }
-    const first = snapAt(at(120))
-    const later = snapAt(at(127))
-    expect(snapshotKey(later.snap)).toBe(snapshotKey(first.snap))
-    // The terminal counts each clock to its own now: last active, the next tick, an agent gone quiet, a limit's reset.
-    const text = (c: typeof first.card, now: number) => [...c.lines, ...c.tickets].map(l => lineText(l, now))
-    expect(text(first.card, at(120))).toEqual([
-      'trace rounding TL-9: Grep toFixed (6 tools)',
-      'next tick in 7:00 · check CI',
-      'Move sessions to JWT · 1m ago',
-      'trace rounding TL-9: Grep toFixed (6 tools) · 1m with no output',
-    ])
-    expect(text(later.card, at(127))[1]).toBe('next tick in 6:53 · check CI')
-    expect(resetsIn(first.card.limits[0]!, at(120))).toBe('58m')
-    // The phone gets the same times to count from.
-    expect(first.snap.streams.map(s => [s.id, s.detail, s.since, s.nextAt])).toEqual([
-      ['billing', 'trace rounding TL-9: Grep toFixed (6 tools)', undefined, undefined],
-      ['ci', 'check CI', undefined, at(540)],
-      ['auth-refactor', 'Move sessions to JWT', at(48), undefined],
-    ])
-    expect(first.snap.status[0]?.quietSince).toBe(at(50))
-    expect(first.snap.limits[0]?.until).toBe(at(3600))
-  })
-
-  // A running agent's elapsed time would do the same for as long as any agent runs: 1,800 posts an hour.
-  test('a running agent does not make a snapshot news as its time passes', () => {
-    const input = (now: number): SnapshotInput => ({
-      session: { id: 's1', account: 'macleod', project: 'p', busy: true },
-      lines: [{ id: 'auth-refactor', area: 'Auth refactor', kind: 'running', state: 'RUNNING', detail: '1 agent' }],
-      streams: STREAMS,
-      colorOf: () => '#a5d8ff',
-      agents: [{ id: 'a1', streamId: 'auth-refactor', description: 'Move sessions', status: 'running', startedAt: at(0), lastAt: at(50), last: 'Edit auth.ts', tools: 4 }],
-      rows: [],
-      status: [],
-      limits: [],
-      updates: [],
-      now,
-    })
-    expect(snapshotKey(snapshotOf(input(at(60))))).toBe(snapshotKey(snapshotOf(input(at(62)))))
-  })
-
-  test("a session's account is its config dir's own name", () => {
-    expect(accountOf('/Users/me/.claude-clients/macleod')).toBe('macleod')
-    expect(accountOf('/Users/me/.claude-clients/iris/')).toBe('iris')
-    expect(accountOf('')).toBe('default')
-  })
-})
-
-describe('acting from the phone', () => {
-  // The phone is a remote for this Mac: only the commands it is meant to send may reach a session.
-  test('only well-formed answers, stops and permission decisions are taken from a device', () => {
-    const sent = [
-      { id: '1', kind: 'answer', streamId: 'docs', text: 'yes' },
-      { id: '2', kind: 'answer', streamId: 'docs', text: '   ' },
-      { id: '3', kind: 'stop' },
-      { id: '4', kind: 'permission', requestId: 't1', decision: 'allow' },
-      { id: '5', kind: 'permission', requestId: 't1', decision: 'always' },
-      { id: '6', kind: 'shell', command: 'rm -rf /' },
-      { kind: 'stop' },
-      'not an object',
-    ]
-    expect(sent.flatMap(c => commandOf(c) ?? []).map(c => c.id)).toEqual(['1', '3', '4'])
-  })
-
-  test('a permission card says what the call would do', () => {
-    expect(permissionSummary('Bash', { command: 'git push origin main' })).toBe('Bash: git push origin main')
-    expect(permissionSummary('Edit', { file_path: '/repo/a.ts', old_string: 'x' })).toBe('Edit: /repo/a.ts')
-  })
-})
-
 describe('/streams and its verbs', () => {
   // Each verb is answered by the module that owns it, wired ahead of the pane: were the order wrong, the pane
   // would answer every verb by opening itself, and `/streams phone` would never reach the remote.
-  test('a bare /streams opens the pane, and phone asks for the relay address while the remote is off', { ...ENGINE, options: { relayUrl: '' } }, async ($, on) => {
+  test('a bare /streams opens the pane, and phone says the phone is the Streams Remote add-on and how to pair with it', ENGINE, async ($, on) => {
     mock.clock(on)
     mock.store(on)
     watchStatus(on)
@@ -1382,7 +1248,9 @@ describe('/streams and its verbs', () => {
       return { value: { isPlaced: true } } as never
     })
     const run = (args: string) => $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
-    expect((await run('phone')).text).toContain('relayUrl')
+    // Someone who asks for the phone in the free mod learns what it is and where to go next, and no pane opens.
+    expect((await run('phone')).text).toContain('Streams Remote add-on')
+    expect((await run('phone')).text).toContain('/phone')
     expect(opened).toEqual([])
     expect((await run('')).text).toContain('Streams navigator opened.')
     expect(opened).toEqual(['streams'])

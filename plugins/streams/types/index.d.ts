@@ -130,7 +130,111 @@ export type Verdict = { rowId: string; state: 'done' | 'waiting' | 'running'; re
 /** How a stream's own view draws its rows: one line each, or as the session's transcript draws them. */
 export type ChatStyle = 'compact' | 'full'
 
+/** A stream's badge in the status card: its health, an armed loop, or waiting on the person. */
+export type StreamsKind = Health | 'loop' | 'waiting'
+
+/** One row of the status card: a stream, a git line or a ticket. Clocks are times, so it changes only when they do. */
+export type StreamsStatusLine = { id: string; area: string; kind?: StreamsKind; state: string; detail: string; since?: number; nextAt?: number; quietSince?: number }
+
+/** A rate limit as the status card shows it. */
+export type StreamsLimit = { label: string; percent: number; bar: string; until?: number; resetsAt: string }
+
+/** A stream's loop as a card shows it: clocks as times, the quiet streak and the last real change. */
+export type StreamsLoopView = Pick<Loop, 'kind' | 'nextAt' | 'every' | 'reason' | 'noopStreak' | 'lastChange'> & { canStop?: false }
+
+/** One agent of a Workflow run as a card shows it. */
+export type StreamsRunAgent = { id: string; label?: string; status: WorkflowAgent['status']; tools: number; startedAt: number; endedAt?: number; verdict?: string }
+
+/** One phase of a Workflow run: its counts, verdicts and agents. */
+export type StreamsPhaseView = { title: string; done: number; total: number; err: number; verdicts?: Record<string, number>; agents?: StreamsRunAgent[] }
+
+/** A stream's Workflow run, running or last: phases with counts, no labels or ids but the task's, to stop it by. */
+export type StreamsRunView = {
+  name: string
+  taskId: string
+  status: Workflow['status']
+  startedAt: number
+  endedAt?: number
+  agents: { run: number; done: number; err: number }
+  phases: StreamsPhaseView[]
+  /** The counts are what the plugin saw, not the run's own record, and phases are waves of start times. */
+  inferred: boolean
+}
+
+/** One stream as the pane and the status card show it, in status order. */
+export type StreamsCard = {
+  id: string
+  name: string
+  color: string
+  kind: StreamsKind
+  state: string
+  /** What it is about, without clocks: `since` and `nextAt` are times, for the reader to count. */
+  detail: string
+  since?: number
+  nextAt?: number
+  /** Its loop, while one is armed and not lapsed. */
+  loop?: StreamsLoopView
+  /** Its Workflow run, running or last. */
+  run?: StreamsRunView
+  /** Its subagents running, and those that ended in the last 10 minutes; newest first. */
+  agents: AgentRun[]
+  /** Its rows, oldest first, quiet loop ticks folded. */
+  rows: StreamRow[]
+}
+
+/** Everything the Streams pane and status card show for this session now, as data. */
+export type StreamsView = {
+  now: number
+  busy: boolean
+  /** The stream the main loop is working on; '' before the first prompt. */
+  current: string
+  /** What the session runs on, when it says. */
+  model?: string
+  streams: StreamsCard[]
+  /** Archived streams, newest last (at most 30). */
+  archived: { id: string; name: string; color: string }[]
+  /** Every subagent run this session knows. */
+  agents: AgentRun[]
+  /** Git and ticket rows, as the status card shows them. */
+  status: StreamsStatusLine[]
+  limits: StreamsLimit[]
+  /** Installed plugins with a newer release. */
+  updates: { id: string; from: string; to: string }[]
+}
+
+/** What an action did: `ok: false` when it was not done, with `why` when there is more to say. */
+export type StreamsDone = { ok: boolean; why?: string }
+
+/**
+ * `$.streams`: this session's streams for other plugins (the phone add-on reads and drives the session through it).
+ * Reads are snapshots; each action does what the pane's own control does.
+ */
+export type Streams = {
+  /** What the pane and status card show now. */
+  view(): Promise<StreamsView>
+  /** Makes a stream current, so the next prompt is filed there. Not done for a stream this session does not have. */
+  select(args: { streamId: string }): Promise<StreamsDone>
+  /** Archives or restores a stream, as the pane's ✕ and restore do. Already so is done. */
+  setArchived(args: { streamId: string; archived: boolean }): Promise<StreamsDone>
+  /** Runs a loop's tick now, filed as that loop's tick. Not done while that stream's turn runs, or twice within a few seconds. */
+  runTick(args: { streamId: string }): Promise<StreamsDone>
+  /** Ends a stream's loop as the model would end it. */
+  stopLoop(args: { streamId: string }): Promise<StreamsDone>
+  /** Stops a Workflow run this session shows running. */
+  stopTask(args: { taskId: string }): Promise<StreamsDone>
+  /** Stops the main loop's running turn, if one runs. */
+  stopTurn(): Promise<StreamsDone>
+  /**
+   * The phone pairing Streams kept before the phone became an add-on (its `remote:` keys), handed over once: returned,
+   * then deleted here. Empty once taken.
+   */
+  handOver(): Promise<Record<string, unknown>>
+}
+
 declare module 'claude-code' {
+  interface EngineInterface {
+    streams: Streams
+  }
   interface PluginState {
     streams: {
       streams: Stream[]
@@ -168,41 +272,6 @@ declare module 'claude-code' {
       paneCollapsed: boolean
       /** Whether the status card is up above the prompt. */
       statusOpen: boolean
-      /** Permission prompts held for the phone, which the band above the prompt also offers to answer. */
-      asking: { id: string; tool: string; summary: string }[]
-      /** What the session answered for the person (a recommended option nobody chose), shown in the band until `until`. */
-      remoteNote: { text: string; until: number }
-      /**
-       * This session's sealed channels with phones (keys and counts, remote/link.ts KeptConn), so /reload-plugins
-       * does not cut the phones off. In memory only, like the rest of $.state.
-       */
-      remoteConns: {
-        room: string
-        session: string
-        conns: {
-          device: {
-            id: string
-            pk: string
-            credentialId: string
-            credentialKey: string
-            label: string
-            pairedAt: number
-            browserKey?: boolean
-            role?: 'viewer' | 'contributor'
-            project?: string
-            until?: number
-            via?: string
-            removed?: boolean
-          }
-          send: string
-          recv: string
-          sent: number
-          lastOpened: number
-          peerEph: string
-          peerNonce: string
-          welcome: { to: string; data: unknown }
-        }[]
-      }
       /**
        * The card's git rows (branch against upstream, what is uncommitted) and when they were read: shared by the
        * card, which reads them as it opens, and the phone's snapshot, which reuses them while fresh.

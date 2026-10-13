@@ -2,7 +2,6 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Loop, Stream, StreamRow } from '../types'
 import { afterCall, afterNotification, foldQuiet, loopLines, loopsAt, markQuiet, nextFire, type Loops } from '../hooks/streams/loops'
-import { snapshotOf, type SnapshotInput } from '../hooks/remote/snapshot'
 import { statusOf } from '../hooks/status'
 
 const ENGINE = { timeoutMs: 20_000 }
@@ -121,37 +120,6 @@ describe('monitors', () => {
   })
   test('TaskStop ends it', () => {
     expect(afterCall(watching, 'docs', { tool: 'TaskStop', input: { task_id: 'b1' }, result: { task_id: 'b1', task_type: 'monitor', message: 'stopped' }, now: NOON })).toEqual({})
-  })
-})
-
-describe('what the phone is told of a loop', () => {
-  const stream: Stream = { id: 'ci', name: 'CI', summary: 'Watch CI', createdAt: 0, lastAt: 0, rows: 0, agents: 0, loops: 1 }
-  const loops = wake({}, { delaySeconds: 60, reason: 'CI still running', noop: true }, { scheduledFor: NOON + 60_000 })
-  const input = (now: number): SnapshotInput => ({
-    session: { id: 's', account: 'a', project: 'p', busy: false },
-    lines: [statusOf({ stream, health: 'idle', loop: loops.ci, running: [] })],
-    streams: [stream],
-    colorOf: () => '#fff',
-    agents: [],
-    rows: [
-      { id: 'l1', streamId: 'ci', kind: 'loop', text: 'check', at: 1, quiet: true },
-      { id: 'l2', streamId: 'ci', kind: 'loop', text: 'check', at: 2, quiet: true },
-    ],
-    status: [],
-    limits: [],
-    updates: [],
-    loops,
-    now,
-  })
-  test('the loop goes as fields, with no clock text, so a minute passing is not news', () => {
-    const a = snapshotOf(input(NOON))
-    expect(a.streams[0]?.loop).toEqual({ kind: 'wakeup', nextAt: NOON + 60_000, reason: 'CI still running', noopStreak: 1 })
-    const { at: _a, ...first } = a
-    const { at: _b, ...later } = snapshotOf(input(NOON + 30_000))
-    expect(later).toEqual(first)
-  })
-  test('quiet ticks reach the phone folded, so its few rows are not all "check"', () => {
-    expect(snapshotOf(input(NOON)).streams[0]?.rows.map(r => r.text)).toEqual(['··· 2 quiet ticks'])
   })
 })
 

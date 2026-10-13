@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 1.2.0" src="https://img.shields.io/badge/version-1.2.0-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 288 passing" src="https://img.shields.io/badge/tests-288%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 159 passing" src="https://img.shields.io/badge/tests-159%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -108,97 +108,14 @@ Type `status` (the word on its own), or press `status` in the bar, and a card op
 - **Plan limits at the bottom**: each window (5-hour, week) as a bar and percent, green, then yellow from 50%, red from 80%, with how long until it resets and the weekday and time it does.
 - **Click a stream's name** to open it in the pane. `✕ close` (top right) or your next prompt hides the card.
 - **Scroll a long card** with the wheel, or press <kbd>ctrl</kbd>+<kbd>x</kbd> <kbd>tab</kbd> to move focus to it: then <kbd>↑</kbd> <kbd>↓</kbd> scroll and <kbd>q</kbd> closes it, without touching Claude's turn.
-- **On your phone or tablet** the app's **Status** switch shows the same card.
 
-### 📱 On your phone and tablet
+### 📱 On your phone and tablet: Streams Remote
 
-Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Claudeflow app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
+**Streams Remote** is a paid add-on that puts every running session on your phone and tablet: watch each stream live, answer Claude's questions and permission prompts, send prompts and photos, and run or stop loops, from anywhere. It starts with a 3-day free trial.
 
 <p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Claudeflow app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
 
-- **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
-- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.claudeflow/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
-- **Share a project:** ☰ → Share: *Invite to watch* or *Invite to contribute* makes a link (Share… or Copy) for one person: within 24 hours they join that project only, for 7 days, giving their name and using Face ID. Opening it again (say, from the Home Screen app after Safari) moves their access to that device. The app speaks to them about your project and you, never about a Mac or pairing. A watcher sees the project's streams and nothing else, with no controls; the Mac refuses anything it sends. A contributor can reply, prompt and answer permission prompts. Under ☰ you switch each person between Watch and Contribute, give them 7 more days, or remove them; only your own devices can share.
-- **Swipe to archive:** a finished stream (done, idle, stalled or failed) swipes left to archive; archived streams fold under the list, and each swipes right (or taps ↺) to restore. Running, looping and waiting streams do not swipe.
-- **Locked means hidden:** while an account is locked, the app shows only its Unlock, nothing of its sessions. It locks itself after 5 minutes put away or 15 minutes on screen untouched; Face ID opens it again.
-- **Compact or full:** ≡/▤ on an open stream switches every stream between one line a row and whole rows, with replies drawn as markdown (headings, lists, code), as the terminal's pane does.
-- **News from other projects:** a red count by the project name says how many other projects have streams that changed since you looked, with red dots on them in the list and the tabs. Within a project, a changed stream wears a red dot until you open it or leave the project. The 🔔 in the header mutes and unmutes the other projects' news.
-- **Switch project from the header:** the header names the shown project. Swipe it sideways for the next or previous session, or hold it for the list of every session, across every account the device is paired with.
-- **What needs you first:** a waiting stream's question shows on its card without opening it.
-- **Tap a card** for its agents (what each is doing, tool count, time) and its latest prompts and replies.
-- **Streams | Status:** switch to the status card, as on the terminal: git, tickets, then every stream and what it is doing.
-- **Plan usage, pinned to the bottom:** one row with each limit's bar and percent; tap it for when each resets.
-- **Answer from the phone:** **Yes** on a waiting question, or **Reply…** with your own words. What you send is filed in that stream.
-- **Stop** a running turn (tap twice, so a stray touch doesn't).
-- **Allow or deny permission prompts.** Only a prompt that needs you reaches the phone: one your rules and auto mode's classifier did not settle, the moment Claude Code shows its own dialog. That dialog stays up on the Mac, with "also on your phone" under it; the first answer, on either, wins. No second Face ID: the unlock covers it. Claude's questions with options show on the phone too; unanswered for 2 minutes, Claude takes the option it marked recommended and says so.
-- **Notify me:** turn it on under a session and the phone buzzes when Claude needs you (a permission prompt or a question with options held for the phone, at once; a new open question), when a workflow finishes or fails, or when a quiet loop finds something. An open question at the end of a turn buzzes only once it has waited two minutes unanswered, so answering at the Mac never buzzes the phone. A prompt that moves to the Mac after 2 minutes never buzzes again. Never while you are looking, at most once a minute (Claude needing you is never held back) and 30 times a day. The notification says only "Claude needs you", "Something finished" or "Something failed": nothing from the session passes through the relay or the push service. On an iPhone or iPad it works once the app is on the Home Screen.
-
-#### How it connects
-
-Nothing runs on your Mac beyond the plugin, and nothing on your Mac listens for connections. Each Claude Code session posts to a small **relay** on Cloudflare's free plan; each phone or tablet keeps one WebSocket open to the same relay. The relay passes sealed messages between them and serves the app itself.
-
-```
-Claude Code sessions ──HTTPS──► relay (Cloudflare Worker + Durable Object) ◄──WebSocket── phones, tablets
-```
-
-#### Set up (about 5 minutes, once)
-
-**1. Install the plugin** (see [Install](#-install)).
-
-**2. The relay: nothing to do.** Streams uses the hosted relay, `https://relay.claudeflow.workers.dev`, by default. It only passes sealed messages between your sessions and your devices, and nothing calls it until you pair a device.
-
-**Or run your own** on your Cloudflare account (the free plan is enough). You need [Node](https://nodejs.org) 22 or later and [Bun](https://bun.sh) on the Mac you deploy from:
-
-```bash
-git clone https://github.com/macleodlabs-ai/claudeflow
-cd claudeflow/relay/cloudflare
-npx wrangler login            # once: signs this Mac in to your Cloudflare account
-npm ci && ../../app/build.sh && npx wrangler deploy
-```
-
-`wrangler deploy` prints your relay's address, for example `https://relay.<you>.workers.dev`. Run the last line again after you update the checkout.
-
-For **Notify me**, give the relay a push key once: `bun vapid.ts --secret-only | npx wrangler secret put VAPID_PRIVATE_KEY` (in `relay/cloudflare`) makes one and pipes it straight into the Worker secret, so the key is never printed. Without it the relay works as before and the app does not offer notifications.
-
-Then point streams at it: type `/streams phone relay https://relay.<you>.workers.dev` (`/streams phone relay off` turns the remote off), or set it in `/config` → **streams** → **Relay address**, or in `settings.json`:
-
-```json
-{ "pluginConfigs": { "streams@claudeflow": { "options": { "relayUrl": "https://relay.<you>.workers.dev" } } } }
-```
-
-Then `/reload-plugins` in running sessions.
-
-**3. Run `/streams phone`.** It opens a **Pair** page in your Mac's browser with a QR code. The code works for 10 minutes, for as many devices as you scan it with.
-
-**4. Scan it with each phone or tablet.** (Already using the app from your Home Screen, which keeps its own storage apart from Safari? Tap **📷 Scan pairing code** in the app and point it at the code: it pairs right there.) The app opens in Safari (or Chrome on Android). Tap **Create passkey**: the device makes a passkey for the relay's address, saved with Face ID or your passcode. Then **Share → Add to Home Screen** so it opens like an app.
-
-From then on, each time the app connects it shows **Locked**: tap **Unlock** and Face ID opens it. One unlock covers every session of that account, and every answer you send from it: Face ID is asked only to unlock.
-
-**Several accounts?** Run `/streams phone` from each (with your own relay, set the same `relayUrl` in each first). A device can pair with all of them; each account is its own room on the relay, and the app shows the sessions of all of them side by side.
-
-**Manage devices:** `/streams phone devices` lists the paired ones, `/streams phone forget <id>` removes one (`forget all` removes every one). A forgotten device has to scan a new code.
-
-<details>
-<summary><b>What the relay can and cannot see</b></summary>
-
-The relay is a Cloudflare Worker with one Durable Object per account (a "room"). It routes frames; it holds no keys.
-
-**It can see:** the room id, device ids and session ids; when each device connects and whether it is on screen; the size and timing of every message; the SHA-256 of the account's relay token; and the public values in a device's hello (its public keys, its passkey's public key, and passkey signatures).
-
-**It cannot:**
-- **read** snapshots, answers, permission decisions or anything else after the hello. Each session and device seal every message with XChaCha20-Poly1305 under keys from X25519 (fresh ephemeral keys mixed with the long-term ones) and HKDF-SHA256.
-- **change or replay** a message. Each sealed message carries a counter; anything altered, repeated or reordered is dropped.
-- **pair a device of its own.** Pairing needs the QR code's secret, which travels after the `#` in the link, and browsers never send that part to any server, the relay included.
-- **pose as your Mac.** The device checks the session's long-term key from the QR code; a relay that swaps in its own key derives different keys and can open nothing.
-- **approve anything.** Your Mac keeps each device's passkey public key and checks every unlock itself, against a fresh challenge and Face ID; only a device it unlocked can send it anything.
-
-**Notifications** carry no content either. A session tells the relay which devices to wake and why in one word (`needs-you`, `done` or `failed`); the relay keeps each device's push subscription (an endpoint at Apple, Google or Mozilla, and the keys to seal for) and sends that word sealed for the device (RFC 8291, signed with the relay's VAPID key). The push service sees that a push happened and to whom; the relay sees the word.
-
-**It can still** drop or delay messages, as any network can. Then the phone shows your tap as sent and waiting, with Retry, and the prompt can still be answered on the Mac.
-
-Session to relay traffic is budgeted for the free plan (100,000 requests a day): a session posts when its snapshot changes and every 30 seconds otherwise, every 2 seconds only while a device is looking, and not at all while the account has no paired device and no open pairing. Code blocks stay on the Mac; prompts and replies are cut to a few hundred characters before sealing.
-
-</details>
+Type `/streams phone` to see how to get it. Once it is installed, `/phone` pairs a phone or tablet.
 
 ### 🔄 Updates without a restart
 
@@ -258,7 +175,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 
 </details>
 
-**Want streams on your phone or tablet?** After installing, run `/streams phone` and scan the code (see [Set up](#set-up-about-5-minutes-once)).
+**Want streams on your phone or tablet?** That is the [Streams Remote](#-on-your-phone-and-tablet-streams-remote) add-on: `/streams phone` says how to get it.
 
 ### Update or remove
 
@@ -278,10 +195,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
-| `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
-| `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
-| `/streams phone devices` | List the paired phones and tablets |
-| `/streams phone forget <id>` | Unpair one device (`all` unpairs every one) |
+| `/streams phone` | Says how to get Streams Remote, the phone and tablet add-on |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
@@ -325,7 +239,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false, "relayUrl": "https://relay.claudeflow.workers.dev" }
+      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false }
     }
   }
 }
@@ -335,9 +249,8 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | --- | :---: | --- |
 | `autoArchiveHours` | `24` | A finished stream (by its status, or found finished by the completion check) with no activity for this many hours archives itself. It stays under `▸ archived` in the pane, and a restored one stays until it has been active again. Never a running, waiting, looping or failed stream. `0`: off. |
 | `chatStyle` | `full` | How the pane draws a stream's chat, in its own view and in each card's recent rows: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `◉ full ○ compact` switch on a stream's header or any card's header changes it for the session. |
-| `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
+| `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal and the pane. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
-| `relayUrl` | `https://relay.claudeflow.workers.dev` | The relay your phones and tablets connect through: the hosted one, or your own (`https://relay.<you>.workers.dev`). Nothing calls it until a device is paired. Empty: no remote, and sessions never call any relay. |
 
 ### Model use
 
@@ -353,12 +266,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams plugin, and the session's side of the remote | `plugins/streams` | `claude plugin test .` (201 tests) and `claude plugin validate --strict .` |
-| The relay | `relay/cloudflare` | `npm ci`, then `npm run typecheck` and `bun test` (25 tests: 15 against a real `wrangler dev`, 10 of Web Push on its own) |
-| The phone and tablet app | `app` | `bun test` (62 tests) and `npm run typecheck`; `./build.sh` writes the app into `relay/cloudflare/public` |
-| Everything together | `e2e/run.ts` | `app/build.sh`, then `bun e2e/run.ts` from the repo root (27 checks) |
-
-`e2e/run.ts` runs the whole path on your Mac with no Cloudflare account. It starts `wrangler dev`, plays a Claude Code session with the plugin's own remote code, and drives two headless Chrome devices with virtual passkeys through pairing (a double tap included), unlocking, answering, allowing on a slow Mac, a prompt answered on the Mac, and a question with options. A third device with a made-up pairing secret must be refused. Screenshots go to `e2e/shots/`. wrangler needs Node 22 or later on `PATH`. [ARCHITECTURE.md](ARCHITECTURE.md) describes the protocol, and [BRAND.md](BRAND.md) the colours, type and motif.
+| The streams plugin | `plugins/streams` | `claude plugin test .` (159 tests) and `claude plugin validate --strict .` |
 
 ---
 
@@ -370,11 +278,6 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| The app says **Connecting…** | Check the relay address loads in the phone's browser. If you deployed your own, run `npx wrangler deploy` again from `relay/cloudflare`. |
-| `/streams phone` says to set the relay address | Run `/streams phone relay https://relay.<you>.workers.dev`, or set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)) and `/reload-plugins`. |
-| **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
-| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |
-| A session is missing on the phone | That session runs an older streams, or another account with no device paired: update the plugin and `/reload-plugins`, or run `/streams phone` in that account. |
 
 ---
 

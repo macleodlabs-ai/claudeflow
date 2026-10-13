@@ -7,7 +7,7 @@ import { storeKey } from '../hooks/state'
 import { CHECK_RETRY_MS, CHECK_STALE_MS, parseCheck, suspectsOf } from '../hooks/streams/completion'
 import { CHECK_TICK_MS } from '../hooks/streams/check'
 import { cardOf, streamsNow, type Facts } from '../hooks/streams/model'
-import { snapshotOf } from '../hooks/remote/snapshot'
+import { cardsOf } from '../hooks/view'
 
 // Streams often show WAITING (the last reply ended on "Anything else?") or stalled when the work is in fact finished,
 // and a status card full of false alarms teaches the person to ignore it. Haiku reads the stuck ones and says which
@@ -71,7 +71,8 @@ describe('a done verdict on every screen', () => {
     const seen = (verdicts: Record<string, Verdict>) => {
       const now = streamsNow(f(verdicts), streams)
       const card = cardOf(now, { git: [] })
-      const phone = snapshotOf({ session: { id: 's', account: 'a', project: 'p', busy: true }, lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: [], rows: [], status: [], limits: [], updates: [], now: T0 })
+      // What $.streams.view() gives other surfaces (the phone add-on draws a waiting card's detail as its question).
+      const phone = { streams: cardsOf({ lines: card.lines, streams, colorOf: () => '#a5d8ff', agents: [], rows: [], now: T0 }).map(c => ({ ...c, question: c.kind === 'waiting' ? c.detail : undefined })) }
       const line = (id: string) => card.lines.find(l => l.id === id)
       return { pane: now.health.build, docs: [line('docs')?.kind, line('docs')?.detail], phone: phone.streams.find(x => x.id === 'docs')?.question }
     }

@@ -9,7 +9,7 @@ import { wireFiling } from './streams/filing'
 import { wireFlows } from './streams/flows'
 import { wireCheck } from './streams/check'
 import { wireUpdates } from './updates/check'
-import { wireRemote } from './remote/index'
+import { wireApi } from './api'
 import { wireBar } from './ui/bar'
 import { wireTranscript } from './ui/transcript'
 import { wirePane } from './ui/pane'
@@ -21,9 +21,7 @@ import { wirePane } from './ui/pane'
 // with next(e). So the session's restore runs before the worker files history; the band's `status` check
 // runs before a prompt is filed; a workflow's agent is claimed for its run (flows) before filing asks where it
 // belongs; and `/streams <verb>` reaches the module that owns the verb (import, update,
-// phone, status) before the pane answers a bare `/streams`.
-/** The hosted relay, used until the person sets their own (or clears it: `/streams phone relay off`). */
-const DEFAULT_RELAY = 'https://relay.claudeflow.workers.dev'
+// status; `phone` points at the add-on) before the pane answers a bare `/streams`.
 
 export const register: Register = (on, options) => {
   mem.isDiagnosing = options.diagnostics === true
@@ -32,7 +30,7 @@ export const register: Register = (on, options) => {
   wireSession(on, { autoArchiveHours: archiveHoursOf(options.autoArchiveHours) })
   wireWorker(on)
   wireUpdates(on)
-  wireRemote(on, { relayUrl: typeof options.relayUrl === 'string' ? options.relayUrl.trim() : DEFAULT_RELAY })
+  wireApi(on)
   wireBar(on)
   wireFlows(on)
   wireCheck(on, { isOn: options.completionCheck !== false })
