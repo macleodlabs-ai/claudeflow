@@ -1,4 +1,4 @@
-// The protocol's crypto (ARCHITECTURE.md, "Crypto"), shared by the plugin and the app's browser bundle.
+// The protocol's crypto, shared by the plugin and the app's browser bundle.
 // Pure JS on the bundled noble: the plugin runtime's crypto.subtle has only digest, and nothing here may use Node.
 import { hkdf, hmac, p256, randomBytes, sha256, x25519, xchacha20poly1305 } from '../vendor/noble'
 

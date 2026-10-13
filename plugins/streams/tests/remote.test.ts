@@ -1166,6 +1166,46 @@ describe('/streams connect', () => {
     expect(asked).toHaveLength(0)
   })
 
+  // The first session after installing says what Streams is, offers Streams Remote and names its makers, once.
+  const bandText = async ($: Engine) => {
+    const band = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false } as never })
+    const texts = (await band.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+    await band.unmount()
+    return texts
+  }
+
+  test('the welcome shows once after installing, offers Streams Remote, and goes with the first prompt', ENGINE, async ($, on) => {
+    session(on)
+    const kept = store(on)
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    const first = await bandText($)
+    expect(first).toContain('/streams connect')
+    expect(first).toContain('3-day free trial')
+    expect(first).toContain('Macleod Labs')
+    expect(kept.has(STORE.welcomed)).toBe(true)
+    await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } } as never)
+    expect(await bandText($)).not.toContain('Macleod Labs')
+  })
+
+  test('the welcome is never shown twice, nor to someone already connected', ENGINE, async ($, on) => {
+    session(on)
+    store(on, { [STORE.welcomed]: T0 })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect(await bandText($)).not.toContain('Macleod Labs')
+  })
+
+  test('someone who connected before installing this version is not offered Streams Remote', ENGINE, async ($, on) => {
+    session(on)
+    const kept = store(on, { [STORE.token]: TOKEN })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    expect(await bandText($)).not.toContain('/streams connect')
+    // Marked seen all the same: disconnecting later does not bring it back.
+    expect(kept.has(STORE.welcomed)).toBe(true)
+  })
+
   // The browser page opens with the system's own opener: `open` on macOS, `xdg-open` on Linux.
   test('on Linux the sign-in page opens with xdg-open', ENGINE, async ($, on) => {
     session(on)

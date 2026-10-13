@@ -3,7 +3,7 @@ import { proofParts } from './device'
 import { HEARTBEAT_MS, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 import { createNotifier, type Hint } from './notify'
 
-// One session's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), with no engine in it: it
+// One session's side of the protocol, with no engine in it: it
 // reads what the relay answered and says what to post and when, which devices were paired and which commands to do.
 // The engine adapter (index.ts) does the posting, the store and the effects, so all of this runs in plain tests.
 
@@ -244,8 +244,8 @@ export const ACTIVE_POLL_MS = 6000
 /**
  * How often a session with a device that may reach it posts when nothing else is due: a phone opened now waits at
  * most this long before a session sees it (then 6 s, as a phone on its lock screen counts as looking). 5,760 posts a
- * day a session: the free plan's 100k requests leave room for three idle sessions and most of a day of looking
- * (ARCHITECTURE.md, "Polling budget"). Shorter costs the budget a relay over its limit would fail every post on.
+ * day a session: the service's request budget allows for idle sessions and a day of looking
+ *. Shorter costs the budget a relay over its limit would fail every post on.
  */
 export const IDLE_POLL_MS = 15_000
 
@@ -263,7 +263,7 @@ export const WARM_MS = 60_000
 
 /**
  * The session's link to its devices: one sealed channel per device, made by answering its hello, and the post cycle
- * that carries them (ARCHITECTURE.md, "Polling budget"). `identity` is the account's; `origin` is the relay's, where
+ * that carries them. `identity` is the account's; `origin` is the relay's, where
  * the devices' passkeys live. Each tick the adapter asks `next` for a post, sends it, and hands the answer (or the
  * failure) to `answered`; the link keeps the cursor, the welcomes not yet sent, the cadence and the backoff.
  */

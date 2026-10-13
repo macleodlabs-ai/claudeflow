@@ -1,7 +1,7 @@
 import { channel, connectionKeys, newIdentity, pairingProof, passkeyChallenge, randomId, relayHash, relayPairToken } from './seal'
 import { ackOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 
-// One device's side of the protocol (ARCHITECTURE.md, "Session ↔ device messages"), shared by the app and the tests
+// One device's side of the protocol, shared by the app and the tests
 // like seal.ts: the hello, the welcome or denial, the sealed snapshots and commands. No socket and no WebAuthn in it:
 // it gives the challenges to sign, takes the signed passkey assertions as data, and says what to send. The app's
 // transport.ts does the WebSocket and Face ID.

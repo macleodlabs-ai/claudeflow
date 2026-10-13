@@ -27,7 +27,7 @@ import {
   PROTO,
 } from './snapshot'
 
-// The session's side of the remote (ARCHITECTURE.md, "Protocol (v2)"), the engine half: the account's identity
+// The session's side of the remote, the engine half: the account's identity
 // and paired devices in $.store, the relay posts on the 2 s clock within the polling budget, pairing, and the
 // effects of the devices' commands. What the frames mean is decided in link.ts, which has no engine in it.
 //
@@ -58,6 +58,9 @@ const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
 /** This session's open channels with devices, kept across a reload of the plugin ($.state outlives it; link.ts `kept`). */
 const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { room: '', session: '', conns: [] as KeptConn[] })
+/** The welcome above the prompt, in the first session after installing, until the first prompt. */
+const welcomeA = atom({ plugin: 'streams', key: 'welcome' } as const, { show: false, remote: true })
+
 /** The Streams account's plan as the service last said (every ROSTER_MS while connected), for the status card. */
 export const remoteAccountA = atom({ plugin: 'streams', key: 'remoteAccount' } as const, { who: '', trialEndsAt: 0, paidUntil: 0, status: '', at: 0 })
 
@@ -149,6 +152,8 @@ export const STORE = {
    * Not a setting: settings are shown at install and in /config, and the token is nobody's to type.
    */
   token: 'remote:token',
+  /** When this account first saw the welcome above the prompt: it is shown once, ever. */
+  welcomed: 'remote:welcomed',
 } as const
 
 /** How often the session looks for news to send and commands to take while a device is active. */
@@ -991,6 +996,16 @@ export function wireRemote(on: On, opts: RemoteOptions) {
   // Interactive sessions only: a headless run has no one watching from a phone.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     await remoteStart($, e)
+    // Once, ever, per account: what Streams is, the phone side, and who made it. Not for someone already connected.
+    if (!(await $.store.get(STORE.welcomed))) {
+      await $.store.set(STORE.welcomed, await $.clock.now())
+      if (!(await $.store.get(STORE.token))) await update($, welcomeA, () => ({ show: true, remote: platform !== 'win32' }))
+    }
+    return next(e)
+  })
+
+  on('prompt.submit', {}, async ($, e, next) => {
+    if ((await read($, welcomeA)).show) await update($, welcomeA, w => ({ ...w, show: false }))
     return next(e)
   })
 
@@ -1010,13 +1025,36 @@ export function wireRemote(on: On, opts: RemoteOptions) {
 
   // After the session chose an absent person's question for them, the band says so.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [note, now] = await Promise.all([read($, remoteNoteA), $.clock.now()])
-    if (e.props.hasSurvey || !note.text || now >= note.until) return next(e)
+    const [note, welcome, now] = await Promise.all([read($, remoteNoteA), read($, welcomeA), $.clock.now()])
+    const hasNote = !!note.text && now < note.until
+    if (e.props.hasSurvey || (!hasNote && !welcome.show)) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
     return (
       <Box flexDirection="column">
-        <Text key="remote-note" dimColor>{note.text}</Text>
+        {welcome.show ? (
+          <Box key="welcome" flexDirection="column" borderStyle="round" borderColor="#7c83ff" paddingX={1} marginBottom={1}>
+            <Text key="w1">
+              <Text bold color="#7cc8ff">streams </Text>
+              <Text>is on. </Text>
+              <Text dimColor>Type </Text>
+              <Text bold>/streams</Text>
+              <Text dimColor> for the navigator; your streams fill in as you work.</Text>
+            </Text>
+            {welcome.remote ? (
+              <Text key="w2">
+                <Text bold color="#6ff0c0">On your phone too: </Text>
+                <Text dimColor>Streams Remote puts every session on your phone. </Text>
+                <Text bold>/streams connect</Text>
+                <Text dimColor> starts a 3-day free trial.</Text>
+              </Text>
+            ) : null}
+            <Text key="w3" dimColor>
+              Made by Macleod Labs: Claude Code mods and agent workflows, built for your team. macleodlabs.ai
+            </Text>
+          </Box>
+        ) : null}
+        {hasNote ? <Text key="remote-note" dimColor>{note.text}</Text> : null}
         {below}
       </Box>
     )
