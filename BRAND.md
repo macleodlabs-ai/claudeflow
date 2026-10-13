@@ -1,4 +1,4 @@
-# claudeflow brand
+# Streams brand
 
 One Claude Code session, many threads of work, untangled. The look is the hero image: luminous strands tangle, meet,
 and fan out into labelled streams. The ground is neutral, light or dark, so all the colour is in the strands and the
@@ -105,7 +105,7 @@ for the person, so it gets the strongest treatment: border plus tint on the ques
   Fonts: if a geometric webfont is wanted, self-host Outfit (OFL, weight 600) as a woff2 in `app/` and add it before
   `ui-rounded`.
 - Mono: `--font-mono` for tool rows, permission commands.
-- Wordmark: `claudeflow`, lowercase, display font, weight 700, 24px on phones and 28px from 820, a 3px flow underline
+- Wordmark: `streams`, lowercase, display font, weight 700, 24px on phones and 28px from 820, a 3px flow underline
   with a soft brand glow, tracking -0.02em, `--text` colour. Never in a serif,
   never title case. Lockup: the icon at 1.1x cap height, 8px gap, then the wordmark. Page titles ("Streams", "Pair a
   device") sit beside or under it, in `--font-ui` 800.

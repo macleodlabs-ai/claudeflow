@@ -1,8 +1,8 @@
 <div align="center">
 
-![claudeflow — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
+![Streams — one Claude Code session, many threads of work, untangled into live, colour-coded streams](assets/hero.jpg)
 
-<h1>claudeflow</h1>
+<h1>Streams</h1>
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
@@ -112,12 +112,12 @@ Type `status` (the word on its own), or press `status` in the bar, and a card op
 
 ### 📱 On your phone and tablet
 
-Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Claudeflow app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
+Claude Code's Remote Control does not draw plugin UI in the phone app, so streams brings its own: the **Streams app**, a web page you add to your Home Screen. Any number of phones and tablets can use it at once, and each one sees every running session of every Claude Code account it has paired with.
 
-<p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Claudeflow app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
+<p align="center"><img src="assets/phone-app.jpg" width="320" alt="The Streams app on a phone: a tab for the session, a permission prompt with Allow and Deny, then a waiting question with Yes and Reply, and a running stream"></p>
 
 - **Every session, one page:** a tab per running session (`macleod · claudeflow`). A session that goes quiet greys out, then leaves.
-- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.claudeflow/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
+- **Write from the phone:** a composer pinned to the bottom sends to the stream you have open, or, with none open, a new prompt that streams routes as if you typed it on the Mac. It grows with your text; 📎 or pasting attaches photos (shrunk on the phone) and small files, which the session saves under `~/.streams/uploads/` and names in the prompt for Claude to read; 🎤 dictates where the browser offers it: hold it to talk, or tap to start and tap to stop; the words type themselves in as they are heard, with a soundwave in the input. Plan usage shows beside its target as small marks (percent used, reset, in colour); swipe it aside for plan usage in full, with the model the session runs on, and the runs line.
 - **Share a project:** ☰ → Share: *Invite to watch* or *Invite to contribute* makes a link (Share… or Copy) for one person: within 24 hours they join that project only, for 7 days, giving their name and using Face ID. Opening it again (say, from the Home Screen app after Safari) moves their access to that device. The app speaks to them about your project and you, never about a Mac or pairing. A watcher sees the project's streams and nothing else, with no controls; the Mac refuses anything it sends. A contributor can reply, prompt and answer permission prompts. Under ☰ you switch each person between Watch and Contribute, give them 7 more days, or remove them; only your own devices can share.
 - **Swipe to archive:** a finished stream (done, idle, stalled or failed) swipes left to archive; archived streams fold under the list, and each swipes right (or taps ↺) to restore. Running, looping and waiting streams do not swipe.
 - **Locked means hidden:** while an account is locked, the app shows only its Unlock, nothing of its sessions. It locks itself after 5 minutes put away or 15 minutes on screen untouched; Face ID opens it again.
@@ -264,7 +264,6 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `/streams disconnect` | Sign this account out of Streams |
 | `/streams delete-account` | Delete your Streams account (on the site, after signing in) |
 | `/streams phone` | Open the pairing page with a QR code for your phones and tablets (see [On your phone and tablet](#-on-your-phone-and-tablet)) |
-| `/streams phone relay <url>` | Set the relay address (`relayUrl`) without opening `/config`; https origin only. `off` clears it |
 | `/streams phone devices` | List the paired phones and tablets |
 | `/streams phone forget <id>` | Unpair one device (`all` unpairs every one) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
@@ -310,7 +309,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 {
   "pluginConfigs": {
     "streams@claudeflow": {
-      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false, "relayUrl": "https://relay.claudeflow.workers.dev" }
+      "options": { "autoArchiveHours": 24, "chatStyle": "full", "completionCheck": true, "diagnostics": false }
     }
   }
 }
@@ -322,7 +321,6 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | `chatStyle` | `full` | How the pane draws a stream's chat, in its own view and in each card's recent rows: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `◉ full ○ compact` switch on a stream's header or any card's header changes it for the session. |
 | `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
-| `relayUrl` | `https://relay.claudeflow.workers.dev` | The relay your phones and tablets connect through: the hosted one, or your own (`https://relay.<you>.workers.dev`). Nothing calls it until a device is paired. Empty: no remote, and sessions never call any relay. |
 
 ### Model use
 
@@ -350,10 +348,9 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Pane doesn't open | The terminal is under 144 columns or not fullscreen. Type `/streams`. |
 | Dim `streams: …` line in the transcript | Claude Code is reporting a failed hook; the line names it. Include it in an issue. |
 | Older rows have no stripe | History is still filing; watch the progress line at the top of the pane. |
-| The app says **Connecting…** | Check the relay address loads in the phone's browser, and that `/streams connect` has signed this account in. |
-| `/streams phone` says to set the relay address | Run `/streams phone relay https://relay.<you>.workers.dev`, or set `relayUrl` (see [Set up](#set-up-about-5-minutes-once)) and `/reload-plugins`. |
+| The app says **Connecting…** | Check `/streams connect` has signed this account in, and that the phone has a network connection. |
 | **Not paired** with *pairing expired* or *bad pairing proof* | The QR code is older than 10 minutes, or from another `/streams phone`. Run `/streams phone` and scan the new code. |
-| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another relay address. Run `/streams phone` and pair it again. |
+| **Locked** with *passkey not verified* | The device was forgotten, or its passkey was made for another address. Run `/streams phone` and pair it again. |
 | A session is missing on the phone | That session runs an older streams, or another account with no device paired: update the plugin and `/reload-plugins`, or run `/streams phone` in that account. |
 
 ---
@@ -364,7 +361,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 <tr>
 <td>
 
-**claudeflow is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
+**Streams is built by [Macleod Labs](https://macleodlabs.ai).** We build Claude Code mods, agent workflows and AI tooling for engineering teams: custom plugins, multi-agent pipelines, and getting your team productive with Claude Code.
 
 <a href="https://macleodlabs.ai/?utm_source=github&utm_medium=readme&utm_campaign=claudeflow"><img alt="Hire Macleod Labs" src="https://img.shields.io/badge/Hire%20Macleod%20Labs-%E2%86%92-7c5cff?style=for-the-badge&labelColor=12164a"></a>
 

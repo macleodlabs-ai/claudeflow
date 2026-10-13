@@ -7,7 +7,7 @@ import { afterTaskNotice, agentEnded, agentSeen, fromJournal, fromRunFile, launc
 import { commandOf, snapshotOf, summaryOf, type SnapshotInput } from '../hooks/remote/snapshot'
 import { statusOf } from '../hooks/status'
 import { STORE, TICK_MS } from '../hooks/remote/index'
-import { RELAY, SESSION, T0, TOKEN, account, phone, room } from './room'
+import { SESSION, T0, TOKEN, account, phone, room } from './room'
 
 // A Workflow run is many agents the session's agent list never names: without this, every one of them was filed in
 // whatever stream happened to be current, and the run showed as nothing but noise. These tests pin that a run is its
@@ -290,7 +290,7 @@ async function withPhone($: Engine, on: On) {
   const me = account()
   const a = phone(me, 'iPhone')
   const relay = room([a])
-  const { clock, calls, submitted } = session(on, {}, { now: T0, store: { [STORE.identity]: me, [STORE.devices]: [a.stored()] } })
+  const { clock, calls, submitted } = session(on, {}, { now: T0, store: { [STORE.token]: TOKEN, [STORE.identity]: me, [STORE.devices]: [a.stored()] } })
   mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude' })
   on('session.id', async () => ({ value: SESSION }))
   on('session.start', async (_$, e) => e as never)
@@ -320,7 +320,7 @@ async function withPhone($: Engine, on: On) {
 }
 
 describe('commands from the phone, in the session', () => {
-  test('stopTask stops only a run this session shows running; runTick submits the loop prompt; stopLoop ends it as the model would', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('stopTask stops only a run this session shows running; runTick submits the loop prompt; stopLoop ends it as the model would', ENGINE, async ($, on) => {
     const { a, relay, clock, calls, submitted, ran, acks } = await withPhone($, on)
 
     await $.prompt.submit({ text: '#ci watch the PR', wait: false, origin: { kind: 'composer' } })
@@ -358,7 +358,7 @@ describe('commands from the phone, in the session', () => {
     expect(calls).toHaveLength(2)
   })
 
-  test('Run now is filed as the loop’s tick in its stream, never as the person’s prompt, and repeated taps run it once', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('Run now is filed as the loop’s tick in its stream, never as the person’s prompt, and repeated taps run it once', ENGINE, async ($, on) => {
     // Filed as a prompt, it would close every open question (a person's prompt answers them) and be routed by Haiku
     // away from its loop; and each tap is a model turn the person pays for.
     const routed: string[] = []

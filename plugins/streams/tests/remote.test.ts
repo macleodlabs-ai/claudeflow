@@ -397,13 +397,13 @@ describe('what a phone may send', () => {
 })
 
 describe('the session on the relay', () => {
-  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }
+  const OPTIONS = ENGINE
 
   test('posts up with its token and cursor, stays quiet when nothing changed, and backs off while the relay fails', OPTIONS, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
-    mock.store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    mock.store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me, [STORE.devices]: [a.stored()] })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     let isUp = true
     const sent: Up[] = []
@@ -446,7 +446,7 @@ describe('the session on the relay', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
-    mock.store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    mock.store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me, [STORE.devices]: [a.stored()] })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     let posts = 0
     on('http.fetch', async () => {
@@ -478,7 +478,7 @@ describe('the session on the relay', () => {
   test('an account with nothing paired and no pairing open never calls the relay', OPTIONS, async ($, on) => {
     // Every session of every account runs this; one that no device could answer must spend nothing.
     const clock = session(on)
-    mock.store(on, { [STORE.identity]: account() })
+    mock.store(on, { [STORE.token]: TOKEN,  [STORE.identity]: account() })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     let posts = 0
     on('http.fetch', async () => {
@@ -498,7 +498,7 @@ describe('the session on the relay', () => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
-    const kept = store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] }, o.limit)
+    const kept = store(on, { [STORE.token]: TOKEN, [STORE.identity]: me, [STORE.devices]: [a.stored()] }, o.limit)
     const runs: string[][] = []
     const written: Record<string, string> = {}
     // Making a folder and decoding a file work; anything else (git, open) fails, as on a machine without them.
@@ -619,7 +619,7 @@ describe('the session on the relay', () => {
     // Nothing is held, so the session takes commands on its active poll, then acks on the next post.
     await clock.advance(ACTIVE_POLL_MS)
     await clock.advance(ACTIVE_POLL_MS)
-    const path = '/Users/me/.claudeflow/uploads/b1/shot.png'
+    const path = '/Users/me/.streams/uploads/b1/shot.png'
     expect(written[`${path}.b64`] === b64).toBe(true)
     expect(runs.map(r => [...r])).toContainEqual(['/usr/bin/base64', '-D', '-i', `${path}.b64`, '-o', path])
     expect(submitted.at(-1)).toBe(`what is wrong here?\n\n[Attached from my phone: ${path}]`)
@@ -750,7 +750,7 @@ describe('the session on the relay', () => {
   test('with no device looking a permission prompt is not held: the Mac asks at once', OPTIONS, async ($, on) => {
     const me = account()
     session(on)
-    mock.store(on, { [STORE.identity]: me })
+    mock.store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me })
     on('tool.check', async () => ({ decision: 'ask' }) as never)
     const r = await $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'toolu_2' } as never)
     expect(r.decision).toBe('ask')
@@ -783,7 +783,7 @@ function store(on: On, entries: Record<string, unknown> = {}, limit = Infinity):
 }
 
 describe('sharing through the session', () => {
-  const OPTIONS = { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }
+  const OPTIONS = ENGINE
 
   test('the owner invites, the guest joins and moves to the Home Screen app, then is removed and told so', OPTIONS, async ($, on) => {
     // The whole share as index.tsx runs it, with $.store: what the owner and the guest each end up with.
@@ -794,7 +794,7 @@ describe('sharing through the session', () => {
     const clock = session(on)
     // Another project's history fills the store to its limit: sharing must still be kept, history making way.
     const other = storeKey('/work/other')
-    const full = { [STORE.identity]: me, [STORE.devices]: [owner.stored()], [other]: { streams: [], loopStream: {}, rows: Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, streamId: 'a', kind: 'reply', text: 'x'.repeat(1000), at: 0 })) } }
+    const full = { [STORE.token]: TOKEN, [STORE.identity]: me, [STORE.devices]: [owner.stored()], [other]: { streams: [], loopStream: {}, rows: Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, streamId: 'a', kind: 'reply', text: 'x'.repeat(1000), at: 0 })) } }
     const kept = store(on, full, JSON.stringify(full).length + 100)
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     const relay = room([owner, safari, homeScreen])
@@ -844,10 +844,10 @@ describe('/streams phone', () => {
   const run = ($: Engine, args: string) =>
     $.command.run({ command: 'streams', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never) as Promise<{ text: string }>
 
-  test('opens the pairing page with the room, the account key and a fresh ten-minute secret', { ...ENGINE, options: { relayUrl: `${RELAY}/`, token: TOKEN } }, async ($, on) => {
+  test('opens the pairing page with the room, the account key and a fresh ten-minute secret', ENGINE, async ($, on) => {
     // The secret travels only after `#`, so the relay never learns it; a new identity is made the first time.
     const clock = mock.clock(on, { now: T0 })
-    const kept = store(on)
+    const kept = store(on, { [STORE.token]: TOKEN })
     const opened: string[][] = []
     on('process.run', async (_$, e) => {
       opened.push([...e.argv])
@@ -867,53 +867,17 @@ describe('/streams phone', () => {
     expect((kept.get(STORE.pairing) as Pairing).secret).not.toBe(pairing.secret)
   })
 
-  test('with the relay turned off it says exactly what to set, and opens nothing', { ...ENGINE, options: { relayUrl: '' } }, async ($, on) => {
-    mock.clock(on)
-    const kept = store(on)
-    let opened = 0
-    on('process.run', async () => {
-      opened++
-      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
-    })
-    const r = await run($, 'phone')
-    // Both ways to set it, since typing the address after the command is what people try first.
-    expect(r.text).toContain('/streams phone relay https://')
-    expect(r.text).toContain('relayUrl')
-    expect(opened).toBe(0)
-    expect(kept.get(STORE.identity)).toBe(undefined)
-  })
 
   // The address typed after the command must land in the plugin's own relayUrl option, the one /config shows, so
   // there is one value and no override to forget. A wrong one is refused before it is written: an http or pathed
   // address would make passkeys fail on the phone with no hint why.
-  test('`phone relay <url>` sets the relayUrl option, `off` clears it, and http or junk is refused', ENGINE, async ($, on) => {
-    mock.clock(on)
-    store(on)
-    const set: unknown[] = []
-    on('config.list', async () => ({ value: [{ key: 'streams.relayUrl', label: 'Relay address', kind: 'text', value: '', provider: { plugin: 'streams', tier: 'user' }, isLocked: false }] }) as never)
-    on('config.set', async (_$, e) => {
-      set.push([e.key, e.value])
-      return { value: e.value } as never
-    })
-    expect((await run($, `phone relay ${RELAY}/`)).text).toContain(`Relay set to ${RELAY}`)
-    expect((await run($, 'phone relay off')).text).toContain('Relay cleared')
-    expect(set).toEqual([
-      ['streams.relayUrl', RELAY],
-      ['streams.relayUrl', ''],
-    ])
-    expect((await run($, 'phone relay http://relay.example.workers.dev')).text).toContain('must be https')
-    expect((await run($, `phone relay ${RELAY}/v1/room`)).text).toContain('no path')
-    expect((await run($, 'phone relay relay.example')).text).toContain('is not a relay address')
-    expect((await run($, 'phone relay https://localhost')).text).toContain('is not a relay address')
-    expect(set).toHaveLength(2)
-  })
 
-  test('lists the paired devices and forgets one or all', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('lists the paired devices and forgets one or all', ENGINE, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const b = phone(me, 'iPad')
     mock.clock(on)
-    const kept = store(on, { [STORE.devices]: [a.stored(), b.stored()] })
+    const kept = store(on, { [STORE.token]: TOKEN,  [STORE.devices]: [a.stored(), b.stored()] })
     expect((await run($, 'phone devices')).text).toContain(`iPhone  ${a.id}`)
     expect((await run($, 'phone forget nobody')).text).toContain('No device')
     await run($, `phone forget ${a.id}`)
@@ -951,7 +915,7 @@ describe('/streams connect', () => {
   }
 
   // The phone is the Streams service's: with no account, a session never reaches it, whatever it has paired.
-  test('with no token the session never calls the relay, and /streams phone says to connect first', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('with no token the session never calls the relay, and /streams phone says to connect first', ENGINE, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
@@ -963,11 +927,11 @@ describe('/streams connect', () => {
     expect((await run($, 'phone')).text).toContain('/streams connect')
   })
 
-  test('every relay request carries the Streams token', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('every relay request carries the Streams token', ENGINE, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
-    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me, [STORE.devices]: [a.stored()] })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
     await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
@@ -978,15 +942,14 @@ describe('/streams connect', () => {
 
   // Signing in happens in the browser; the session polls on its own clock and keeps the token in the plugin's
   // sensitive `token` setting (secure storage), which reloads the plugin with it.
-  test('connect opens the sign-in page, waits for the person, then keeps the token in the token setting', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('connect opens the sign-in page, waits for the person, then keeps the token in $.store, never a setting', ENGINE, async ($, on) => {
     const clock = session(on)
-    store(on)
+    const kept = store(on)
     const opened: string[][] = []
     on('process.run', async (_$, e) => {
       if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
       return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
     })
-    const set = configured(on)
     const asked = service(on, (path, _body, n) =>
       path === '/v1/connect'
         ? { status: 200, body: { code: 'ABCD-EFGH', device: 'dev-secret', url: `${RELAY}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }
@@ -1000,13 +963,13 @@ describe('/streams connect', () => {
     expect(opened).toEqual([['/usr/bin/open', `${RELAY}/connect?code=ABCD-EFGH`]])
     await clock.advance(TICK_MS * 4)
     expect(asked.filter(x => x.path === '/v1/connect/token').map(x => JSON.parse(x.body).device)).toEqual(['dev-secret', 'dev-secret', 'dev-secret'])
-    expect(set).toEqual([['streams.token', `${RELAY}#sr1.a.b.c`]])
+    expect(kept.get(STORE.token)).toBe(`${RELAY}#sr1.a.b.c`)
     // Kept once: no more polls after the token came.
     await clock.advance(TICK_MS * 4)
     expect(asked.filter(x => x.path === '/v1/connect/token')).toHaveLength(3)
   })
 
-  test('a sign-in page on another site is never opened', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('a sign-in page on another site is never opened', ENGINE, async ($, on) => {
     session(on)
     store(on)
     let opened = 0
@@ -1020,14 +983,13 @@ describe('/streams connect', () => {
     expect(opened).toBe(0)
   })
 
-  test('disconnect gives the token back to the service and clears it here', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('disconnect gives the token back to the service and clears it here', ENGINE, async ($, on) => {
     session(on)
-    store(on)
-    const set = configured(on)
+    const kept = store(on, { [STORE.token]: TOKEN })
     const asked = service(on, () => ({ status: 200, body: { ok: true } }))
     expect((await run($, 'disconnect')).text).toContain('Disconnected')
     expect(asked.filter(x => x.path === '/v1/token/revoke').map(x => x.auth)).toEqual([`Bearer ${BEARER}`])
-    expect(set).toEqual([['streams.token', '']])
+    expect(kept.get(STORE.token)).toBe('')
   })
 
   // A revoked token or an ended trial must not look like a relay that is down: the band says what to do.
@@ -1035,11 +997,11 @@ describe('/streams connect', () => {
     [401, '/streams connect'],
     [402, 'trial has ended'],
   ] as const)
-    test(`a ${status} from the service is said above the prompt`, { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+    test(`a ${status} from the service is said above the prompt`, ENGINE, async ($, on) => {
       const me = account()
       const a = phone(me, 'iPhone')
       const clock = session(on)
-      store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+      store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me, [STORE.devices]: [a.stored()] })
       on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
       service(on, () => ({ status }))
       on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
@@ -1051,11 +1013,26 @@ describe('/streams connect', () => {
       expect(texts).toContain(says)
     })
 
-  test('a 403 (another account holds this room) is said above the prompt, not taken for a relay that is down', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  // The free mod is the person's whatever their plan: a trial that ended or a plan cancelled turns the phone off, never
+  // the pane, the pill bar or the streams on this computer.
+  test('with the plan over (402), the free mod still works: /streams opens the navigator', ENGINE, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on)
-    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    store(on, { [STORE.token]: TOKEN, [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    const asked = service(on, () => ({ status: 402 }))
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await clock.advance(TICK_MS)
+    expect(asked.some(x => x.path.endsWith('/up'))).toBe(true)
+    expect((await run($, '')).text).toContain('Streams navigator opened.')
+  })
+
+  test('a 403 (another account holds this room) is said above the prompt, not taken for a relay that is down', ENGINE, async ($, on) => {
+    const me = account()
+    const a = phone(me, 'iPhone')
+    const clock = session(on)
+    store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me, [STORE.devices]: [a.stored()] })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     service(on, () => ({ status: 403 }))
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
@@ -1068,27 +1045,16 @@ describe('/streams connect', () => {
   })
 
   // The hosted token is a bearer for the account's plan and billing: it goes only to the relay that issued it.
-  test('a token is never sent to a relay other than the one that issued it', { ...ENGINE, options: { relayUrl: 'https://relay.other.workers.dev', token: TOKEN } }, async ($, on) => {
-    const me = account()
-    const a = phone(me, 'iPhone')
-    const clock = session(on)
-    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
-    const asked = service(on, () => ({ status: 200 }))
-    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
-    await clock.advance(TICK_MS * 3)
-    expect(asked.filter(x => x.auth)).toHaveLength(0)
-    expect((await run($, 'phone')).text).toContain('/streams connect')
-  })
 
   test('tokenFor: a stored token is used only with its own relay; one kept before origins were kept is the hosted relay\'s', () => {
     expect(tokenFor(`${RELAY}#sr1.x`, `${RELAY}/`)).toBe('sr1.x')
     expect(tokenFor(`${RELAY}#sr1.x`, 'https://relay.other.workers.dev')).toBe('')
     expect(tokenFor('sr1.x', HOSTED_RELAY)).toBe('sr1.x')
-    expect(tokenFor('sr1.x', RELAY)).toBe('')
+    expect(tokenFor('sr1.x', 'https://relay.other.workers.dev')).toBe('')
     expect(tokenFor('', RELAY)).toBe('')
   })
 
-  test("the hosted relay's sign-in page on the Streams site is opened; the site is not trusted for any other relay", { ...ENGINE, options: { relayUrl: HOSTED_RELAY } }, async ($, on) => {
+  test("the hosted relay's sign-in page on the Streams site is opened", ENGINE, async ($, on) => {
     session(on)
     store(on)
     configured(on)
@@ -1103,23 +1069,10 @@ describe('/streams connect', () => {
     expect(opened).toEqual([['/usr/bin/open', `${SITE}/connect?code=ABCD-EFGH`]])
   })
 
-  test('with a self-hosted relay, a sign-in page on the Streams site is not opened', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
-    session(on)
-    store(on)
-    let opened = 0
-    on('process.run', async (_$, e) => {
-      if (e.argv[0] === '/usr/bin/open' || e.argv[0] === 'xdg-open') opened++
-      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
-    })
-    service(on, () => ({ status: 200, body: { code: 'ABCD-EFGH', device: 'd', url: `${SITE}/connect?code=ABCD-EFGH`, interval: 2, expiresIn: 600 } }))
-    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
-    expect((await run($, 'connect')).text).toContain('Could not reach')
-    expect(opened).toBe(0)
-  })
 
-  test('/streams billing opens the Stripe page the service names, and nothing on any other site', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('/streams billing opens the Stripe page the service names, and nothing on any other site', ENGINE, async ($, on) => {
     session(on)
-    store(on)
+    store(on, { [STORE.token]: TOKEN })
     const opened: string[][] = []
     on('process.run', async (_$, e) => {
       if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
@@ -1136,9 +1089,9 @@ describe('/streams connect', () => {
     expect(opened).toHaveLength(1)
   })
 
-  test('/streams delete-account opens the site page that asks for a fresh sign-in, and calls the service for nothing', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('/streams delete-account opens the site page that asks for a fresh sign-in, and calls the service for nothing', ENGINE, async ($, on) => {
     session(on)
-    store(on)
+    store(on, { [STORE.token]: TOKEN })
     const opened: string[][] = []
     on('process.run', async (_$, e) => {
       if (e.argv[0] === '/usr/bin/open') opened.push([...e.argv])
@@ -1152,7 +1105,7 @@ describe('/streams connect', () => {
     expect(asked.filter(x => x.path.includes('delete'))).toHaveLength(0)
   })
 
-  test('/streams billing before connecting says to connect, and calls nothing', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('/streams billing before connecting says to connect, and calls nothing', ENGINE, async ($, on) => {
     session(on)
     store(on)
     const asked = service(on, () => ({ status: 200 }))
@@ -1162,7 +1115,7 @@ describe('/streams connect', () => {
   })
 
   // The browser page opens with the system's own opener: `open` on macOS, `xdg-open` on Linux.
-  test('on Linux the sign-in page opens with xdg-open', { ...ENGINE, options: { relayUrl: RELAY } }, async ($, on) => {
+  test('on Linux the sign-in page opens with xdg-open', ENGINE, async ($, on) => {
     session(on)
     store(on)
     const opened: string[][] = []
@@ -1178,11 +1131,11 @@ describe('/streams connect', () => {
   })
 
   // Not yet on Windows: said plainly, rather than running Mac paths that fail half way.
-  test('on Windows the phone side says it is not there yet, and never calls the relay', { ...ENGINE, options: { relayUrl: RELAY, token: TOKEN } }, async ($, on) => {
+  test('on Windows the phone side says it is not there yet, and never calls the relay', ENGINE, async ($, on) => {
     const me = account()
     const a = phone(me, 'iPhone')
     const clock = session(on, { OS: 'Windows_NT' })
-    store(on, { [STORE.identity]: me, [STORE.devices]: [a.stored()] })
+    store(on, { [STORE.token]: TOKEN,  [STORE.identity]: me, [STORE.devices]: [a.stored()] })
     on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
     const asked = service(on, () => ({ status: 200, body: { frames: [], devices: [] } }))
     await $.session.start({ cwd: 'C:\\work\\p', surface: 'terminal', isInteractive: true })

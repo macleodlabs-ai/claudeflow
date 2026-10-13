@@ -6,10 +6,11 @@ import { withPaired, type Answered, type Device, type Identity, type Invite, typ
 import type { PhoneCommand, Snapshot } from '../hooks/remote/snapshot'
 import { authenticator } from './authenticator'
 
-export const RELAY = 'https://relay.example.workers.dev'
+/** The relay every session talks to: the hosted one, fixed (there is no setting). */
+export const RELAY = 'https://relay.claudeflow.workers.dev'
 /** The Streams token the tests' sessions hold (`/streams connect`); the fake relay does not check it. */
 export const BEARER = 'sr1.testaccount0000000.testtoken000000000.sig'
-/** The `token` setting as /streams connect keeps it: the relay that issued it, then the token. */
+/** The token as /streams connect keeps it in $.store: the relay that issued it, then the token. */
 export const TOKEN = `${RELAY}#${BEARER}`
 export const ORIGIN = RELAY
 export const SESSION = 'sess-1'
