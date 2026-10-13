@@ -13,8 +13,21 @@ export type Card = {
   tickets: readonly StatusLine[]
   streamLines: readonly StatusLine[]
   limits: readonly LimitView[]
+  /** Streams Remote's plan, once the service has said it (a connected account only; the free mod has none). */
+  account?: { trialEndsAt: number; paidUntil: number; status: string; at: number }
+  /** This mod's version, shown small for debugging. */
+  version?: string
   width: number
   now: number
+}
+
+/** The status card's Streams Remote row: the plan in a few words, and where to go about it; none without an account. */
+export function accountRow(a: Card['account'], now: number): { state: string; detail: string; hint: string; isLive: boolean } | undefined {
+  if (!a || !a.at) return undefined
+  const day = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+  if (a.paidUntil > now) return a.status === 'past_due' ? { state: 'payment failed', detail: `paid until ${day(a.paidUntil)}`, hint: '/streams billing', isLive: true } : { state: 'paid', detail: `until ${day(a.paidUntil)}`, hint: '/streams account', isLive: true }
+  if (a.trialEndsAt > now) return { state: 'trial', detail: `ends ${day(a.trialEndsAt)}`, hint: '/streams account', isLive: true }
+  return { state: 'ended', detail: 'phone off, the free mod keeps working', hint: '/streams billing', isLive: false }
 }
 
 /**
@@ -89,6 +102,23 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
       })}
       {lines.length > shown.length ? <Text dimColor>+{lines.length - shown.length} more in the streams pane</Text> : null}
       {lines.length === 0 ? <Text dimColor>Nothing yet: streams appear as you prompt.</Text> : null}
+      {(() => {
+        const row = accountRow(c.account, now)
+        return row ? (
+          <Box key="account" marginTop={1}>
+            <Box width={areaW} flexShrink={0}>
+              <Text dimColor>Streams Remote</Text>
+            </Box>
+            <Box width={stateW} flexShrink={0}>
+              <Text color={row.isLive ? undefined : 'yellow'} bold>
+                {row.state}
+              </Text>
+            </Box>
+            <Text>{row.detail}</Text>
+            <Text dimColor>{` · ${row.hint}`}</Text>
+          </Box>
+        ) : null
+      })()}
       {limits.length ? (
         <Box key="limits" flexDirection="column" marginTop={1}>
           {limits.map(l => (
@@ -105,6 +135,11 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
               <Text dimColor>{l.resetsAt ? ` · ${l.resetsAt}` : ''}</Text>
             </Box>
           ))}
+        </Box>
+      ) : null}
+      {c.version ? (
+        <Box key="version" justifyContent="flex-end">
+          <Text dimColor>{`streams ${c.version}`}</Text>
         </Box>
       ) : null}
     </Box>

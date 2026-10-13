@@ -6,13 +6,13 @@ import { HEARTBEAT_MS, type Snapshot } from '../hooks/remote/snapshot'
 import { TICK_MS } from '../hooks/remote/index'
 import { ORIGIN, SESSION, T0, account, cycle, phone, room, snapshot, tOf, type Phone } from './room'
 
-// The free plan allows 100k requests a day across the Worker and the Room, and every session of the account polls on
-// its own. These tests hold the link's post cycle (`next`, `answered`) to the relay's polling budget.
+// The service's requests are budgeted, and every session of the account polls on its own. These tests hold the
+// link's post cycle (`next`, `answered`) to that budget.
 
 describe('the polling budget', () => {
   test('only a paired device, or any while a pairing is open, makes the session poll faster', () => {
     // Anyone with the room id (a forgotten phone, an old QR code) can keep a socket open and ping. Counting it would
-    // keep every session of the account polling fast all day and spend the free plan's requests.
+    // keep every session of the account polling fast all day and spend the service's requests.
     const me = account()
     const a = phone(me, 'iPhone')
     const stranger = phone(me, 'stranger')
@@ -82,7 +82,7 @@ describe('the polling budget', () => {
   })
 
   test('a session posts every tick only while a permission waits on a device, every 6 s while one looks, otherwise on news or every 15 s', () => {
-    // 2 s for every session while a device looks would spend the 100k a day in a few hours. Fast polling is kept
+    // 2 s for every session while a device looks would spend a day's budget in a few hours. Fast polling is kept
     // for an Allow waiting on Face ID.
     const me = account()
     const a = phone(me, 'iPhone')

@@ -1273,7 +1273,7 @@ describe('what the phone is sent', () => {
   })
 
   // A clock in the text would make every snapshot differ from the last, so a quiet session would post every tick and
-  // spend the free plan's requests. Clocks travel as times; the terminal and the phone count them as they draw.
+  // spend the service's requests. Clocks travel as times; the terminal and the phone count them as they draw.
   test('the same facts a few seconds later make the same snapshot, and each screen counts the clocks itself', () => {
     const streams: Stream[] = [
       { ...STREAMS[0]!, lastAt: at(48) },

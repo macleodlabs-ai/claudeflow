@@ -172,6 +172,14 @@ declare module 'claude-code' {
       asking: { id: string; tool: string; summary: string }[]
       /** What the session answered for the person (a recommended option nobody chose), shown in the band until `until`. */
       remoteNote: { text: string; until: number }
+      /** Devices that typed the pairing code, waiting for /streams phone approve or deny, until the pairing ends. */
+      pairAsk: { asks: { id: string; label: string; env?: { os?: string; browser?: string; app?: string; home?: boolean } }[]; until: number }
+      /** This mod's version, from its plugin.json, for the status card. */
+      version: { v: string }
+      /** The welcome above the prompt, once after installing, until the first prompt (`remote`: offer Streams Remote). */
+      welcome: { show: boolean; remote: boolean }
+      /** The Streams account's plan as the service last said (Streams Remote only), for the status card. */
+      remoteAccount: { who: string; trialEndsAt: number; paidUntil: number; status: string; at: number }
       /**
        * This session's sealed channels with phones (keys and counts, remote/link.ts KeptConn), so /reload-plugins
        * does not cut the phones off. In memory only, like the rest of $.state.

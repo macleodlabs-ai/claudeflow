@@ -3,7 +3,7 @@ import { proofParts } from './device'
 import { HEARTBEAT_MS, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 import { createNotifier, type Hint } from './notify'
 
-// One session's side of the protocol , with no engine in it: it
+// One session's side of the protocol, with no engine in it: it
 // reads what the relay answered and says what to post and when, which devices were paired and which commands to do.
 // The engine adapter (index.ts) does the posting, the store and the effects, so all of this runs in plain tests.
 
@@ -34,11 +34,34 @@ export type Device = {
    * this device's id only with that key, once every device of the account has one (`guardOf`).
    */
   relayKey?: string
+  /** What the device said of itself in its last hello (system, browser, app build, Home Screen), for the lists. */
+  env?: { os?: string; browser?: string; app?: string; home?: boolean }
 }
+
+/** A device's own description from its hello, kept only in its expected shape: short strings, nothing else. */
+export function envOf(v: unknown): Device['env'] {
+  if (!v || typeof v !== 'object') return undefined
+  const x = v as Record<string, unknown>
+  const str40 = (s: unknown) => (typeof s === 'string' && s.length > 0 && s.length <= 40 && /^[\w .()+/-]+$/.test(s) ? s : undefined)
+  const env = { ...(str40(x.os) ? { os: str40(x.os) } : {}), ...(str40(x.browser) ? { browser: str40(x.browser) } : {}), ...(str40(x.app) ? { app: str40(x.app) } : {}), ...(x.home === true ? { home: true } : {}) }
+  return Object.keys(env).length ? env : undefined
+}
+
+/** A device's description as one short line: `iOS 18 · Safari · Home Screen · app 1a2b3c4`. */
+export const envLine = (env: Device['env']): string =>
+  env ? [env.os, env.browser, env.home ? 'Home Screen' : undefined, env.app ? `app ${env.app}` : undefined].filter(Boolean).join(' · ') : ''
 /** What a shared device may do: watch only, or act as the owner does in that project. */
 export type Role = 'viewer' | 'contributor'
 /** An open pairing: the QR code's secret, and when it stops working. */
-export type Pairing = { secret: string; until: number }
+/**
+ * An open pairing: the QR code's secret, and when it stops working. A code to type instead (`code`, ABCD-EFGH) has a
+ * secret of its own that the service holds for those minutes, so a device that pairs by it waits for the person's
+ * approval in Claude Code (`approved`, `denied`: device ids).
+ */
+export type Pairing = { secret: string; until: number; code?: string; codeSecret?: string; approved?: string[]; denied?: string[] }
+
+/** A device that pairs by the typed code and waits for the person to approve it. */
+export type PendingPair = { id: string; label: string; env?: Device['env'] }
 /**
  * A shared invite: a pairing secret for one project and role, and how many days the access lasts. It is one person's:
  * until it expires, using it again (the Home Screen app after Safari) moves their access to the new device.
@@ -104,7 +127,15 @@ export const invitesOf = (v: unknown): Invite[] =>
   })
 export const pairingOf = (v: unknown): Pairing | undefined => {
   const x = obj(v)
-  return str(x.secret) && typeof x.until === 'number' ? { secret: x.secret, until: x.until } : undefined
+  if (!str(x.secret) || typeof x.until !== 'number') return undefined
+  const ids = (v: unknown) => (Array.isArray(v) ? v.filter((i): i is string => typeof i === 'string').slice(0, 50) : [])
+  return {
+    secret: x.secret,
+    until: x.until,
+    ...(str(x.code) && str(x.codeSecret) ? { code: x.code as string, codeSecret: x.codeSecret as string } : {}),
+    approved: ids(x.approved),
+    denied: ids(x.denied),
+  }
 }
 
 /** The relay's answer to `up`, if it is one; anything else is read as a failed post. */
@@ -140,6 +171,8 @@ type Hello = {
   registration?: { credentialId: string; publicKey: string; clientDataJSON: string }
   /** `relayHash` of the device's relay key (newer apps). */
   rk?: string
+  /** What the device says of itself (newer apps). */
+  env?: unknown
 }
 
 const helloOf = (data: unknown): Hello | undefined => {
@@ -206,7 +239,10 @@ export function guardOf(k: Pick<Known, 'devices' | 'pairing' | 'invites' | 'now'
   // A pairing socket may only say hello. An expired pairing or invite still gets one for a week, so its holder is
   // told by a session that it expired, rather than kept retrying a socket that never opens.
   const recent = (until: number) => k.now < until + TOLD_EXPIRED_MS
-  const pairs = [...(k.pairing && recent(k.pairing.until) ? [k.pairing.secret] : []), ...(k.invites ?? []).filter(i => recent(i.until)).map(i => i.secret)]
+  const pairs = [
+    ...(k.pairing && recent(k.pairing.until) ? [k.pairing.secret, ...(k.pairing.codeSecret ? [k.pairing.codeSecret] : [])] : []),
+    ...(k.invites ?? []).filter(i => recent(i.until)).map(i => i.secret),
+  ]
   return {
     on: live.length > 0 && live.every(d => !!d.relayKey),
     admit: live.flatMap(d => (d.relayKey ? [{ id: d.id, key: d.relayKey }] : [])),
@@ -244,8 +280,8 @@ export const ACTIVE_POLL_MS = 6000
 /**
  * How often a session with a device that may reach it posts when nothing else is due: a phone opened now waits at
  * most this long before a session sees it (then 6 s, as a phone on its lock screen counts as looking). 5,760 posts a
- * day a session: the free plan's 100k requests leave room for three idle sessions and most of a day of looking
- * . Shorter costs the budget a relay over its limit would fail every post on.
+ * day a session: the service's request budget allows for idle sessions and a day of looking
+ *. Shorter costs the budget a relay over its limit would fail every post on.
  */
 export const IDLE_POLL_MS = 15_000
 
@@ -263,12 +299,14 @@ export const WARM_MS = 60_000
 
 /**
  * The session's link to its devices: one sealed channel per device, made by answering its hello, and the post cycle
- * that carries them . `identity` is the account's; `origin` is the relay's, where
+ * that carries them. `identity` is the account's; `origin` is the relay's, where
  * the devices' passkeys live. Each tick the adapter asks `next` for a post, sends it, and hands the answer (or the
  * failure) to `answered`; the link keeps the cursor, the welcomes not yet sent, the cadence and the backoff.
  */
 export function createLink(o: { identity: Identity; session: string; origin: string; project: string; kept?: readonly KeptConn[] }) {
   const conns = new Map<string, Conn>()
+  /** Devices that said hello by the typed code and wait for the person's approval, since the last `waitingApproval`. */
+  const waiting: PendingPair[] = []
   // Channels this session had before the plugin reloaded: the phones keep theirs, so nothing needs a new Face ID.
   for (const k of o.kept ?? []) {
     const ch = channel(fromB64u(k.send), fromB64u(k.recv), { sent: k.sent + KEPT_MARGIN, lastOpened: k.lastOpened })
@@ -338,7 +376,17 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       // in its own passkey or another device's id. The owner's pairing first, then a shared invite.
       const isBrowser = reg.browser === true
       const proofOf = (secret: string) => pairingProof(secret, ...proofParts({ id: h.device, pk: h.pk }, { credentialId: String(reg.credentialId), publicKey: String(reg.publicKey), browser: reg.browser }))
-      const isOwner = !!pairing && now < pairing.until && h.proof === proofOf(pairing.secret)
+      const isQr = !!pairing && now < pairing.until && h.proof === proofOf(pairing.secret)
+      // By the typed code: the service held that secret, so the person approves the device in Claude Code first.
+      const isCode = !isQr && !!pairing?.codeSecret && now < pairing.until && h.proof === proofOf(pairing.codeSecret)
+      if (isCode && pairing!.denied?.includes(h.device)) return 'pairing denied'
+      if (isCode && !pairing!.approved?.includes(h.device)) {
+        const label = typeof h.label === 'string' && h.label.trim() ? h.label.trim().slice(0, 60) : `device ${h.device.slice(0, 6)}`
+        const env = envOf(h.env)
+        if (!waiting.some(p => p.id === h.device)) waiting.push({ id: h.device, label, ...(env ? { env } : {}) })
+        return undefined
+      }
+      const isOwner = isQr || isCode
       const invite = isOwner ? undefined : (w.invites ?? []).find(i => now < i.until && h.proof === proofOf(i.secret))
       // Another project's invite is that project's sessions' to admit: this one stays silent rather than deny it.
       if (invite && invite.project !== o.project) return undefined
@@ -426,8 +474,11 @@ export function createLink(o: { identity: Identity; session: string; origin: str
           continue
         }
         // A hello that names its relay key teaches it to the account, a paired device's included (its first since keys).
-        const admitted = typeof h.rk === 'string' && /^[A-Za-z0-9_-]{43}$/.test(h.rk) ? { ...got.device, relayKey: h.rk } : got.device
-        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey && d.relayKey === admitted.relayKey)) {
+        const keyed = typeof h.rk === 'string' && /^[A-Za-z0-9_-]{43}$/.test(h.rk) ? { ...got.device, relayKey: h.rk } : got.device
+        // Its own description too, as of this hello: an updated app or a new browser shows in the lists.
+        const env = envOf(h.env)
+        const admitted = env ? { ...keyed, env } : keyed
+        if (!devices.some(d => d.id === admitted.id && d.pk === admitted.pk && d.credentialKey === admitted.credentialKey && d.relayKey === admitted.relayKey && JSON.stringify(d.env) === JSON.stringify(admitted.env))) {
           devices.splice(0, devices.length, ...withPaired(devices, [admitted]))
           out.paired.splice(0, out.paired.length, ...withPaired(out.paired, [admitted]))
         }
@@ -554,6 +605,11 @@ export function createLink(o: { identity: Identity; session: string; origin: str
      * failure keeps the welcomes and denials to send again, drops the sealed snapshots (they are sealed afresh next
      * time, on the channel's next counter) and backs off: 4 s, doubling, at most one heartbeat (30 s).
      */
+    /** The devices that asked to pair by the typed code since last asked (the adapter shows them for approval). */
+    waitingApproval(): PendingPair[] {
+      return waiting.splice(0)
+    },
+
     answered(text: string | undefined, now: number): Answered {
       const s = sent
       sent = undefined

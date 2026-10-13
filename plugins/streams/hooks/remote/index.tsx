@@ -5,8 +5,8 @@ import { savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
-import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link } from './link'
-import { newIdentity, publicKeyOf, randomId } from './seal'
+import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, envLine, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link, type PendingPair } from './link'
+import { newIdentity, pairCode, publicKeyOf, randomId } from './seal'
 import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv, type Platform } from './platform'
 import {
   HEARTBEAT_MS,
@@ -27,7 +27,7 @@ import {
   PROTO,
 } from './snapshot'
 
-// The session's side of the remote , the engine half: the account's identity
+// The session's side of the remote, the engine half: the account's identity
 // and paired devices in $.store, the relay posts on the 2 s clock within the polling budget, pairing, and the
 // effects of the devices' commands. What the frames mean is decided in link.ts, which has no engine in it.
 //
@@ -58,6 +58,69 @@ const loopStreamA = atom({ plugin: 'streams', key: 'loopStream' } as const, {})
 const remoteNoteA = atom({ plugin: 'streams', key: 'remoteNote' } as const, { text: '', until: 0 })
 /** This session's open channels with devices, kept across a reload of the plugin ($.state outlives it; link.ts `kept`). */
 const remoteConnsA = atom({ plugin: 'streams', key: 'remoteConns' } as const, { room: '', session: '', conns: [] as KeptConn[] })
+/** This mod's version, read from its plugin.json at session start: shown small on the status card, sent with the roster. */
+const versionA = atom({ plugin: 'streams', key: 'version' } as const, { v: '' })
+let modVersion = ''
+
+/** Devices that asked to pair by the typed code, waiting for `/streams phone approve` or `deny`; gone when the pairing ends. */
+const pairAskA = atom({ plugin: 'streams', key: 'pairAsk' } as const, { asks: [] as PendingPair[], until: 0 })
+
+/** The welcome above the prompt, in the first session after installing, until the first prompt. */
+const welcomeA = atom({ plugin: 'streams', key: 'welcome' } as const, { show: false, remote: true })
+
+/** The Streams account's plan as the service last said (every ROSTER_MS while connected), for the status card. */
+export const remoteAccountA = atom({ plugin: 'streams', key: 'remoteAccount' } as const, { who: '', trialEndsAt: 0, paidUntil: 0, status: '', at: 0 })
+
+/** How often a connected session tells the service its phones and guests (the account page) and hears its changes. */
+export const ROSTER_MS = 60_000
+/** When this session last did, and the account page's changes it applied since (sent back as done). */
+let rosterAt = 0
+let doneOps: string[] = []
+
+/** A change made on the account page: remove a device, or give a guest more days. */
+export type RosterOp = { id: string; kind: 'remove'; device: string } | { id: string; kind: 'extend'; device: string; days: number }
+
+/** The account page's changes as the service sent them; anything malformed is dropped. */
+export function opsOf(v: unknown): RosterOp[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap((o): RosterOp[] => {
+    const x = (o ?? {}) as Record<string, unknown>
+    if (typeof x.id !== 'string' || typeof x.device !== 'string') return []
+    if (x.kind === 'remove') return [{ id: x.id, kind: 'remove' as const, device: x.device }]
+    if (x.kind === 'extend' && typeof x.days === 'number' && x.days > 0 && x.days <= 365) return [{ id: x.id, kind: 'extend' as const, device: x.device, days: x.days }]
+    return []
+  })
+}
+
+/** A project as the service may see it: its folder's name, never the path. */
+export const projectName = (cwd: string | undefined): string | undefined => (cwd ? cwd.replace(/\/+$/, '').split(/[\\/]/).pop() || undefined : undefined)
+
+/** The phones and guests as the account page shows them: names, roles, project names and dates; no keys. */
+export const rosterOf = (devices: Device[]) =>
+  devices.map(d => ({
+    id: d.id,
+    label: d.label,
+    pairedAt: d.pairedAt,
+    ...(d.role ? { role: d.role, project: projectName(d.project) ?? 'a project' } : {}),
+    ...(d.until !== undefined ? { until: d.until } : {}),
+    ...(d.removed ? { removed: true } : {}),
+    ...(d.env ? { env: d.env } : {}),
+  }))
+
+/**
+ * Applies the account page's changes, as the phone's own share commands do: a guest removed stays as removed (so its
+ * next unlock is told), your own device is forgotten; a guest extended gets the days from today or its end, the later.
+ */
+export function applyOps(devices: Device[], ops: RosterOp[], now: number): { devices: Device[]; done: string[] } {
+  let out = devices
+  for (const op of ops) {
+    const d = out.find(x => x.id === op.device)
+    if (!d) continue
+    if (op.kind === 'remove') out = d.role ? out.map(x => (x.id === d.id ? { ...x, removed: true, until: now } : x)) : out.filter(x => x.id !== d.id)
+    else if (d.role && !d.removed) out = out.map(x => (x.id === d.id ? { ...x, until: Math.max(now, x.until ?? 0) + op.days * DAY_MS } : x))
+  }
+  return { devices: out, done: ops.map(o => o.id) }
+}
 /** How long the band says the session chose for the person. */
 const NOTE_MS = 2 * 60_000
 /** What the band says when the service refuses this account, and for how long after each refusal. */
@@ -97,6 +160,8 @@ export const STORE = {
    * Not a setting: settings are shown at install and in /config, and the token is nobody's to type.
    */
   token: 'remote:token',
+  /** When this account first saw the welcome above the prompt: it is shown once, ever. */
+  welcomed: 'remote:welcomed',
 } as const
 
 /** How often the session looks for news to send and commands to take while a device is active. */
@@ -259,6 +324,36 @@ async function remoteTick($: $) {
   options.token = tokenFor(String((await $.store.get(STORE.token)) ?? ''), options.relayUrl)
   // No Streams token, no traffic: the phone is the Streams service's, and `/streams connect` signs in to it.
   if (!options.relayUrl || !options.token || !me || platform === 'win32') return
+  // The account page's view of the phones and guests, and its changes, once a minute; the plan rides along.
+  const rosterNow = await $.clock.now()
+  // Nothing paired, shared or pairing: nothing for the page, and no traffic (as for the room itself).
+  const hasAny = devicesOf(await $.store.get(STORE.devices)).length > 0 || invitesOf(await $.store.get(STORE.invites)).length > 0 || !!pairingOf(await $.store.get(STORE.pairing))
+  if (hasAny && rosterNow - rosterAt >= ROSTER_MS) {
+    rosterAt = rosterNow
+    const r = await $.http
+      .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/roster`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+        body: JSON.stringify({ devices: rosterOf(devicesOf(await $.store.get(STORE.devices))), done: doneOps, ...(modVersion ? { version: modVersion } : {}) }),
+      })
+      .catch(() => undefined)
+    let got: { ops?: unknown; account?: { who?: unknown; trialEndsAt?: unknown; paidUntil?: unknown; status?: unknown } } = {}
+    try {
+      got = r?.ok ? JSON.parse(r.text) : {}
+    } catch {}
+    if (r?.ok) doneOps = []
+    const ops = opsOf(got.ops)
+    if (ops.length) {
+      const applied = applyOps(devicesOf(await $.store.get(STORE.devices)), ops, rosterNow)
+      await saveRemote($, STORE.devices, applied.devices)
+      doneOps = applied.done
+      // Said done at once, so the page stops saying it is waiting.
+      rosterAt = 0
+    }
+    const a = got.account
+    if (a && typeof a.trialEndsAt === 'number' && typeof a.paidUntil === 'number')
+      await update($, remoteAccountA, () => ({ who: typeof a.who === 'string' ? a.who : '', trialEndsAt: a.trialEndsAt as number, paidUntil: a.paidUntil as number, status: typeof a.status === 'string' ? a.status : '', at: rosterNow }))
+  }
   const now = await $.clock.now()
   if (isTicking && now - tickAt < TICK_STUCK_MS) return
   isTicking = true
@@ -307,6 +402,12 @@ async function remoteTick($: $) {
       const refusal = r?.status === 401 ? REFUSED_TOKEN : r?.status === 402 ? REFUSED_PLAN : r?.status === 403 ? REFUSED_ROOM : undefined
       if (refusal) await update($, remoteNoteA, n => (n.text === refusal && now < n.until ? n : { text: refusal, until: now + REFUSED_NOTE_MS }))
       const got = link.answered(r?.ok ? r.text : undefined, now)
+      // A device that typed the code: shown above the prompt until approved, denied, or the pairing ends.
+      const asks = link.waitingApproval()
+      if (asks.length) {
+        const until = pairingOf(await $.store.get(STORE.pairing))?.until ?? now
+        await update($, pairAskA, a => ({ asks: [...a.asks.filter(x => !asks.some(n => n.id === x.id)), ...asks].slice(-5), until }))
+      }
       if (got.paired.length) {
         // Read fresh: another session may have paired a device meanwhile.
         devices = devicesOf(withPaired(devicesOf(await $.store.get(STORE.devices)), got.paired))
@@ -802,6 +903,29 @@ async function deleteAccount($: $): Promise<string> {
   return `${opened?.exitCode === 0 ? 'Opened' : 'Open'} ${url} to delete your Streams account: sign in there and confirm. Then run /streams disconnect here.`
 }
 
+/**
+ * `/streams account`: opens the account page (plan, computers, phones and guests, data) with a one-time link the
+ * service makes for this session's token. Billing and deleting there ask for a fresh sign-in.
+ */
+async function account($: $): Promise<string> {
+  if (platform === 'win32') return NOT_ON_WINDOWS
+  if (!options.token) return NOT_CONNECTED
+  const r = await $.http
+    .fetch(`${options.relayUrl.replace(/\/+$/, '')}/v1/account`, { method: 'POST', headers: { authorization: `Bearer ${options.token}` } })
+    .catch(() => undefined)
+  if (r?.status === 401) return REFUSED_TOKEN
+  let got: { url?: unknown; plan?: unknown } = {}
+  try {
+    got = r?.ok ? JSON.parse(r.text) : {}
+  } catch {}
+  const url = got.url
+  if (typeof url !== 'string' || !url.startsWith(`${SITE}/account?`)) return `Could not reach your Streams account. Try again in a minute, or go to ${SITE}/account.`
+  const open = openArgv(platform, url)
+  const opened = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  const plan = typeof got.plan === 'string' ? ` ${got.plan}` : ''
+  return opened?.exitCode === 0 ? `Opened your Streams account in your browser.${plan}` : `Open ${url} in a browser (it works once, for 10 minutes).${plan}`
+}
+
 /** `/streams disconnect`: gives the token back to the service and forgets it here. */
 async function disconnect($: $): Promise<string> {
   if (!options.token) return 'This account is not connected to Streams.'
@@ -815,20 +939,69 @@ async function disconnect($: $): Promise<string> {
 async function remotePair($: $, args: string[]): Promise<string> {
   if (platform === 'win32') return NOT_ON_WINDOWS
   const relay = options.relayUrl.replace(/\/+$/, '')
-  if (!options.token && args[0] !== 'devices' && args[0] !== 'forget') return NOT_CONNECTED
+  if (!options.token && !['devices', 'forget', 'extend'].includes(args[0] ?? '')) return NOT_CONNECTED
   const devices = devicesOf(await $.store.get(STORE.devices))
-  if (args[0] === 'devices') {
-    if (!devices.length) return 'No devices paired. `/streams phone` pairs one.'
-    // A guest's device says whose project it shares; a removed one is kept only to tell it so.
-    const what = (d: Device) => (d.removed ? '  removed' : d.role ? `  ${d.role} of ${d.project}` : '')
-    return devices.map(d => `${d.label}  ${d.id}  paired ${new Date(d.pairedAt).toISOString().slice(0, 10)}${what(d)}`).join('\n')
+  const now = await $.clock.now()
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+  /** A device by its id, or its name (any case): `forget Sam`, `extend sam 14`. */
+  const named = (which: string) => devices.find(d => d.id === which) ?? devices.find(d => d.label.toLowerCase() === which.toLowerCase())
+  if (args[0] === 'devices' || args[0] === 'guests') {
+    const live = devices.filter(d => !d.removed)
+    if (!live.length) return 'No phones or guests. `/streams phone` pairs your phone; `/streams phone invite viewer|collaborator` shares this project.'
+    const what = (d: Device) =>
+      d.role ? `${d.role === 'viewer' ? 'viewer' : 'collaborator'} of ${projectName(d.project)}, until ${day(d.until ?? now)}` : `yours, paired ${day(d.pairedAt)}`
+    return [
+      ...live.map(d => `${d.label}  ${what(d)}${d.env ? `  ${envLine(d.env)}` : ''}  (${d.id})`),
+      ...(modVersion ? [`streams ${modVersion}`] : []),
+      '',
+      '`/streams phone forget <name>` removes one; `extend <name> [days]` gives a guest more time; or manage them at /streams account.',
+    ].join('\n')
   }
   if (args[0] === 'forget') {
-    const which = args[1] ?? ''
-    const kept = which === 'all' ? [] : devices.filter(d => d.id !== which)
-    if (kept.length === devices.length) return `No device "${which}" to forget. \`/streams phone devices\` lists them; \`/streams phone forget all\` forgets every one.`
+    const which = args.slice(1).join(' ')
+    if (which === 'all') {
+      await saveRemote($, STORE.devices, devices.map(d => (d.role ? { ...d, removed: true, until: now } : d)).filter(d => d.role))
+      return `Forgot every device and removed every guest. Each has to pair again with \`/streams phone\` or a new invite.`
+    }
+    const d = named(which)
+    if (!d || d.removed) return `No device or guest "${which}". \`/streams phone devices\` lists them; \`/streams phone forget all\` forgets every one.`
+    // A guest stays as removed, so its next unlock is told so; your own device is forgotten.
+    await saveRemote($, STORE.devices, applyOps(devices, [{ id: 'cli', kind: 'remove', device: d.id }], now).devices)
+    return d.role ? `Removed ${d.label}: they can no longer see ${projectName(d.project)}.` : `Forgot ${d.label}. It has to pair again with \`/streams phone\`.`
+  }
+  if (args[0] === 'extend') {
+    const days = Number(args[args.length - 1])
+    const hasDays = args.length > 2 && Number.isInteger(days) && days > 0 && days <= 365
+    const which = args.slice(1, hasDays ? -1 : undefined).join(' ')
+    const d = named(which)
+    if (!d || !d.role || d.removed) return `No guest "${which}" to extend. \`/streams phone devices\` lists them.`
+    const kept = applyOps(devices, [{ id: 'cli', kind: 'extend', device: d.id, days: hasDays ? days : SHARE_DAYS }], now).devices
     await saveRemote($, STORE.devices, kept)
-    return `Forgot ${devices.length - kept.length} of ${devices.length} devices. A forgotten device has to pair again with \`/streams phone\`.`
+    return `${d.label} can see ${projectName(d.project)} until ${day(kept.find(x => x.id === d.id)!.until!)}.`
+  }
+  if (args[0] === 'approve' || args[0] === 'deny') {
+    const pairing = pairingOf(await $.store.get(STORE.pairing))
+    const asks = (await read($, pairAskA)).asks
+    const which = args.slice(1).join(' ').toLowerCase()
+    const chosen = asks.filter(a => !which || a.id === which || a.label.toLowerCase() === which)
+    if (!pairing || now >= pairing.until || !chosen.length) return 'No device is waiting to pair by code. `/streams phone` shows a new code.'
+    const ids = chosen.map(a => a.id)
+    const kept = args[0] === 'approve' ? { ...pairing, approved: [...(pairing.approved ?? []), ...ids] } : { ...pairing, denied: [...(pairing.denied ?? []), ...ids] }
+    await saveRemote($, STORE.pairing, kept)
+    await update($, pairAskA, a => ({ ...a, asks: a.asks.filter(x => !ids.includes(x.id)) }))
+    const names = chosen.map(a => a.label).join(', ')
+    return args[0] === 'approve' ? `Approved ${names}: it pairs as soon as it says hello again (a few seconds).` : `Denied ${names}: it cannot pair with this code.`
+  }
+  if (args[0] === 'invite') {
+    const role = args[1] === 'collaborator' || args[1] === 'contributor' ? 'contributor' : args[1] === 'viewer' ? 'viewer' : undefined
+    if (!role) return 'Invite as `viewer` (watches this project) or `collaborator` (also answers and prompts): `/streams phone invite viewer`.'
+    const identity = identityOf(await $.store.get(STORE.identity))
+    if (!identity) return 'Pair your own phone first with `/streams phone`: an invite joins the room it made.'
+    const secret = randomId(32)
+    const open = invitesOf(await $.store.get(STORE.invites)).filter(i => now < i.until)
+    await saveRemote($, STORE.invites, [...open, { secret, until: now + INVITE_MS, project: myCwd, role, days: SHARE_DAYS }].slice(-20))
+    const link = `${HOSTED_RELAY}/#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}&p=${encodeURIComponent(projectName(myCwd) ?? 'project')}&o=${encodeURIComponent(me?.account ?? 'Streams')}`
+    return `Send this link to one person. It works once, for ${Math.round(INVITE_MS / 3_600_000)} hours, and lets them ${role === 'viewer' ? 'watch' : 'watch, answer and prompt in'} ${projectName(myCwd)} for ${SHARE_DAYS} days:\n${link}`
   }
   let identity = identityOf(await $.store.get(STORE.identity))
   if (!identity) {
@@ -836,14 +1009,28 @@ async function remotePair($: $, args: string[]): Promise<string> {
     await saveRemote($, STORE.identity, identity)
   }
   const secret = randomId(32)
-  await saveRemote($, STORE.pairing, { secret, until: (await $.clock.now()) + PAIRING_MS })
-  // Everything after `#` stays in the browser: the relay never sees the secret.
-  const url = `${relay}/pair#r=${identity.room}&k=${publicKeyOf(identity.sk)}&s=${secret}`
+  const until = (await $.clock.now()) + PAIRING_MS
+  // A code to type instead, for a tablet with no camera: its own secret, which the service holds for these minutes
+  // to hand to whoever types the code; a device pairing by it waits for /streams phone approve.
+  const code = pairCode()
+  const codeSecret = randomId(32)
+  const pk = publicKeyOf(identity.sk)
+  const registered = await $.http
+    .fetch(`${relay}/v1/paircode`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+      body: JSON.stringify({ code, r: identity.room, k: pk, s: codeSecret, until }),
+    })
+    .catch(() => undefined)
+  await saveRemote($, STORE.pairing, { secret, until, ...(registered?.ok ? { code, codeSecret } : {}), approved: [], denied: [] })
+  // Everything after `#` stays in the browser: the relay never sees the QR code's secret.
+  const url = `${relay}/pair#r=${identity.room}&k=${pk}&s=${secret}${registered?.ok ? `&c=${code}` : ''}`
   const open = openArgv(platform, url)
   const r = open ? await $.process.run(open, { timeoutMs: 10_000 }).catch(() => undefined) : undefined
+  const typed = registered?.ok ? ` No camera? On the device open ${SITE}/app, tap Enter a code and type ${code}; you approve it here.` : ''
   return r?.exitCode === 0
-    ? `Opened the pairing page from ${relay} in your browser. Scan its QR code with each phone or tablet within 10 minutes.`
-    : 'Could not open your browser for the pairing page. Run `/streams phone` again once a browser can open.'
+    ? `Opened the pairing page in your browser. Scan its QR code with each phone or tablet within 10 minutes.${typed}`
+    : `Could not open your browser for the pairing page. Run \`/streams phone\` again once a browser can open.${typed}`
 }
 
 export function wireRemote(on: On, opts: RemoteOptions) {
@@ -851,6 +1038,23 @@ export function wireRemote(on: On, opts: RemoteOptions) {
   // Interactive sessions only: a headless run has no one watching from a phone.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     await remoteStart($, e)
+    try {
+      const v = (JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: unknown }).version
+      if (typeof v === 'string') {
+        modVersion = v
+        await update($, versionA, () => ({ v }))
+      }
+    } catch {}
+    // Once, ever, per account: what Streams is, the phone side, and who made it. Not for someone already connected.
+    if (!(await $.store.get(STORE.welcomed))) {
+      await $.store.set(STORE.welcomed, await $.clock.now())
+      if (!(await $.store.get(STORE.token))) await update($, welcomeA, () => ({ show: true, remote: platform !== 'win32' }))
+    }
+    return next(e)
+  })
+
+  on('prompt.submit', {}, async ($, e, next) => {
+    if ((await read($, welcomeA)).show) await update($, welcomeA, w => ({ ...w, show: false }))
     return next(e)
   })
 
@@ -870,13 +1074,46 @@ export function wireRemote(on: On, opts: RemoteOptions) {
 
   // After the session chose an absent person's question for them, the band says so.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [note, now] = await Promise.all([read($, remoteNoteA), $.clock.now()])
-    if (e.props.hasSurvey || !note.text || now >= note.until) return next(e)
+    const [note, welcome, ask, now] = await Promise.all([read($, remoteNoteA), read($, welcomeA), read($, pairAskA), $.clock.now()])
+    const hasNote = !!note.text && now < note.until
+    const asks = now < ask.until ? ask.asks : []
+    if (e.props.hasSurvey || (!hasNote && !welcome.show && !asks.length)) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const below = await next(e)
     return (
       <Box flexDirection="column">
-        <Text key="remote-note" dimColor>{note.text}</Text>
+        {welcome.show ? (
+          <Box key="welcome" flexDirection="column" borderStyle="round" borderColor="#7c83ff" paddingX={1} marginBottom={1}>
+            <Text key="w1">
+              <Text bold color="#7cc8ff">streams </Text>
+              <Text>is on. </Text>
+              <Text dimColor>Type </Text>
+              <Text bold>/streams</Text>
+              <Text dimColor> for the navigator; your streams fill in as you work.</Text>
+            </Text>
+            {welcome.remote ? (
+              <Text key="w2">
+                <Text bold color="#6ff0c0">On your phone too: </Text>
+                <Text dimColor>Streams Remote puts every session on your phone. </Text>
+                <Text bold>/streams connect</Text>
+                <Text dimColor> starts a 3-day free trial.</Text>
+              </Text>
+            ) : null}
+            <Text key="w3" dimColor>
+              Made by Macleod Labs: Claude Code mods and agent workflows, built for your team. macleodlabs.ai
+            </Text>
+          </Box>
+        ) : null}
+        {asks.map(a => (
+          <Text key={`pair-ask:${a.id}`}>
+            <Text bold color="#ffb88a">{`Pair ${a.label}${a.env ? ` (${envLine(a.env)})` : ''}? `}</Text>
+            <Text dimColor>It typed your pairing code. </Text>
+            <Text bold>/streams phone approve</Text>
+            <Text dimColor> or </Text>
+            <Text bold>deny</Text>
+          </Text>
+        ))}
+        {hasNote ? <Text key="remote-note" dimColor>{note.text}</Text> : null}
         {below}
       </Box>
     )
@@ -889,6 +1126,7 @@ export function wireRemote(on: On, opts: RemoteOptions) {
     if (verb === 'disconnect') return { text: await disconnect($) }
     if (verb === 'billing') return { text: await billing($) }
     if (verb === 'delete-account') return { text: await deleteAccount($) }
+    if (verb === 'account') return { text: await account($) }
     if (verb !== 'phone') return next(e)
     return { text: await remotePair($, rest) }
   })
