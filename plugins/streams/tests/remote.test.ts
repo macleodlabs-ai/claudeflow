@@ -417,7 +417,7 @@ describe('the session on the relay', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]?.url).toBe(`${RELAY}/v1/room/${me.room}/up`)
     // The guard is off: the paired phone has no relay key yet (an app from before keys), so nobody is shut out.
-    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [], guard: { on: false, admit: [], pairs: [] } })
+    expect(sent[0]?.body).toEqual({ token: me.token, session: SESSION, since: 0, frames: [], guard: { on: false, admit: [], pairs: [], told: [] } })
     // Nothing changed and no device looks: no request until the quiet pace's next post (on the first 2 s tick past
     // it), which carries the cursor on.
     const due = Math.ceil(IDLE_POLL_MS / TICK_MS) * TICK_MS
@@ -1222,9 +1222,9 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
     const first = cycle(link, relay, { devices: [], pairing, now: T0 })
     expect(first.paired[0]!.relayKey).toBe(relayHash(rk))
     // While the pairing is open its token's hash is posted too, so a new phone can still reach the room to say hello.
-    expect(first.posts[0]!.guard).toEqual({ on: false, admit: [], pairs: [relayHash(relayPairToken(pairing.secret))] })
+    expect(first.posts[0]!.guard).toEqual({ on: false, admit: [], pairs: [relayHash(relayPairToken(pairing.secret))], told: [] })
     const later = cycle(link, relay, { devices: first.paired, now: T0 + PAIRING_MS + 1 })
-    expect(later.posts[0]!.guard).toEqual({ on: true, admit: [{ id: a.id, key: relayHash(rk) }], pairs: [] })
+    expect(later.posts[0]!.guard).toEqual({ on: true, admit: [{ id: a.id, key: relayHash(rk) }], pairs: [], told: [] })
     // The key itself never goes to the relay in a frame: only its hash, in the hello.
     expect(JSON.stringify(first.posts)).not.toContain(rk)
   })
@@ -1235,7 +1235,7 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
     const rk = randomId(32)
     const upgraded = phone(me, 'old iPhone', { relayKey: rk })
     const stored = old.stored()
-    expect(guardOf({ devices: [stored], now: T0 })).toEqual({ on: false, admit: [], pairs: [] })
+    expect(guardOf({ devices: [stored], now: T0 })).toEqual({ on: false, admit: [], pairs: [], told: [] })
     // The same device (same keys and passkey) unlocking with a newer app: its hello carries the key's hash.
     const hello = upgraded.hello({ now: T0 })
     expect(hello.rk).toBe(relayHash(rk))
@@ -1250,6 +1250,8 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
       now: T0,
     })
     expect(g.admit.map(a => a.id)).toEqual(['owner-device-000001'])
+    // The removed and the expired may still say hello, to be told they are out.
+    expect(g.told.map(a => a.id)).toEqual(['guest-removed-00001', 'guest-expired-00001'])
     expect(g.on).toBe(true)
     expect(g.pairs).toHaveLength(1)
     // Nothing paired at all: nothing to guard, so the room stays as it was.

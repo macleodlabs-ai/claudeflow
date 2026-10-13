@@ -209,11 +209,12 @@ export type Known = { devices: Device[]; pairing?: Pairing; invites?: Invite[]; 
 
 /**
  * Who the relay may let into the room's device sockets: each device that may reach this account with its relay key's
- * hash, the hashes of the tokens an open pairing or invite opens a socket with, and `on`, whether to hold sockets to
+ * hash, the hashes of the tokens an open pairing or invite opens a socket with, devices `told` they are out (they may
+ * only say hello, to be told so), and `on`, whether to hold sockets to
  * that at all. Off until every device has a relay key, so a phone paired before keys existed is never shut out: it
  * sends one with its next hello, over the open room.
  */
-export type Guard = { on: boolean; admit: { id: string; key: string }[]; pairs: string[] }
+export type Guard = { on: boolean; admit: { id: string; key: string }[]; pairs: string[]; told: { id: string; key: string }[] }
 
 export function guardOf(k: Pick<Known, 'devices' | 'pairing' | 'invites' | 'now'>): Guard {
   const live = k.devices.filter(d => !d.removed && (!d.role || (d.until ?? 0) > k.now))
@@ -222,6 +223,8 @@ export function guardOf(k: Pick<Known, 'devices' | 'pairing' | 'invites' | 'now'
     on: live.length > 0 && live.every(d => !!d.relayKey),
     admit: live.flatMap(d => (d.relayKey ? [{ id: d.id, key: d.relayKey }] : [])),
     pairs: pairs.map(secret => relayHash(relayPairToken(secret))),
+    // Removed or expired: let in only to say hello, so a session can tell it why it is not let in any more.
+    told: k.devices.filter(d => d.relayKey && !live.includes(d)).map(d => ({ id: d.id, key: d.relayKey! })),
   }
 }
 
