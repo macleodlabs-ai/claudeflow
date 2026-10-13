@@ -1225,6 +1225,8 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
     expect(first.posts[0]!.guard).toEqual({ on: false, admit: [], pairs: [relayHash(relayPairToken(pairing.secret))], told: [] })
     const later = cycle(link, relay, { devices: first.paired, now: T0 + PAIRING_MS + 1 })
     expect(later.posts[0]!.guard).toEqual({ on: true, admit: [{ id: a.id, key: relayHash(rk) }], pairs: [], told: [] })
+    // An expired pairing still opens a hello-only socket for a week, so a late scan is told it expired.
+    expect(guardOf({ devices: first.paired, pairing, now: T0 + PAIRING_MS + 1 }).pairs).toEqual([relayHash(relayPairToken(pairing.secret))])
     // The key itself never goes to the relay in a frame: only its hash, in the hello.
     expect(JSON.stringify(first.posts)).not.toContain(rk)
   })
@@ -1245,7 +1247,7 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
     const d = (id: string, more: Record<string, unknown> = {}) => ({ id, pk: 'pk', credentialId: 'c', credentialKey: 'k', label: id, pairedAt: 0, relayKey: relayHash(id), ...more })
     const g = guardOf({
       devices: [d('owner-device-000001'), d('guest-removed-00001', { role: 'viewer', project: '/p', until: T0 + 1, removed: true }), d('guest-expired-00001', { role: 'viewer', project: '/p', until: T0 - 1 })],
-      pairing: { secret: randomId(32), until: T0 - 1 },
+      pairing: { secret: randomId(32), until: T0 - 8 * 86_400_000 },
       invites: [{ secret: randomId(32), until: T0 + 1000, project: '/p', role: 'viewer', days: 7 }],
       now: T0,
     })
@@ -1253,6 +1255,7 @@ describe('the relay guard: who may open the room\'s device sockets', () => {
     // The removed and the expired may still say hello, to be told they are out.
     expect(g.told.map(a => a.id)).toEqual(['guest-removed-00001', 'guest-expired-00001'])
     expect(g.on).toBe(true)
+    // The open invite; the pairing that expired over a week ago is gone.
     expect(g.pairs).toHaveLength(1)
     // Nothing paired at all: nothing to guard, so the room stays as it was.
     expect(guardOf({ devices: [], now: T0 }).on).toBe(false)

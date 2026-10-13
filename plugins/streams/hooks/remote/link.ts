@@ -216,9 +216,15 @@ export type Known = { devices: Device[]; pairing?: Pairing; invites?: Invite[]; 
  */
 export type Guard = { on: boolean; admit: { id: string; key: string }[]; pairs: string[]; told: { id: string; key: string }[] }
 
+/** How long after a pairing or invite expires its holder may still reach a session, to be told it expired. */
+export const TOLD_EXPIRED_MS = 7 * DAY_MS
+
 export function guardOf(k: Pick<Known, 'devices' | 'pairing' | 'invites' | 'now'>): Guard {
   const live = k.devices.filter(d => !d.removed && (!d.role || (d.until ?? 0) > k.now))
-  const pairs = [...(k.pairing && k.now < k.pairing.until ? [k.pairing.secret] : []), ...(k.invites ?? []).filter(i => k.now < i.until).map(i => i.secret)]
+  // A pairing socket may only say hello. An expired pairing or invite still gets one for a week, so its holder is
+  // told by a session that it expired, rather than kept retrying a socket that never opens.
+  const recent = (until: number) => k.now < until + TOLD_EXPIRED_MS
+  const pairs = [...(k.pairing && recent(k.pairing.until) ? [k.pairing.secret] : []), ...(k.invites ?? []).filter(i => recent(i.until)).map(i => i.secret)]
   return {
     on: live.length > 0 && live.every(d => !!d.relayKey),
     admit: live.flatMap(d => (d.relayKey ? [{ id: d.id, key: d.relayKey }] : [])),
