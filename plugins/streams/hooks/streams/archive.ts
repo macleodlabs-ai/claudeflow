@@ -1,4 +1,4 @@
-import type { Stream } from '../../types'
+import type { Health, Stream } from '../../types'
 import type { Loops } from './loops'
 import type { StreamsNow } from './model'
 
@@ -32,3 +32,10 @@ export function archivableOf(x: { now: StreamsNow; streams: readonly Stream[]; l
     })
     .map(s => s.id)
 }
+
+/**
+ * "Archive all idle" (the pane's `✕ idle` and `/streams archive idle`): every stream not archived and not working a
+ * turn right now, whatever its status, finished, waiting, failed or quiet. A running or stalled turn stays in sight.
+ */
+export const idleOf = (streams: readonly Stream[], health: Readonly<Record<string, Health>>): string[] =>
+  streams.filter(s => !s.archived && !['running', 'stalled'].includes(health[s.id] ?? 'idle')).map(s => s.id)

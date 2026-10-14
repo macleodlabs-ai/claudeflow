@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.3" src="https://img.shields.io/badge/version-2.0.3-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.4" src="https://img.shields.io/badge/version-2.0.4-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 277 passing" src="https://img.shields.io/badge/tests-277%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 280 passing" src="https://img.shields.io/badge/tests-280%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -102,7 +102,7 @@ Existing sessions are filed into streams in the background, with batched, **para
 <td valign="top">
 
 ### 📦 Archive & fold
-Hide finished streams with `✕` and bring them back later; finished streams left alone for a day archive themselves. Fold any stream to its last 10 rows, last row, or header. Idle streams fold themselves.
+Hide finished streams with `✕` and bring them back later; finished streams left alone for a day archive themselves, and `✕ idle` clears every stream not running in one go. Fold any stream to its last 10 rows, last row, or header. Idle streams fold themselves.
 
 </td>
 </tr>
@@ -207,6 +207,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `status` or `status?` | Show the status card above the prompt: every stream's state (running, loop, waiting for you, done) and what it is doing, plus git branch and uncommitted files. Answered locally: no model call, works mid-turn |
 | `/streams` | Open the navigator pane |
 | `/streams status` | Same as typing `status` |
+| `/streams archive idle` | Archive every stream not running a turn (restore from `▸ archived`) |
 | Streams Remote's commands | See [streams.macleodlabs.com](https://streams.macleodlabs.com) |
 | `/streams update` | Check every installed plugin for a newer release, install them, and reload plugins into this session, no restart |
 | `/stream <name>` | Focus one stream; others fold to stubs |
@@ -226,6 +227,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | File a prompt by hand | Start it with `#name`, e.g. `#billing why is the total off?` Type `#` and the bar lists matching streams; <kbd>tab</kbd> completes the first |
 | Fold a stream | `▾ all` cycles **all → last 10 → last 1 → header only** |
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
+| Archive all idle | `✕ idle (N)` at the top of the pane, or `/streams archive idle`: every stream not running a turn |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
 | Fold the pane away | `⇥ hide` (<kbd>h</kbd>) folds the docked pane to a `◂ streams` tab at the right of the bar; the tab (<kbd>s</kbd>) brings it back at the width it had. It stays folded in new sessions until you open it |
 | Switch a stream's chat view | The stream header shows `view ◉ full ○ compact`: full draws the chat as the session does, with markdown, syntax-highlighted code and diffs; compact is one line per row. Every card in the all-streams list has the same `◉ full ○ compact` beside its fold and `✕`, and its recent rows follow it: it is one choice for the whole pane. Click either, or press <kbd>v</kbd> in the pane |
@@ -278,7 +280,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams mod | `plugins/streams` | `claude plugin test .` (277 tests) and `claude plugin validate --strict .` |
+| The streams mod | `plugins/streams` | `claude plugin test .` (280 tests) and `claude plugin validate --strict .` |
 
 ---
 
