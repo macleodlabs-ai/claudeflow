@@ -52,9 +52,10 @@ export const publicKeyOf = (sk: string): string => b64u(x25519.getPublicKey(from
 
 /**
  * What the keys are for: this protocol's version, then the session's id. Both ends derive with the session the
- * device saw welcome it, so a relay that moves one session's welcome or boxes onto another opens nothing.
+ * device saw welcome it, so a relay that moves one session's welcome or boxes onto another opens nothing. No session:
+ * a session from before 2.3.0, whose welcome has no `v: 3`, and which derives without one.
  */
-const infoFor = (session: string): Bytes => utf8(`claudeflow-remote-v3|${session}`)
+const infoFor = (session?: string): Bytes => utf8(session === undefined ? 'claudeflow-remote-v2' : `claudeflow-remote-v3|${session}`)
 
 /**
  * The device's fingerprint, as the owner approves a typed-code pairing by it and the app shows it: the first 8 bytes
@@ -68,7 +69,7 @@ export function deviceFingerprint(pk: string | Bytes): string {
 /**
  * The two directions' keys for one session ↔ device connection. The ephemeral half gives forward secrecy; the
  * static half binds the connection to the paired keys, so a relay swapping in its own keys derives different ones.
- * `session`: the session's id (infoFor).
+ * `session`: the session's id (infoFor); left out only for a session older than 2.3.0.
  */
 export function connectionKeys(k: {
   ownSk: string | Bytes
@@ -77,7 +78,7 @@ export function connectionKeys(k: {
   peerEphPk: string | Bytes
   sessionNonce: string | Bytes
   deviceNonce: string | Bytes
-  session: string
+  session?: string
 }): { sessionToDevice: Bytes; deviceToSession: Bytes } {
   const ikm = concat(
     x25519.getSharedSecret(bytes(k.ownEphSk), bytes(k.peerEphPk)),

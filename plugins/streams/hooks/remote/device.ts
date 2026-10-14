@@ -112,10 +112,12 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
       if (d.t === 'welcome' && typeof d.hello === 'string' && d.hello !== hello?.eph.pk) return undefined
       // A welcome is taken only from the session it names: the keys bind that id (seal.ts connectionKeys).
       if (d.t === 'welcome' && d.session !== from) return undefined
+      // `v: 3`: the session binds its id into the keys; without it, a session from before 2.3.0. A relay that drops
+      // the mark from a newer session's welcome gets keys that open nothing, so it buys no downgrade.
       if (d.t === 'welcome' && hello && typeof d.eph === 'string' && typeof d.nonce === 'string') {
         const id = `${d.eph}.${d.nonce}`
         if (channels.get(from)?.from !== id) {
-          const k = connectionKeys({ ownSk: o.device.sk, peerPk: o.accountPk, ownEphSk: hello.eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: hello.nonce, session: from })
+          const k = connectionKeys({ ownSk: o.device.sk, peerPk: o.accountPk, ownEphSk: hello.eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: hello.nonce, session: d.v === 3 ? from : undefined })
           channels.set(from, { ch: channel(k.deviceToSession, k.sessionToDevice), from: id })
         }
         return { t: 'welcome', session: from }

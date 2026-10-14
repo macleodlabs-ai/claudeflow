@@ -367,7 +367,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     const nonce = randomId(32)
     const k = connectionKeys({ ownSk: o.identity.sk, peerPk: h.pk, ownEphSk: eph.sk, peerEphPk: h.eph, sessionNonce: nonce, deviceNonce: h.nonce, session: o.session })
     // `hello`: which hello this answers, so a late welcome for an older one is not taken with this one's keys.
-    const frame: OutFrame = { to: device.id, data: { t: 'welcome', session: o.session, eph: eph.pk, nonce, hello: h.eph } }
+    const frame: OutFrame = { to: device.id, data: { t: 'welcome', v: 3, session: o.session, eph: eph.pk, nonce, hello: h.eph } }
     conns.set(device.id, {
       device,
       ch: channel(k.sessionToDevice, k.deviceToSession),

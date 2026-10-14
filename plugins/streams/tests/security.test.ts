@@ -198,6 +198,30 @@ describe('a channel belongs to one session', () => {
     expect(device.receive('sess-1', welcome)).toEqual({ t: 'welcome', session: 'sess-1' })
     expect(device.hasChannel('sess-1')).toBe(true)
   })
+
+  // The phone app updates at once; computers update the plugin when their person does. A session from before 2.3.0
+  // derives without its id and says no `v: 3`: an updated phone still opens its snapshots. A newer session's welcome
+  // with the mark stripped (a relay forcing the old derivation) gives keys that open nothing.
+  const welcomed = (isV3Session: boolean, isMarked: boolean) => {
+    const acct = newIdentity()
+    const keys = { id: randomId(), ...newIdentity() }
+    const device = createDevice({ device: keys, room: account().room, accountPk: acct.pk })
+    device.unlockChallenge(T0)
+    const h = device.unlockHello({ authenticatorData: 'a', clientDataJSON: 'b', signature: 'c' })!.data as { eph: string; nonce: string }
+    const sEph = newIdentity()
+    const nonce = randomId(32)
+    const k = connectionKeys({ ownSk: acct.sk, peerPk: keys.pk, ownEphSk: sEph.sk, peerEphPk: h.eph, sessionNonce: nonce, deviceNonce: h.nonce, ...(isV3Session ? { session: 'sess-1' } : {}) })
+    device.receive('sess-1', { t: 'welcome', ...(isMarked ? { v: 3 } : {}), session: 'sess-1', eph: sEph.pk, nonce, hello: h.eph })
+    const b = channel(k.sessionToDevice, k.deviceToSession).seal({ t: 'snapshot', snapshot: { v: 1, session: { id: 'sess-1' } } })
+    return device.receive('sess-1', { t: 'box', b })?.t
+  }
+  test('an updated phone still reads a session from before 2.3.0', () => {
+    expect(welcomed(true, true)).toBe('snapshot')
+    expect(welcomed(false, false)).toBe('snapshot')
+  })
+  test('a newer session whose welcome lost its mark opens nothing', () => {
+    expect(welcomed(true, false)).toBe('rehello')
+  })
 })
 
 describe('bounds on what a phone leaves behind', () => {
