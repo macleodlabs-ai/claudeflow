@@ -75,3 +75,18 @@ export function undone(x: MergeState): MergeResult | string {
     text: `Undid the merge: ${back} is back with its ${plural(moving.length)}.`,
   }
 }
+
+/** Several streams folded into one (a suggested merge): each its own merge, so /stream undo takes them back one by one. */
+export function mergedAll(x: MergeState, from: readonly string[], into: string, looping: readonly string[] = []): MergeResult | string {
+  let state: MergeState = x
+  let files: MergeResult['files'] = []
+  let rows = 0
+  for (const f of from) {
+    const r = merged(state, f, into, looping)
+    if (typeof r === 'string') return r
+    rows += r.rows.filter(row => row.streamId === r.to).length - state.rows.filter(row => row.streamId === r.to).length
+    files = [...files, ...r.files]
+    state = r
+  }
+  return { ...state, files, from: from[0] ?? '', to: into, text: `Merged ${from.join(', ')} into ${into} (${plural(rows)}). /stream undo puts each back.` }
+}

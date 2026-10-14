@@ -28,7 +28,7 @@ export const register: Register = (on, options) => {
   mem.isDiagnosing = options.diagnostics === true
   mem.defaultStyle = options.chatStyle === 'compact' ? 'compact' : 'full'
 
-  wireSession(on, { autoArchiveHours: archiveHoursOf(options.autoArchiveHours) })
+  wireSession(on, { autoArchiveHours: archiveHoursOf(options.autoArchiveHours), suggestMerges: options.mergeSuggestions !== false })
   wireWorker(on)
   wireUpdates(on)
   // The hosted relay, always: there is nothing to set. The token is read from $.store (`/streams connect`).
