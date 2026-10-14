@@ -789,6 +789,17 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     await update($, loopsA, m => afterCall(m, c.streamId, { tool: input.tool, input, result: r.deny === undefined ? r.result : undefined, isError: r.isError === true, now }))
     return { ok: r.deny === undefined && r.isError !== true }
   }
+  // A slash command typed on the phone runs as that command, as if typed here; a prompt would not run it.
+  const slash = c.files?.length ? null : /^\/([\w:-]+)\s*([\s\S]*)$/.exec(c.text.trim())
+  if (slash?.[1]) {
+    const name = slash[1]
+    const known = await $.command.list().catch(() => undefined)
+    if (known && !known.some(k => k.name === name)) return { ok: false, why: 'unknown command' }
+    return await $.command
+      .run({ command: name, args: slash[2] ?? '' })
+      .then((): Omit<Ack, 't' | 'id'> => ({ ok: true }))
+      .catch((): Omit<Ack, 't' | 'id'> => ({ ok: false, why: 'command failed' }))
+  }
   // Files go first: a prompt is sent only with all of them on disk, for Claude to read by path.
   const paths = c.files?.length ? await saveFiles($, c.files) : []
   if (!paths) return { ok: false, why: RETRY_WHY }
