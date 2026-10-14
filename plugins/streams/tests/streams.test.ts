@@ -179,6 +179,29 @@ describe('the hooks', () => {
     await $.prompt.submit({ text: 'why does the e2e suite fail one run in five?', wait: false, origin: { kind: 'composer' } })
     expect(shown.current).toBe('flaky-tests')
   })
+
+  // Seen live: a long session made a stream per small task, and the list got too long to read. How readily a new
+  // stream starts is the person's to set: broad (the default) keeps related work under one larger goal, fine is the
+  // old one-goal-per-stream sorting, balanced sits between.
+  for (const [grouping, says] of [
+    [undefined, 'larger goal'],
+    ['broad', 'larger goal'],
+    ['balanced', 'closely related'],
+    ['fine', 'not a topic area'],
+  ] as const) {
+    test(`streamGrouping ${grouping ?? 'unset'} tells the sorter how readily to start a stream`, { ...ENGINE, options: grouping ? { streamGrouping: grouping } : {} }, async ($, on) => {
+      const systems: string[] = []
+      on('model.complete', async (_$, e) => {
+        systems.push(e.system ?? '')
+        return { value: { isAnswered: true, text: '{"new":"Flaky tests","summary":"CI flakes"}', usage: USAGE } }
+      })
+      mock.clock(on)
+      watchStatus(on)
+      on('prompt.submit', async (_$, e) => ({ text: e.text }))
+      await $.prompt.submit({ text: 'why does the e2e suite fail one run in five?', wait: false, origin: { kind: 'composer' } })
+      expect(systems[0]).toContain(says)
+    })
+  }
 })
 
 const USAGE = { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }

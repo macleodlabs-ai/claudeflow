@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 
 import { mem } from './state'
 import { wireSession } from './streams/session'
+import { groupingOf } from './classify'
 import { archiveHoursOf } from './streams/archive'
 import { wireWorker } from './streams/worker'
 import { wireRouting } from './streams/routing'
@@ -35,7 +36,7 @@ export const register: Register = (on, options) => {
   wireBar(on)
   wireFlows(on)
   wireCheck(on, { isOn: options.completionCheck !== false })
-  wireRouting(on)
+  wireRouting(on, { grouping: groupingOf(options.streamGrouping) })
   wireFiling(on)
   wireTranscript(on)
   wirePane(on)

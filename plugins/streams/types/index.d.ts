@@ -158,6 +158,8 @@ declare module 'claude-code' {
       workflows: Record<string, Workflow>
       /** The completion check's verdicts, by stream id (`completionCheck`). */
       verdicts: Record<string, Verdict>
+      /** Merges done this session, newest last, for `/stream undo` (streams/routing.ts). */
+      merges: { stream: Stream; into: string; rows: string[]; agents: string[] }[]
       /** The chat style chosen in the pane this session; '' follows the `chatStyle` setting. */
       chatStyle: ChatStyle | ''
       /** The `#tag` being typed at the start of the prompt box and the streams it could complete to. */

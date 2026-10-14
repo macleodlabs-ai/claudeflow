@@ -1,6 +1,6 @@
 {
   "name": "streams",
-  "version": "2.0.10",
+  "version": "2.1.0",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {
@@ -38,6 +38,17 @@
       "title": "Auto-archive after (hours)",
       "description": "A finished stream (by its status or the completion check) with no activity for this many hours archives itself; it stays under \"archived\" in the pane, restorable. Never a running, waiting, looping or failed stream. 0: off.",
       "default": 24
+    },
+    "streamGrouping": {
+      "type": "string",
+      "title": "Stream grouping",
+      "description": "How readily a prompt starts a new stream. broad: one stream per larger goal (a project, a release), taking in its fixes and follow-ups. balanced: a goal and closely related work. fine: one stream per task.",
+      "options": [
+        "broad",
+        "balanced",
+        "fine"
+      ],
+      "default": "broad"
     }
   }
 }
