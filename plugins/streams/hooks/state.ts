@@ -147,3 +147,10 @@ export function noteUnmatched(component: string, requestId: string, text: string
   if (unmatched.size >= 60) return
   unmatched.set(`${component}:${requestId}`, { component, requestId, head: text.slice(0, 80) })
 }
+
+/** Where a project's hidden tickets are kept ($.store): ticket id → when it was hidden or closed on the card. */
+export const hiddenTicketsKey = (cwd: string) => `hiddenTickets:${cwd}`
+
+/** A stored hidden-tickets record, or none. */
+export const hiddenOf = (v: unknown): Record<string, number> =>
+  v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => typeof e[1] === 'number')) : {}

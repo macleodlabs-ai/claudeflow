@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { keepRows, savedOf, mem, storeKey, type Saved } from '../state'
+import { hiddenOf, hiddenTicketsKey, keepRows, savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
@@ -461,7 +461,8 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     read($, updatesA),
     $.clock.now(),
   ])
-  const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, workflows, verdicts, now }
+  const hiddenTickets = hiddenOf(await $.session.cwd().then(cwd => $.store.get(hiddenTicketsKey(cwd))).catch(() => undefined))
+  const facts: Facts = { busy, current: await read($, currentA), agents, inflight, outcome, rows, loops, workflows, verdicts, hiddenTickets, now }
   let git = await read($, statusGitA)
   if (now - git.at >= HEARTBEAT_MS) {
     const r = await $.process.run(['git', 'status', '--porcelain=v1', '--branch'], { timeoutMs: 5000 }).catch(() => undefined)
@@ -793,6 +794,11 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
     const now = await $.clock.now()
     await update($, loopsA, m => afterCall(m, c.streamId, { tool: input.tool, input, result: r.deny === undefined ? r.result : undefined, isError: r.isError === true, now }))
     return { ok: r.deny === undefined && r.isError !== true }
+  }
+  if (c.kind === 'hideTicket') {
+    const key = hiddenTicketsKey(await $.session.cwd())
+    await $.store.set(key, { ...hiddenOf(await $.store.get(key)), [c.ticket]: await $.clock.now() })
+    return { ok: true }
   }
   // A slash command typed on the phone runs as that command, as if typed here; a prompt would not run it.
   const slash = c.files?.length ? null : /^\/([\w:-]+)\s*([\s\S]*)$/.exec(c.text.trim())

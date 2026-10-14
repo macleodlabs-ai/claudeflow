@@ -1062,6 +1062,17 @@ describe('tickets on the status card', () => {
   // A ticket is on the card because the person set work going on it. Text Claude Code put in the conversation for
   // them is not that: a compaction summary recalls other projects' tickets, and `!` commands and slash commands
   // print whatever they print. Rows filed before this was fixed carry such text, so the card reads past it too.
+  // A hidden ticket stays off until the person names it again in a prompt of theirs; the card's own prompts (continue,
+  // close) are the card's words about a ticket already on it, so they never put one back.
+  test('a hidden ticket comes back only when the person names it again', () => {
+    const at = (kind: string, text: string, t: number) => ({ kind, text, at: t, streamId: 's' })
+    const lines = (rows: ReturnType<typeof at>[]) =>
+      ticketLines({ rows, agents: [], streamKind: { s: 'running' }, hidden: { 'ABC-1': 5 }, now: 20 }).map(l => l.area)
+    expect(lines([at('prompt', 'fix ABC-1 and ABC-2', 1)])).toEqual(['ABC-2'])
+    expect(lines([at('prompt', 'fix ABC-1 and ABC-2', 1), at('prompt', 'ABC-1 is done: close it in its tracker.', 6), at('prompt', 'Continue work on ABC-1.', 7)])).toEqual(['ABC-2'])
+    expect(lines([at('prompt', 'fix ABC-1 and ABC-2', 1), at('prompt', 'ABC-1 broke again', 9)]).sort()).toEqual(['ABC-1', 'ABC-2'])
+  })
+
   test('tickets named only in a compaction summary or in command input and output are not on the card', () => {
     const lines = ticketLines({
       rows: [
@@ -1176,6 +1187,44 @@ describe('a ticket\'s buttons on the status card', () => {
     await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
     await bar.press({ key: 'ticket-close:APP-260' })
     expect(sent.at(-1)).toBe('APP-260 is done: close it in its tracker.')
+  })
+
+  // Seen live: a ticket from another project got on the card, and its close button only made it stick: the prompt it
+  // sends names the ticket, which put it straight back. Hide takes a ticket off the card without telling Claude
+  // anything; close hides it too and asks Claude to close it in its tracker.
+  test('hide takes a ticket off without a prompt; close hides it too and sends its prompt', ENGINE, async ($, on) => {
+    const clock = mock.clock(on)
+    mock.store(on)
+    on('session.cwd', async () => ({ value: '/project' }))
+    watchStatus(on)
+    const sent: string[] = []
+    on('prompt.submit', async (_$, e) => {
+      sent.push(e.text)
+      return { text: e.text }
+    })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    let agents = 0
+    on('agent.spawn', async () => ({ model: 'haiku', agentId: `ag${++agents}` }))
+    const card = async () => {
+      await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
+      return $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
+    }
+    await $.prompt.submit({ text: '#billing fix the totals', wait: false, origin: { kind: 'composer' } })
+    await $.agent.spawn({ prompt: 'fix it', description: 'APP-261 totals fix', subagentType: 'Explore' } as never)
+    await $.agent.spawn({ prompt: 'fix it', description: 'APP-262 tax fix', subagentType: 'Explore' } as never)
+    let bar = await card()
+    expect(await bar.find({ key: 'ticket-hide:APP-261' })).toBeDefined()
+    await clock.advance(1000)
+    const before = sent.length
+    await bar.press({ key: 'ticket-hide:APP-261' })
+    expect(sent.length).toBe(before)
+    bar = await card()
+    expect(await bar.find({ key: 'ticket-hide:APP-261' })).toBe(undefined)
+    expect(await bar.find({ key: 'ticket-hide:APP-262' })).toBeDefined()
+    await bar.press({ key: 'ticket-close:APP-262' })
+    expect(sent.at(-1)).toBe('APP-262 is done: close it in its tracker.')
+    bar = await card()
+    expect(await bar.find({ key: 'ticket-hide:APP-262' })).toBe(undefined)
   })
 })
 

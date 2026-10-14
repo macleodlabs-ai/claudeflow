@@ -10,7 +10,7 @@ import { ACTIVE_POLL_MS, DAY_MS, IDLE_POLL_MS, PAIRING_MS, createLink, isOwnerOn
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, applyOps, opsOf, projectName, rosterOf, tokenFor } from '../hooks/remote/index'
 import { accountRow } from '../hooks/ui/statusCard'
-import { SAVED_BUDGET, STORE_HISTORY_BUDGET, storeKey, type Saved } from '../hooks/state'
+import { SAVED_BUDGET, STORE_HISTORY_BUDGET, hiddenTicketsKey, storeKey, type Saved } from '../hooks/state'
 import { TRIM_MS } from '../hooks/streams/session'
 import { spkiOf } from './authenticator'
 import { BEARER, ORIGIN, RELAY, SESSION, TOKEN, T0, account, cycle, phone, room, snapshot, tOf } from './room'
@@ -683,6 +683,18 @@ describe('the session on the relay', () => {
     // Once: the prompt after it does not carry it again.
     await $.prompt.submit({ text: 'and now?', wait: false, origin: { kind: 'composer' } })
     expect(contexts.at(-1)!.join('\n')).not.toContain('git status')
+  })
+
+  // A ticket that should not be on the card (another project's, or done with) is swiped away on the phone, as ✕ hide
+  // does on the computer: kept for this project, so neither screen shows it until the person names it again.
+  test('a swipe on a ticket hides it from the card, here and on the computer', OPTIONS, async ($, on) => {
+    const { a, relay, clock, acked, kept } = await withPhone($, on)
+    relay.from(a, a.command({ id: 'c1', kind: 'hideTicket', ticket: 'APP-260' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
+    expect(Object.keys(kept.get(hiddenTicketsKey('/work/claudeflow')) as object)).toEqual(['APP-260'])
+    expect(commandOf({ id: 'c2', kind: 'hideTicket', ticket: 'not a ticket' })).toBe(undefined)
   })
 
   test('a photo sent in chunks is saved on the Mac and the prompt names its path, for Claude to read', OPTIONS, async ($, on) => {
