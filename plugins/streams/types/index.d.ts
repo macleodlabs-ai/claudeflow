@@ -33,6 +33,8 @@ export type Stream = {
   color?: string
   /** Hidden from the bar and the list until restored; its history stays. */
   archived?: boolean
+  /** When a turn first ran in it (epoch ms); a stream made for a prompt sent mid-turn has none until then. */
+  startedAt?: number
   /**
    * When the person last restored it (epoch ms): a restored stream is not archived on its own again until it has
    * been active since (`autoArchiveHours`).
