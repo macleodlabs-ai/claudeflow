@@ -113,6 +113,12 @@ describe('a prompt sent while a turn runs', () => {
     const line = { type: 'attachment', uuid: 'q9', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: [{ type: 'text', text: '[Image #4] nothing is happening' }, { type: 'image', source: {} }] } }
     expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', index: 0, text: '[Image #4] nothing is happening', isFolded: true }])
   })
+  // Seen live: after /compact, Claude Code stores its summary of the conversation as a user line. The person did not
+  // type it, and every ticket it recalls (from any project the account touched) then showed on the status card.
+  test('the summary Claude Code writes when it compacts is not a prompt', () => {
+    const summary = { type: 'user', uuid: 'c1', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued from a previous conversation. Old card had ABC-12.' } }
+    expect(readTranscript(JSON.stringify(summary))).toEqual([])
+  })
   test('tool results and engine notifications are not prompts, and a subagent line is not main conversation', () => {
     expect(items.map(i => i.uuid)).toEqual(['u1', 'a1', 'q1', 'a2'])
   })
@@ -1045,27 +1051,45 @@ describe('plugin updates', () => {
 })
 
 describe('tickets on the status card', () => {
-  // Working tickets, the person asks "where is TL-260?": the card answers per ticket, not per topic.
+  // Working tickets, the person asks "where is APP-260?": the card answers per ticket, not per topic.
   test('ticket ids are found as trackers write them, and look-alike standards are not tickets', () => {
-    expect(ticketsIn('build TL-260 then TL-262, and re-review TL-260')).toEqual(['TL-260', 'TL-262'])
+    expect(ticketsIn('build APP-260 then APP-262, and re-review APP-260')).toEqual(['APP-260', 'APP-262'])
     expect(ticketsIn('encode as UTF-8 and hash with SHA-256 per ISO-8601')).toEqual([])
     // Colour depths, code pages, standards and advisories read like keys but are never a tracker's.
     expect(ticketsIn('ANSI-256 colours, ASCII-7, IEEE-754, CP-1252, CVE-2024-3094, PEP-8, X-11, ES-2022')).toEqual([])
   })
 
+  // A ticket is on the card because the person set work going on it. Text Claude Code put in the conversation for
+  // them is not that: a compaction summary recalls other projects' tickets, and `!` commands and slash commands
+  // print whatever they print. Rows filed before this was fixed carry such text, so the card reads past it too.
+  test('tickets named only in a compaction summary or in command input and output are not on the card', () => {
+    const lines = ticketLines({
+      rows: [
+        { kind: 'prompt', text: 'This session is being continued from a previous conversation that ran out of context. ABC-12 is in old history.', at: 0, streamId: 's' },
+        { kind: 'prompt', text: '<bash-input>gh issue view DEF-3</bash-input><bash-stdout>DEF-3 open</bash-stdout>', at: 1, streamId: 's' },
+        { kind: 'prompt', text: '<command-name>/streams</command-name><local-command-stdout>GHI-4 done</local-command-stdout>', at: 2, streamId: 's' },
+        { kind: 'prompt', text: 'fix JKL-5 next <system-reminder>MNO-6 elsewhere</system-reminder>', at: 3, streamId: 's' },
+      ],
+      agents: [],
+      streamKind: { s: 'running' },
+      now: 10,
+    })
+    expect(lines.map(l => l.area)).toEqual(['JKL-5'])
+  })
+
   test('a ticket with a running agent says what it is doing and how long it has been quiet; a finished one gives its latest news', () => {
     const lines = ticketLines({
       rows: [
-        { kind: 'prompt', text: 'build TL-262 and fix TL-260', at: 0, streamId: 'tickets' },
-        { kind: 'reply', text: 'Started both. The TL-262 build is committed (6cbe94f6). Reviews come next.', at: 5_000, streamId: 'tickets' },
+        { kind: 'prompt', text: 'build APP-262 and fix APP-260', at: 0, streamId: 'tickets' },
+        { kind: 'reply', text: 'Started both. The APP-262 build is committed (a1b2c3d4). Reviews come next.', at: 5_000, streamId: 'tickets' },
       ],
-      agents: [{ description: 'TL-260 lottie fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
+      agents: [{ description: 'APP-260 layout fix', status: 'running', last: 'Bash gh run watch', tools: 12, lastAt: 10_000, streamId: 'tickets' }],
       streamKind: { tickets: 'done' },
       now: 10_000,
     })
     expect(lines.map(l => [l.area, l.state, lineText(l, 10_000 + 7 * 60_000)])).toEqual([
-      ['TL-260', 'RUNNING', 'TL-260 lottie fix: Bash gh run watch (12 tools) · 7m with no output'],
-      ['TL-262', 'DONE', 'The TL-262 build is committed (6cbe94f6).'],
+      ['APP-260', 'RUNNING', 'APP-260 layout fix: Bash gh run watch (12 tools) · 7m with no output'],
+      ['APP-262', 'DONE', 'The APP-262 build is committed (a1b2c3d4).'],
     ])
   })
 
@@ -1143,15 +1167,15 @@ describe('a ticket\'s buttons on the status card', () => {
     })
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
     on('agent.spawn', async () => ({ model: 'haiku', agentId: 'ag1' }))
-    await $.prompt.submit({ text: '#billing fix TL-260 rounding', wait: false, origin: { kind: 'composer' } })
-    await $.agent.spawn({ prompt: 'fix it', description: 'TL-260 rounding fix', subagentType: 'Explore' } as never)
+    await $.prompt.submit({ text: '#billing fix APP-260 rounding', wait: false, origin: { kind: 'composer' } })
+    await $.agent.spawn({ prompt: 'fix it', description: 'APP-260 rounding fix', subagentType: 'Explore' } as never)
     await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
     const bar = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', props: { bodyColumns: 120, hasSurvey: false } as never })
-    await bar.press({ key: 'ticket-continue:TL-260' })
-    expect(sent.at(-1)).toBe('Continue work on TL-260.')
+    await bar.press({ key: 'ticket-continue:APP-260' })
+    expect(sent.at(-1)).toBe('Continue work on APP-260.')
     await $.prompt.submit({ text: 'status', wait: false, origin: { kind: 'composer' } })
-    await bar.press({ key: 'ticket-close:TL-260' })
-    expect(sent.at(-1)).toBe('TL-260 is done: close it in its tracker.')
+    await bar.press({ key: 'ticket-close:APP-260' })
+    expect(sent.at(-1)).toBe('APP-260 is done: close it in its tracker.')
   })
 })
 
