@@ -494,3 +494,30 @@ describe('the version a computer reports', () => {
     await band.unmount()
   })
 })
+
+// Agents report back as messages from another session (a teammate's report, a hand-back). The report belongs to the
+// stream that sent the agent, whatever stream is current by then; filed by its words instead, each report started a
+// stream of its own and the stream that did the work said "Quiet so far".
+describe('agents reporting back', () => {
+  const opened = async ($: Engine) => {
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+    const keys = (await pane.findAll({})).flatMap(n => (typeof (n as { key?: unknown }).key === 'string' && (n as { key: string }).key.startsWith('open:') ? [(n as { key: string }).key] : []))
+    await pane.unmount()
+    return keys.sort()
+  }
+  test("a teammate's report is filed in the stream that sent it, never a new stream", ENGINE, async ($, on) => {
+    session(on)
+    store(on, { [STORE.welcomed]: T0 })
+    on('agent.spawn', async () => ({ model: 'haiku', agentId: 'aleak-audit-7eed5f52637ffbf6' }))
+    // Haiku, asked, would start a stream for each report's topic.
+    on('model.complete', async () => ({ value: { isAnswered: true, text: '{"new":"Relay leak","summary":"old refs"}', usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } }) as never)
+    await start($)
+    await submit($, '#audit audit the public repo for leaks')
+    await $.agent.spawn({ prompt: 'audit', description: 'Audit public repo for leaks', subagentType: 'general-purpose' } as never)
+    await submit($, '#billing why is the invoice total off?')
+    expect(await opened($)).toEqual(['open:audit', 'open:billing'])
+    await $.prompt.submit({ text: '<teammate-message teammate_id="leak-audit">Leak audit: 1 CRITICAL, old pull request refs still serve the relay code.</teammate-message>', wait: false, origin: { kind: 'peer' } } as never)
+    await $.prompt.submit({ text: '<agent-message from="mod-install-tests">Added 21 install tests; 3 bugs found in token refusal.</agent-message>', wait: false, origin: { kind: 'peer' } } as never)
+    expect(await opened($)).toEqual(['open:audit', 'open:billing'])
+  })
+})
