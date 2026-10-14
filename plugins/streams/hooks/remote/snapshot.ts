@@ -135,6 +135,8 @@ export type PhoneCommand =
   | { id: string; kind: 'runTick'; streamId: string }
   /** An option chosen for a held question (`requestId` its call id). */
   | { id: string; kind: 'choose'; requestId: string; label: string }
+  /** Take a ticket off the status card (a swipe on the phone), as ✕ hide does on the computer. */
+  | { id: string; kind: 'hideTicket'; ticket: string }
 
 /** A WebAuthn assertion as the app sends it (fields b64u): an `allow` carries one, made with Face ID. */
 export type PasskeyAssertion = { authenticatorData: string; clientDataJSON: string; signature: string }
@@ -253,6 +255,7 @@ export const commandOf = (c: unknown): PhoneCommand | undefined => {
   if (k.kind === 'permission') return typeof k.requestId === 'string' && (k.decision === 'allow' || k.decision === 'deny') ? (c as PhoneCommand) : undefined
   // Ids only, each its own field: the session acts only on a task or stream it shows (remote/index.tsx).
   if (k.kind === 'stopTask') return isId(k.taskId) ? { id: k.id, kind: 'stopTask', taskId: k.taskId } : undefined
+  if (k.kind === 'hideTicket') return typeof k.ticket === 'string' && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(k.ticket) ? { id: k.id, kind: 'hideTicket', ticket: k.ticket } : undefined
   if (k.kind === 'stopLoop' || k.kind === 'runTick' || k.kind === 'archive' || k.kind === 'restore') return isId(k.streamId) ? { id: k.id, kind: k.kind, streamId: k.streamId } : undefined
   const isRole = (r: unknown): r is 'viewer' | 'contributor' => r === 'viewer' || r === 'contributor'
   if (k.kind === 'invite') {

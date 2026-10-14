@@ -121,8 +121,13 @@ const COMPACT_SUMMARY = /^\s*This session is being continued from a previous con
 /** Text Claude Code wraps around commands, their output and its own reminders: never the person's words. */
 const MACHINE_TEXT = /<(bash-input|bash-stdout|bash-stderr|command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder|task-notification)>[\s\S]*?<\/\1>/g
 
-/** What the person wrote in a prompt: nothing of a compaction summary, and none of the text wrapped around commands. */
-export const personText = (text: string): string => (COMPACT_SUMMARY.test(text) ? '' : text.replace(MACHINE_TEXT, ' '))
+/** The prompts the status card's ticket buttons send: the card's words about a ticket already on it, not the person's. */
+export const continuePrompt = (id: string) => `Continue work on ${id}.`
+export const closePrompt = (id: string) => `${id} is done: close it in its tracker.`
+const CARD_PROMPT = /^\s*(Continue work on [A-Z][A-Z0-9]{1,9}-\d{1,6}\.|[A-Z][A-Z0-9]{1,9}-\d{1,6} is done: close it in its tracker\.)\s*$/
+
+/** What the person wrote in a prompt: nothing of a compaction summary or the card's own prompts, and none of the text wrapped around commands. */
+export const personText = (text: string): string => (COMPACT_SUMMARY.test(text) || CARD_PROMPT.test(text) ? '' : text.replace(MACHINE_TEXT, ' '))
 
 /** The ticket ids a text names, in order, each once. */
 export const ticketsIn = (text: string): string[] =>
@@ -133,6 +138,8 @@ export type TicketInput = {
   agents: readonly { description: string; status: 'running' | 'done' | 'error'; last: string; tools: number; lastAt: number; endedAt?: number; streamId: string }[]
   /** Each stream's own state on the card, so a ticket worked in a waiting stream is waiting too. */
   streamKind: Record<string, StatusKind>
+  /** Tickets the person hid from the card (or closed there), with when: off it until a prompt of theirs names one again. */
+  hidden?: Readonly<Record<string, number>>
   now: number
 }
 
@@ -154,7 +161,11 @@ const sentenceAbout = (text: string, id: string): string => {
 export function ticketLines(x: TicketInput): StatusLine[] {
   // A prompt names a ticket only in the person's own words (personText).
   const words = (r: { kind: string; text: string }) => (r.kind === 'prompt' ? personText(r.text) : r.text)
-  const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(words), ...x.agents.map(a => a.description)].flatMap(ticketsIn))].filter(id => !MINTED.test(id))
+  const hidden = x.hidden ?? {}
+  const namedSince = (id: string, at: number) => x.rows.some(r => r.kind === 'prompt' && r.at > at && ticketsIn(personText(r.text)).includes(id))
+  const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(words), ...x.agents.map(a => a.description)].flatMap(ticketsIn))].filter(
+    id => !MINTED.test(id) && (hidden[id] === undefined || namedSince(id, hidden[id]!)),
+  )
   const lines = named.map(id => {
     const mine = x.agents.filter(a => ticketsIn(a.description).includes(id))
     const said = x.rows.filter(r => ticketsIn(words(r)).includes(id)).sort((a, b) => a.at - b.at)

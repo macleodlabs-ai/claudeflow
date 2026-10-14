@@ -34,7 +34,7 @@ export function accountRow(a: Card['account'], now: number): { state: string; de
  * The status card above the prompt: git, tickets and every stream in the order that needs the person, then
  * the plan limits. Its Area and State columns are fixed, so every row lines up.
  */
-export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknown; open: (id: string) => unknown; ticket: (id: string, what: 'continue' | 'close') => unknown }): RenderElement {
+export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknown; open: (id: string) => unknown; ticket: (id: string, what: 'continue' | 'close' | 'hide') => unknown }): RenderElement {
   const { Box, Button, Text } = ui
   const { streams, git, tickets, limits, width, now } = c
   const lines = [...git, ...tickets, ...c.streamLines]
@@ -96,6 +96,7 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
               <Box key={`st-acts:${l.area}`} flexShrink={0} gap={1} marginLeft={1}>
                 <Button key={`ticket-continue:${l.area}`} plain hover={{ bold: true }} label="▶ continue" onPress={() => act.ticket(l.area, 'continue')} />
                 <Button key={`ticket-close:${l.area}`} plain hover={{ bold: true }} label="✓ close" onPress={() => act.ticket(l.area, 'close')} />
+                <Button key={`ticket-hide:${l.area}`} plain dimColor hover={{ bold: true }} label="✕ hide" onPress={() => act.ticket(l.area, 'hide')} />
               </Box>
             ) : null}
           </Box>,
