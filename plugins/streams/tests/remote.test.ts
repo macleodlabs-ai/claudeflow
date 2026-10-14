@@ -354,7 +354,8 @@ describe('allowing a tool from a phone', () => {
 })
 
 /** The engine around a session: what its other modules ask at start, answered quietly. */
-function session(on: On, env: Record<string, string> = {}) {
+/** `files`: what reading a path ending in a key gives; anything else reads as `{}`. */
+function session(on: On, env: Record<string, string> = {}, files: Record<string, string> = {}) {
   const clock = mock.clock(on, { now: T0 })
   mock.env(on, { CLAUDE_CONFIG_DIR: '/Users/me/.claude-clients/macleod', HOME: '/Users/me', ...env })
   on('session.cwd', async () => ({ value: '/work/claudeflow' }))
@@ -365,7 +366,7 @@ function session(on: On, env: Record<string, string> = {}) {
   on('ui.toast', async () => ({ value: undefined }))
   on('ui.status', async () => ({ value: undefined }))
   on('command.register', async () => ({ value: undefined }) as never)
-  on('fs.read', async () => ({ value: '{}' }) as never)
+  on('fs.read', async (_$, e) => ({ value: Object.entries(files).find(([k]) => e.path.endsWith(k))?.[1] ?? '{}' }) as never)
   on('prompt.submit', async (_$, e) => {
     if (promptHangs) return new Promise<never>(() => {})
     submitted.push(e.text)
@@ -1222,6 +1223,19 @@ describe('/streams connect', () => {
     on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
     await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
     expect(await bandText($)).not.toContain('Macleod Labs')
+  })
+
+  // Debugging starts with "which version is this?": the card says it in its title line, small, without a scroll.
+  test('the status card names the mod version in its title line', ENGINE, async ($, on) => {
+    session(on, {}, { '/.claude-plugin/plugin.json': '{"version":"9.8.7"}' })
+    store(on, { [STORE.welcomed]: T0 })
+    on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as never)
+    on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: '' } }) as never)
+    await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
+    await $.command.run({ command: 'streams', args: 'status', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)
+    const band = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: { hasSurvey: false, bodyColumns: 120 } as never })
+    expect((await band.find({ key: 'st-title' }))?.text).toContain('v9.8.7')
+    await band.unmount()
   })
 
   test('someone who connected before installing this version is not offered Streams Remote', ENGINE, async ($, on) => {

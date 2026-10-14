@@ -3,7 +3,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import { PANE, PANE_KEY, savedOf, historyToDrop, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
 import { ago } from '../classify'
-import { ARCHIVE_LOOK_MS, archivableOf } from './archive'
+import { ARCHIVE_LOOK_MS, archivableOf, idleOf } from './archive'
 import { colorOf, streamsNow, type Facts } from './model'
 
 // A session's start (its streams restored, the commands declared, the pane opened) and its heartbeat, which also
@@ -47,6 +47,14 @@ async function autoArchive($: $, ids: string[]) {
   if (ids.includes(await read($, viewA))) await update($, viewA, () => '')
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
   await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
+}
+
+/** Archives every stream not working a turn right now (archive.ts idleOf); says how many. */
+export async function archiveIdle($: $): Promise<number> {
+  const [streams, facts] = await Promise.all([read($, streamsA), factsOf($)])
+  const ids = idleOf(streams, streamsNow(facts, streams).health)
+  if (ids.length) await autoArchive($, ids)
+  return ids.length
 }
 
 async function writeDiagnostics($: $) {
@@ -155,6 +163,11 @@ async function trimStore($: $, own: string): Promise<void> {
 
 export function wireSession(on: On, opts: { autoArchiveHours: number }) {
   archiveHours = opts.autoArchiveHours
+  on('command.run', { command: 'streams' }, async ($, e, next) => {
+    if (e.args.trim().split(/\s+/).join(' ') !== 'archive idle') return next(e)
+    const n = await archiveIdle($)
+    return { text: n ? `Archived ${n} idle stream${n === 1 ? '' : 's'}. Restore any from "archived" in the pane.` : 'No idle streams to archive.' }
+  })
   on('session.start', async ($, e, next) => {
     const saved = (await $.store.get(storeKey(e.cwd))) as Saved | undefined
     if (saved && (await read($, streamsA)).length === 0) {

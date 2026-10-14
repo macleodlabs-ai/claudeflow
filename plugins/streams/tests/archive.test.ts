@@ -3,7 +3,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { Stream, StreamRow, Verdict } from '../types'
 import { storeKey } from '../hooks/state'
-import { ARCHIVE_LOOK_MS, HOUR_MS, archiveHoursOf, archivableOf } from '../hooks/streams/archive'
+import { ARCHIVE_LOOK_MS, HOUR_MS, archiveHoursOf, archivableOf, idleOf } from '../hooks/streams/archive'
 import { CHECK_TICK_MS } from '../hooks/streams/check'
 import { streamsNow, type Facts } from '../hooks/streams/model'
 
@@ -111,6 +111,40 @@ describe('auto-archive in a session', () => {
     await clock.advance(2 * ARCHIVE_LOOK_MS)
     const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
     for (const id of ['docs', 'asks', 'merged']) expect(await pane.find({ key: `open:${id}` })).toBeDefined()
+    await pane.unmount()
+  })
+})
+
+// Clearing the decks by hand: one press (or `/streams archive idle`) archives every stream that is not working right
+// now, whatever its status, so the list shows only live work. A turn under way, even a quiet one, is never swept.
+describe('archive all idle', () => {
+  test('takes every stream not running a turn, never a running or stalled one, nor one archived already', () => {
+    const streams = [stream('a'), stream('b'), stream('c'), stream('d'), stream('e'), stream('f', OLD, { archived: true })]
+    const health = { a: 'running', b: 'stalled', c: 'done', d: 'error', f: 'idle' } as const
+    expect(idleOf(streams, health)).toEqual(['c', 'd', 'e'])
+  })
+
+  test('the pane offers it with a count, and the command does the same; restore still brings one back', { ...ENGINE, options: { autoArchiveHours: 0 } }, async ($, on) => {
+    const fresh = [stream('docs', T0), stream('asks', T0), stream('merged', T0)]
+    const { clock } = session(on, fresh, ROWS, VERDICTS)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: false } as never)
+    await clock.advance(CHECK_TICK_MS)
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props: PANE_PROPS })
+    expect((await pane.find({ key: 'archive-idle' }))?.props).toMatchObject({ label: '✕ idle (3)' })
+    await pane.press({ key: 'archive-idle' })
+    await pane.redraw(PANE_PROPS)
+    for (const id of ['docs', 'asks', 'merged']) expect(await pane.find({ key: `open:${id}` })).toBe(undefined)
+    expect((await pane.find({ key: 'archived' }))?.props).toMatchObject({ label: '▸ archived (3)' })
+    expect(await pane.find({ key: 'archive-idle' })).toBe(undefined)
+    await pane.press({ key: 'archived' })
+    await pane.press({ key: 'restore:docs' })
+    await pane.redraw(PANE_PROPS)
+    expect(await pane.find({ key: 'open:docs' })).toBeDefined()
+    const said = (await $.command.run({ command: 'streams', args: 'archive idle', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as never)) as { text: string }
+    expect(said.text).toBe('Archived 1 idle stream. Restore any from "archived" in the pane.')
+    await pane.redraw(PANE_PROPS)
+    expect((await pane.find({ key: 'archived' }))?.props).toMatchObject({ label: '▾ archived (3)' })
+    expect(await pane.find({ key: 'archive-idle' })).toBe(undefined)
     await pane.unmount()
   })
 })

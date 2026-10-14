@@ -6,6 +6,7 @@ import { PANE, PANE_KEY, savedOf, mem, storeKey, type PaneSaved, type Saved } fr
 import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, type Fold } from '../classify'
 import { colorOf, streamsNow, type Facts } from '../streams/model'
 import { foldQuiet, lapsed } from '../streams/loops'
+import { idleOf } from '../streams/archive'
 import { updateControl } from '../updates/control'
 import { FULL_ROWS, GLYPH, STATUS_WORD } from './look'
 import { badge, fullRow, loopRows, workOf, workflowRows, type PaneView } from './rows'
@@ -86,6 +87,15 @@ async function setArchived($: $, id: string, archived: boolean) {
     if ((await read($, focusA)) === id) await focusOn($, '')
     if ((await read($, viewA)) === id) await update($, viewA, () => '')
   }
+  const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
+  await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
+}
+
+/** `✕ idle`: archives these streams at once, as their ✕ would one by one. */
+async function archiveAll($: $, ids: readonly string[]) {
+  await update($, streamsA, list => list.map(s => (ids.includes(s.id) ? { ...s, archived: true } : s)))
+  if (ids.includes(await read($, focusA))) await focusOn($, '')
+  if (ids.includes(await read($, viewA))) await update($, viewA, () => '')
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
   await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
@@ -205,6 +215,7 @@ export function wirePane(on: On) {
       const byRecent = [...streams].sort((a, b) => b.lastAt - a.lastAt)
       const active = byRecent.filter(s => !s.archived)
       const archived = byRecent.filter(s => s.archived)
+      const idle = idleOf(active, health)
       // Folded by hand wins; otherwise an idle stream shows its header alone and the rest share the pane.
       const foldOf = (s: Stream): Fold => fold[s.id] ?? ((health[s.id] ?? 'idle') === 'idle' ? 'none' : 'all')
       const open = active.filter(s => foldOf(s) === 'all').length
@@ -282,6 +293,7 @@ export function wirePane(on: On) {
           <Box gap={1}>
             <Button key="fold-all" plain dimColor label="collapse all" onPress={() => update($, foldA, () => Object.fromEntries(active.map(s => [s.id, 'none' as const])))} />
             <Button key="unfold-all" plain dimColor label="expand all" onPress={() => update($, foldA, () => Object.fromEntries(active.map(s => [s.id, 'all' as const])))} />
+            {idle.length ? <Button key="archive-idle" plain dimColor label={`✕ idle (${idle.length})`} onPress={() => archiveAll($, idle)} /> : null}
           </Box>
           {active.length === 0 && <Text dimColor>Streams appear as you prompt. Tag one by hand with #name.</Text>}
           {active.map(s => card(s, false))}
