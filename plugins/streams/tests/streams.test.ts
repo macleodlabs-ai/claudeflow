@@ -113,6 +113,12 @@ describe('a prompt sent while a turn runs', () => {
     const line = { type: 'attachment', uuid: 'q9', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: [{ type: 'text', text: '[Image #4] nothing is happening' }, { type: 'image', source: {} }] } }
     expect(readTranscript(JSON.stringify(line))).toEqual([{ kind: 'prompt', uuid: 'q9', index: 0, text: '[Image #4] nothing is happening', isFolded: true }])
   })
+  // Seen live: after /compact, Claude Code stores its summary of the conversation as a user line. The person did not
+  // type it, and every ticket it recalls (from any project the account touched) then showed on the status card.
+  test('the summary Claude Code writes when it compacts is not a prompt', () => {
+    const summary = { type: 'user', uuid: 'c1', isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued from a previous conversation. Old card had ABC-12.' } }
+    expect(readTranscript(JSON.stringify(summary))).toEqual([])
+  })
   test('tool results and engine notifications are not prompts, and a subagent line is not main conversation', () => {
     expect(items.map(i => i.uuid)).toEqual(['u1', 'a1', 'q1', 'a2'])
   })
@@ -1051,6 +1057,24 @@ describe('tickets on the status card', () => {
     expect(ticketsIn('encode as UTF-8 and hash with SHA-256 per ISO-8601')).toEqual([])
     // Colour depths, code pages, standards and advisories read like keys but are never a tracker's.
     expect(ticketsIn('ANSI-256 colours, ASCII-7, IEEE-754, CP-1252, CVE-2024-3094, PEP-8, X-11, ES-2022')).toEqual([])
+  })
+
+  // A ticket is on the card because the person set work going on it. Text Claude Code put in the conversation for
+  // them is not that: a compaction summary recalls other projects' tickets, and `!` commands and slash commands
+  // print whatever they print. Rows filed before this was fixed carry such text, so the card reads past it too.
+  test('tickets named only in a compaction summary or in command input and output are not on the card', () => {
+    const lines = ticketLines({
+      rows: [
+        { kind: 'prompt', text: 'This session is being continued from a previous conversation that ran out of context. ABC-12 is in old history.', at: 0, streamId: 's' },
+        { kind: 'prompt', text: '<bash-input>gh issue view DEF-3</bash-input><bash-stdout>DEF-3 open</bash-stdout>', at: 1, streamId: 's' },
+        { kind: 'prompt', text: '<command-name>/streams</command-name><local-command-stdout>GHI-4 done</local-command-stdout>', at: 2, streamId: 's' },
+        { kind: 'prompt', text: 'fix JKL-5 next <system-reminder>MNO-6 elsewhere</system-reminder>', at: 3, streamId: 's' },
+      ],
+      agents: [],
+      streamKind: { s: 'running' },
+      now: 10,
+    })
+    expect(lines.map(l => l.area)).toEqual(['JKL-5'])
   })
 
   test('a ticket with a running agent says what it is doing and how long it has been quiet; a finished one gives its latest news', () => {

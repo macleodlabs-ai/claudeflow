@@ -23,6 +23,8 @@ export type TranscriptLine = {
   uuid?: string
   isMeta?: boolean
   isSidechain?: boolean
+  /** The summary Claude Code writes in the person's place when it compacts the conversation. */
+  isCompactSummary?: boolean
   message?: { role?: string; content?: unknown }
   attachment?: { type?: string; prompt?: unknown; commandMode?: string }
 }
@@ -111,7 +113,7 @@ export const readTranscript = (jsonl: string): HistoryItem[] => {
     } catch {
       continue
     }
-    if (d.isSidechain || d.isMeta || !d.uuid) continue
+    if (d.isSidechain || d.isMeta || d.isCompactSummary || !d.uuid) continue
     // A queued task notification is the engine's, not the person's: only queued prompts count.
     const queued = d.type === 'attachment' && d.attachment?.type === 'queued_command' && d.attachment.commandMode === 'prompt'
     if (queued) {

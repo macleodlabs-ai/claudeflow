@@ -116,6 +116,14 @@ const NOT_TICKETS = new Set([
   ...['SHA', 'MD', 'AES', 'RSA', 'HMAC', 'PBKDF', 'TLS', 'SSL', 'HTTP', 'IPV', 'GPT', 'WCAG', 'COVID', 'MPEG', 'P', 'H', 'X'],
 ])
 
+/** How Claude Code opens the summary it writes in the person's place when it compacts the conversation. */
+const COMPACT_SUMMARY = /^\s*This session is being continued from a previous conversation/
+/** Text Claude Code wraps around commands, their output and its own reminders: never the person's words. */
+const MACHINE_TEXT = /<(bash-input|bash-stdout|bash-stderr|command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder|task-notification)>[\s\S]*?<\/\1>/g
+
+/** What the person wrote in a prompt: nothing of a compaction summary, and none of the text wrapped around commands. */
+export const personText = (text: string): string => (COMPACT_SUMMARY.test(text) ? '' : text.replace(MACHINE_TEXT, ' '))
+
 /** The ticket ids a text names, in order, each once. */
 export const ticketsIn = (text: string): string[] =>
   [...new Set([...text.matchAll(TICKET)].map(m => m[1] ?? '').filter(id => id && !NOT_TICKETS.has(id.split('-')[0] ?? '')))]
@@ -144,10 +152,12 @@ const sentenceAbout = (text: string, id: string): string => {
  * Running agents on it say what they are doing and how long they have been quiet; otherwise its latest news.
  */
 export function ticketLines(x: TicketInput): StatusLine[] {
-  const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(r => r.text), ...x.agents.map(a => a.description)].flatMap(ticketsIn))].filter(id => !MINTED.test(id))
+  // A prompt names a ticket only in the person's own words (personText).
+  const words = (r: { kind: string; text: string }) => (r.kind === 'prompt' ? personText(r.text) : r.text)
+  const named = [...new Set([...x.rows.filter(r => r.kind === 'prompt' || r.kind === 'loop').map(words), ...x.agents.map(a => a.description)].flatMap(ticketsIn))].filter(id => !MINTED.test(id))
   const lines = named.map(id => {
     const mine = x.agents.filter(a => ticketsIn(a.description).includes(id))
-    const said = x.rows.filter(r => ticketsIn(r.text).includes(id)).sort((a, b) => a.at - b.at)
+    const said = x.rows.filter(r => ticketsIn(words(r)).includes(id)).sort((a, b) => a.at - b.at)
     const lastAt = Math.max(0, ...mine.map(a => a.endedAt ?? a.lastAt), ...said.map(r => r.at))
     const line = (kind: StatusKind, detail: string, quietSince?: number): StatusLine & { lastAt: number } => ({
       id: `ticket:${id}`,
