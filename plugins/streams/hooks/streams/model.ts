@@ -43,6 +43,8 @@ export type Facts = {
    */
   verdicts: Record<string, Verdict>
   now: number
+  /** Tickets hidden from the status card, with when (status.ts ticketLines); the card's readers fill it. */
+  hiddenTickets?: Readonly<Record<string, number>>
 }
 
 /**
@@ -121,6 +123,7 @@ export function streamsNow(f: Facts, streams: readonly Stream[]): StreamsNow {
         rows: f.rows,
         agents: Object.values(f.agents),
         streamKind: Object.fromEntries(this.lines.map(l => [l.id, l.kind ?? 'idle'])),
+        hidden: f.hiddenTickets,
         now: f.now,
       }))
     },

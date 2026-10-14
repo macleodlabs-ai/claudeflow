@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Health, Stream } from '../../types'
-import { PANE, PANE_KEY, type PaneSaved } from '../state'
+import { PANE, PANE_KEY, hiddenOf, hiddenTicketsKey, type PaneSaved } from '../state'
 import { BADGE_BG, BADGE_FG, HEALTH_GLYPH, completeTag, partialTag, tagMatches, type BadgeKind } from '../classify'
-import { gitStatus } from '../status'
+import { closePrompt, continuePrompt, gitStatus } from '../status'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
 import { lapsed } from '../streams/loops'
 import { updateControl } from '../updates/control'
@@ -58,7 +58,8 @@ async function factsOf($: $): Promise<Facts> {
     read($, verdictsA),
   ])
   await read($, tickA)
-  return { busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, now: await $.clock.now() }
+  const hiddenTickets = hiddenOf(await $.session.cwd().then(cwd => $.store.get(hiddenTicketsKey(cwd))).catch(() => undefined))
+  return { busy, current, agents, inflight, outcome, rows, loops, workflows, verdicts, hiddenTickets, now: await $.clock.now() }
 }
 
 async function focusOn($: $, id: string) {
@@ -174,7 +175,13 @@ export function wireBar(on: On) {
         open: id => openStream($, id),
         ticket: async (id, what) => {
           await update($, statusOpenA, () => false)
-          await $.prompt.submit({ text: what === 'continue' ? `Continue work on ${id}.` : `${id} is done: close it in its tracker.`, asUser: true })
+          // Hidden or closed: off the card until the person names the ticket again (status.ts ticketLines).
+          if (what !== 'continue') {
+            const key = hiddenTicketsKey(await $.session.cwd())
+            await $.store.set(key, { ...hiddenOf(await $.store.get(key)), [id]: await $.clock.now() })
+          }
+          if (what === 'hide') return
+          await $.prompt.submit({ text: what === 'continue' ? continuePrompt(id) : closePrompt(id), asUser: true })
         },
       })
     }
