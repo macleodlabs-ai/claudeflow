@@ -122,7 +122,7 @@ describe('full or compact on each card', () => {
       // Two cards, each header on one line within the pane, the long name giving way first.
       expect(headers(full)).toHaveLength(2)
       for (const h of headers(full)) {
-        expect(h).toMatch(/▾ (all|10|1) ◉ full ○ compact ✕$/)
+        expect(h).toMatch(/▾ (all|10|1) ◉ full ○ compact ⇢ ✕$/)
         expect(h.length).toBeLessThanOrEqual(width)
       }
       // Full: the reply as the session's markdown (its code block whole), the Edit as a diff.
@@ -136,7 +136,7 @@ describe('full or compact on each card', () => {
       const compact = await dump()
       console.log(`\n── ${width} cols, compact ──\n${compact.map(l => `|${l}`).join('\n')}`)
       // Every card follows, not just the one pressed: it is one choice.
-      for (const h of headers(compact)) expect(h).toMatch(/○ full ◉ compact ✕$/)
+      for (const h of headers(compact)) expect(h).toMatch(/○ full ◉ compact ⇢ ✕$/)
       expect(await pane.find({ type: 'Markdown' })).toBe(undefined)
       expect(compact.some(l => l.includes('[diff]'))).toBe(false)
       expect(compact.some(l => /^ {2}. Rounding happens here:/.test(l))).toBe(true)

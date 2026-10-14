@@ -78,4 +78,25 @@ describe('merging streams', () => {
     expect((await run($, 'merge launch launch')).text).toBe('A stream cannot merge into itself.')
     expect((await run($, 'merge launch')).text).toBe('Usage: /stream merge <stream> <into stream>')
   })
+
+  // In the pane: ⇢ on the stream to merge, then ⇣ on the stream to keep; ↶ undo merge puts it back.
+  test('the pane merges with two presses and undoes with one', ENGINE, async ($, on) => {
+    session(on)
+    await $.session.start({ cwd: '/project', surface: 'terminal', isInteractive: false } as never)
+    const props = { title: 'Streams', isFocused: false, bodyColumns: 80, placement: 'dock' } as never
+    const pane = await $.ui.mount({ plugin: 'streams', surface: 'terminal', component: 'Pane', requestId: 'streams', props })
+    expect(await pane.find({ key: 'undo-merge' })).toBe(undefined)
+    await pane.press({ key: 'merge:badges' })
+    await pane.redraw(props)
+    expect(await pane.find({ key: 'into:badges' })).toBe(undefined)
+    await pane.press({ key: 'into:launch' })
+    await pane.redraw(props)
+    expect(await pane.find({ key: 'open:badges' })).toBe(undefined)
+    expect(await pane.find({ key: 'into:launch' })).toBe(undefined)
+    await pane.press({ key: 'undo-merge' })
+    await pane.redraw(props)
+    expect(await pane.find({ key: 'open:badges' })).toBeDefined()
+    expect(await pane.find({ key: 'undo-merge' })).toBe(undefined)
+    await pane.unmount()
+  })
 })

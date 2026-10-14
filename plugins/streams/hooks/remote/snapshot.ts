@@ -70,6 +70,8 @@ export type Snapshot = {
   people?: Person[]
   /** Archived streams, newest last, for the phone's Archived list (swipe right to restore); absent from older sessions. */
   archived?: { id: string; name: string; color: string }[]
+  /** The last merge this session, while it can be undone: the phone offers Undo. */
+  merged?: { stream: string; into: string }
   /** Claude's questions with options (AskUserQuestion) waiting on an answer; absent from older sessions. */
   questions?: PendingQuestion[]
   /**
@@ -138,6 +140,9 @@ export type PhoneCommand =
   | { id: string; kind: 'choose'; requestId: string; label: string }
   /** Take a ticket off the status card (a swipe on the phone), as ✕ hide does on the computer. */
   | { id: string; kind: 'hideTicket'; ticket: string }
+  /** Merge stream `streamId` into `into` (a drag on the phone), as /stream merge; and undo the last merge. */
+  | { id: string; kind: 'merge'; streamId: string; into: string }
+  | { id: string; kind: 'undoMerge' }
 
 /** A WebAuthn assertion as the app sends it (fields b64u): an `allow` carries one, made with Face ID. */
 export type PasskeyAssertion = { authenticatorData: string; clientDataJSON: string; signature: string }
@@ -256,6 +261,8 @@ export const commandOf = (c: unknown): PhoneCommand | undefined => {
   if (k.kind === 'permission') return typeof k.requestId === 'string' && (k.decision === 'allow' || k.decision === 'deny') ? (c as PhoneCommand) : undefined
   // Ids only, each its own field: the session acts only on a task or stream it shows (remote/index.tsx).
   if (k.kind === 'stopTask') return isId(k.taskId) ? { id: k.id, kind: 'stopTask', taskId: k.taskId } : undefined
+  if (k.kind === 'merge') return isId(k.streamId) && isId(k.into) ? { id: k.id, kind: 'merge', streamId: k.streamId, into: k.into } : undefined
+  if (k.kind === 'undoMerge') return { id: k.id, kind: 'undoMerge' }
   if (k.kind === 'hideTicket') return typeof k.ticket === 'string' && /^[A-Z][A-Z0-9]{1,9}-\d{1,6}$/.test(k.ticket) ? { id: k.id, kind: 'hideTicket', ticket: k.ticket } : undefined
   if (k.kind === 'stopLoop' || k.kind === 'runTick' || k.kind === 'archive' || k.kind === 'restore') return isId(k.streamId) ? { id: k.id, kind: k.kind, streamId: k.streamId } : undefined
   const isRole = (r: unknown): r is 'viewer' | 'contributor' => r === 'viewer' || r === 'contributor'
@@ -285,6 +292,7 @@ export type SnapshotInput = {
   /** Workflow runs this session, by task id. */
   workflows?: Workflows
   archived?: Snapshot['archived']
+  merged?: Snapshot['merged']
   questions?: readonly PendingQuestion[]
   settled?: readonly Settled[]
   now: number
@@ -335,7 +343,7 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
     }
     return [card]
   })
-  return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates, permissions: [...(x.permissions ?? [])], questions: [...(x.questions ?? [])], settled: [...(x.settled ?? [])], summary: summaryOf(streams, x.agents), ...(x.archived?.length ? { archived: [...x.archived] } : {}) }
+  return { v: 1, session: x.session, at: x.now, streams, status: [...x.status], limits: [...x.limits], updates: x.updates, permissions: [...(x.permissions ?? [])], questions: [...(x.questions ?? [])], settled: [...(x.settled ?? [])], summary: summaryOf(streams, x.agents), ...(x.archived?.length ? { archived: [...x.archived] } : {}), ...(x.merged ? { merged: x.merged } : {}) }
 }
 
 /**
