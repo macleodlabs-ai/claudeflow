@@ -125,6 +125,8 @@ Type `status` (the word on its own), or press `status` in the bar, and a card op
 
 Want your sessions on your phone? **Streams Remote** puts every running session on your phone and tablet: answer Claude, approve permission prompts, send prompts and photos, and share a project with a teammate. It is a paid add-on to this free mod, with a 3-day free trial.
 
+A teammate you share a project with can watch, prompt and deny, but only you can allow a permission prompt, answer Claude's questions or run commands on your computer. A device that pairs by typed code shows a fingerprint: approve it with `/streams phone approve <fingerprint>` once it matches the one on the device.
+
 <p align="center"><img src="assets/phone-app.jpg" width="300" alt="Streams Remote on a phone: a session's streams, a permission prompt with Allow and Deny, and a waiting question"></p>
 
 <p align="center"><a href="https://streams.macleodlabs.com/?utm_source=github&utm_medium=readme&utm_campaign=streams"><b>Learn more and start the free trial →</b></a></p>

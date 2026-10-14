@@ -16,6 +16,7 @@ import {
   NO_DEVICE_MS,
   SETTLED_MS,
   accountOf,
+  heldOf,
   permissionSummary,
   questionOf,
   snapshotOf,
@@ -589,7 +590,7 @@ type PermissionHookResult = { decision?: { behavior: 'allow' } | { behavior: 'de
  */
 async function holdManual<R extends PermissionHookResult>(
   $: $,
-  e: { tool_name: string; tool_input: unknown },
+  e: { tool_name: string; tool_input: unknown; agent_id?: string },
   next: (e: never) => Promise<R>,
   signal: AbortSignal,
 ): Promise<R | PermissionHookResult> {
@@ -606,12 +607,15 @@ async function holdManual<R extends PermissionHookResult>(
     isUp = await isDialogUp($)
   }
   if (!isUp) return below
-  const ask: PendingPermission = { id, tool: e.tool_name, summary: permissionSummary(e.tool_name, e.tool_input), at: started, since: started }
+  // Which stream (and subagent) it is for, why, and what it asks in full (snapshot.ts heldOf).
+  const [agentStream, agents, current, streams, rows] = await Promise.all([read($, agentStreamA), read($, agentsA), read($, currentA), read($, streamsA), read($, rowsA)])
+  const about = heldOf(e.tool_name, e.tool_input, { agentId: e.agent_id, agentStream, agents, current, streams, rows, project: me?.project })
+  const ask: PendingPermission = { id, tool: e.tool_name, summary: permissionSummary(e.tool_name, e.tool_input), at: started, since: started, ...about }
   let resolve: (a: Answer) => void = () => {}
   const answered = new Promise<Answer>(r => (resolve = r))
   held.set(id, { ask, resolve })
   try {
-    $.ui.notice(id, 'also on your phone')
+    $.ui.notice(id, about.stream ? `also on your phone · ${about.stream.name}` : 'also on your phone')
   } catch {}
   try {
     const first = await Promise.race([decided.then(r => ({ hooks: r })), whileDialog($, answered, signal).then(a => ({ a }))])
@@ -644,10 +648,14 @@ async function holdManual<R extends PermissionHookResult>(
  * the dialog). If no device looks for NO_DEVICE_MS, the option marked "(Recommended)" is taken and Claude is told so;
  * with none marked, the terminal's dialog stays the only way to answer.
  */
-async function holdQuestion<R>($: $, e: { tool: string; tool_use_id?: string; questions?: unknown }, next: (e: never) => Promise<R>): Promise<R | { result: unknown; context?: string[] }> {
+async function holdQuestion<R>($: $, e: { tool: string; tool_use_id?: string; questions?: unknown; agentId?: string }, next: (e: never) => Promise<R>): Promise<R | { result: unknown; context?: string[] }> {
   const id = e.tool_use_id
   const since = await $.clock.now()
-  const question = id && link?.isLooking() ? questionOf(e, id, since) : undefined
+  const asked = id && link?.isLooking() ? questionOf(e, id, since) : undefined
+  // Its stream, subagent and project, as a permission's (snapshot.ts heldOf); no reason or detail beyond the question.
+  const [agentStream, agents, current, streams, rows] = await Promise.all([read($, agentStreamA), read($, agentsA), read($, currentA), read($, streamsA), read($, rowsA)])
+  const { stream, agent, project } = heldOf(e.tool, e, { agentId: e.agentId, agentStream, agents, current, streams, rows, project: me?.project })
+  const question = asked && { ...asked, ...(stream ? { stream } : {}), ...(agent ? { agent } : {}), ...(project ? { project } : {}) }
   if (!id || !question) return next(e as never)
   let resolve: (a: Answer) => void = () => {}
   const answered = new Promise<Answer>(r => (resolve = r))

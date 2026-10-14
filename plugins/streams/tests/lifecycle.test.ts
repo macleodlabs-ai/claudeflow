@@ -187,7 +187,7 @@ describe('an update: what older versions left in the store loads under this one'
     rows: [
       row('p1', 'billing', 'prompt', 'why is the invoice total off?'),
       row('r1', 'billing', 'reply', 'Rounding: toFixed.', { mood: 'unknown key' }),
-      row('t1', 'relay', 'tool', 'Bash(wrangler deploy)'),
+      row('t1', 'relay', 'tool', 'Bash(npm run deploy)'),
       row('r2', 'relay', 'reply', 'Deployed.'),
       row('p2', 'docs', 'prompt', 'tidy the README'),
     ],
