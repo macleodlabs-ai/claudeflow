@@ -1355,7 +1355,9 @@ describe('/streams connect', () => {
     await $.session.start({ cwd: '/work/p', surface: 'terminal', isInteractive: true })
     const first = await bandText($)
     expect(first).toContain('/streams connect')
-    expect(first).toContain('3-day free trial')
+    expect(first).toContain('free trial')
+    // How long the trial is is the service's to say: a length written here goes stale when the service changes it.
+    expect(first).not.toMatch(/\d+-day/)
     expect(first).toContain('Macleod Labs')
     expect(kept.has(STORE.welcomed)).toBe(true)
     await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } } as never)
@@ -1556,7 +1558,9 @@ describe('the account page and the status card (Streams Remote only)', () => {
     expect(accountRow({ trialEndsAt: 0, paidUntil: 0, status: '', at: 0 }, now)).toBeUndefined()
     expect(accountRow({ trialEndsAt: now + DAY_MS, paidUntil: 0, status: '', at: now }, now)).toMatchObject({ state: 'trial', hint: '/streams account', isLive: true })
     expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'active', at: now }, now)).toMatchObject({ state: 'paid', isLive: true })
-    expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'past_due', at: now }, now)).toMatchObject({ state: 'payment failed', hint: '/streams billing' })
+    expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'payment_failed', at: now }, now)).toMatchObject({ state: 'payment failed', hint: '/streams billing' })
+    // The service's word only: a billing provider's own status means nothing to the card.
+    expect(accountRow({ trialEndsAt: 0, paidUntil: now + DAY_MS, status: 'past_due', at: now }, now)).toMatchObject({ state: 'paid' })
     // Ended: the phone is off, and the row says the free mod is not.
     expect(accountRow({ trialEndsAt: now - 1, paidUntil: 0, status: '', at: now }, now)).toMatchObject({ state: 'ended', hint: '/streams billing', isLive: false, detail: 'phone off, the free mod keeps working' })
   })
