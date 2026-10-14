@@ -104,6 +104,25 @@ async function streamOfNotification($: $, text: string): Promise<string> {
   return (hit && map[hit]) || read($, currentA)
 }
 
+/** The sender a peer's message names: `teammate_id="x"`, or a hand-back's `from="x"`. */
+export const peerOf = (text: string): string | undefined => /\b(?:teammate_id|from)="([\w-]{1,80})"/.exec(text)?.[1]
+
+/**
+ * Where an agent's message to this session belongs (a teammate's report, a subagent's hand-back): the stream of the
+ * agent that sent it, named (`a<name>-<hex>`, as named agents' ids run) or quoted by id; else the one stream all
+ * running agents work in; else the current one. Never a guess by Haiku: a report's words are the agent's, and filed
+ * by them each would start a stream of its own, leaving the stream that sent the agents empty.
+ */
+async function streamOfPeer($: $, text: string): Promise<string> {
+  const map = await read($, agentStreamA)
+  const sender = peerOf(text)
+  const named = sender && Object.keys(map).find(id => id === sender || (id.startsWith(`a${sender}-`) && /^[0-9a-f]+$/.test(id.slice(sender.length + 2))))
+  const hit = named || Object.keys(map).find(id => text.includes(id))
+  if (hit && map[hit]) return map[hit]
+  const running = new Set(Object.values(await read($, agentsA)).flatMap(a => (a.status === 'running' ? [a.streamId] : [])))
+  return running.size === 1 ? [...running][0]! : read($, currentA)
+}
+
 async function focusOn($: $, id: string) {
   await update($, focusA, () => id)
 }
@@ -219,6 +238,9 @@ export function wireRouting(on: On, opts: { grouping?: Grouping } = {}) {
       // A monitor's event is its latest change; its end notice ends it.
       const now = await $.clock.now()
       await update($, loopsA, m => afterNotification(m, text, now))
+      mem.pendingKind = 'notice'
+    } else if (e.origin.kind === 'peer' || e.origin.kind === 'peer-send-message') {
+      id = await streamOfPeer($, text)
       mem.pendingKind = 'notice'
     } else if (e.origin.kind === 'plugin' && e.origin.name === 'streams' && mem.runNow.text && mem.runNow.text === text) {
       // A tick the phone asked to run now (remote/index.tsx): filed as that loop's tick in its own stream, like one
