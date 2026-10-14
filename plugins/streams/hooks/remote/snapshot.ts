@@ -52,7 +52,8 @@ export type Snapshot = {
   v: 1
   /** `model`: what the session runs on (e.g. claude-opus-5-5); absent from older sessions. */
   /** `proto`: which phone commands this session answers (PROTO); a session started on an older plugin sends none. */
-  session: { id: string; account: string; project: string; busy: boolean; model?: string; proto?: number }
+  /** `version`: the Streams mod this computer runs, for the phone to show beside its own build. */
+  session: { id: string; account: string; project: string; busy: boolean; model?: string; proto?: number; version?: string }
   at: number
   streams: PhoneStream[]
   /** Git and ticket rows, as the status card shows them. */
