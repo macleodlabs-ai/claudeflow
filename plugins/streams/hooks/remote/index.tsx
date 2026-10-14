@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import { savedOf, mem, storeKey, type Saved } from '../state'
+import { keepRows, savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
@@ -243,6 +243,11 @@ function settle(id: string, why: AckWhy, at: number, label?: string) {
 }
 
 let options: RemoteOptions = { relayUrl: '', token: '' }
+/** Output of `!` commands run from the phone, for Claude with the next prompt (prompt.submit below). */
+let shellNotes: string[] = []
+/** How much of a `!` command's output the stream shows, and how much Claude reads. */
+const SHELL_SHOWN = 4_000
+const SHELL_TO_CLAUDE = 30_000
 /** Which system this session runs on (platform.ts), found at session start. */
 let platform: Platform = 'darwin'
 /** What the phone side says on a system it does not run on yet. */
@@ -800,6 +805,28 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
       .then((): Omit<Ack, 't' | 'id'> => ({ ok: true }))
       .catch((): Omit<Ack, 't' | 'id'> => ({ ok: false, why: 'command failed' }))
   }
+  // `!` runs a shell command on the computer, as typed in the terminal. Through Claude Code's own Bash tool, so the
+  // permission rules (and auto mode) decide as for any command; its output shows in the stream and reaches Claude
+  // with the next prompt, with no model turn of its own.
+  const bang = c.files?.length ? null : /^!\s*([\s\S]+)$/.exec(c.text.trim())
+  if (bang?.[1]) {
+    const command = bang[1].trim()
+    const r = await $.tool.call({ tool: 'Bash', command, description: 'Run from Streams on the phone (!)' })
+    if (r.deny !== undefined) return { ok: false, why: 'denied' }
+    const res = (r.result ?? {}) as { stdout?: unknown; stderr?: unknown }
+    const out = [res.stdout, res.stderr].filter((x): x is string => typeof x === 'string' && x.trim() !== '').join('\n').trim()
+    const shown = out.length > SHELL_SHOWN ? `${out.slice(0, SHELL_SHOWN)}\n…` : out
+    const now = await $.clock.now()
+    const streams = await read($, streamsA)
+    const sid = streams.some(st => st.id === c.streamId) ? c.streamId : await read($, currentA)
+    if (sid) {
+      await update($, rowsA, list =>
+        keepRows([...list, { id: `sh:${now}`, streamId: sid, kind: 'prompt' as const, text: `! ${command}`, at: now }, { id: `sho:${now}`, streamId: sid, kind: 'notice' as const, text: shown || '(no output)', at: now }]),
+      )
+    }
+    shellNotes.push(`The person ran a shell command from their phone: ! ${command}\n${r.isError ? 'It failed. ' : ''}Output:\n${out.slice(0, SHELL_TO_CLAUDE) || '(no output)'}`)
+    return { ok: true }
+  }
   // Files go first: a prompt is sent only with all of them on disk, for Claude to read by path.
   const paths = c.files?.length ? await saveFiles($, c.files) : []
   if (!paths) return { ok: false, why: RETRY_WHY }
@@ -1070,7 +1097,11 @@ export function wireRemote(on: On, opts: RemoteOptions) {
 
   on('prompt.submit', {}, async ($, e, next) => {
     if ((await read($, welcomeA)).show) await update($, welcomeA, w => ({ ...w, show: false }))
-    return next(e)
+    // `!` commands run from the phone since the last prompt: Claude reads their output with this one, once.
+    if (!shellNotes.length) return next(e)
+    const notes = shellNotes
+    shellNotes = []
+    return next({ ...e, context: [...(e.context ?? []), ...notes] })
   })
 
   // tool.check's verdict is never changed: it only notes which call an `ask` was, for PermissionRequest below.

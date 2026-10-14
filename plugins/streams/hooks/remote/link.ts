@@ -193,6 +193,12 @@ export const RETRY_WHY = 'file missing'
 const OWNER_ONLY: readonly string[] = ['invite', 'setRole', 'extend', 'forgetDevice']
 
 /**
+ * What only the owner's own devices may send: sharing and devices, and anything that runs on the computer rather than
+ * asking Claude (a slash command or a `!` shell command typed as the prompt).
+ */
+export const isOwnerOnly = (c: PhoneCommand): boolean => OWNER_ONLY.includes(c.kind) || (c.kind === 'answer' && /^\s*[/!]/.test(c.text))
+
+/**
  * One open, sealed connection with a device. `welcome` is the frame that opened it, sent again as it was when the same
  * hello comes again (`peerEph`, `peerNonce`): a phone that missed it, or asks twice, keeps one channel on both sides.
  */
@@ -442,7 +448,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     // Ids are random per tap: keep the newest few hundred, enough for any phone's retries.
     if (seen.size > 500) seen.delete(seen.keys().next().value!)
     // A watcher may only watch, and only the owner shares: refused here, whatever the app shows, and told so.
-    if (roleOf(conn.device) === 'viewer' || (conn.device.role && OWNER_ONLY.includes(c.kind))) {
+    if (roleOf(conn.device) === 'viewer' || (conn.device.role && isOwnerOnly(c))) {
       queueAck(conn.device.id, { t: 'ack', id: c.id, ok: false, why: 'read only' })
       return undefined
     }
