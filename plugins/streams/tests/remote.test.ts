@@ -502,7 +502,7 @@ describe('the session on the relay', () => {
   async function withPhone($: Engine, on: On, o: { limit?: number } = {}) {
     const me = account()
     const a = phone(me, 'iPhone')
-    const clock = session(on)
+    const clock = session(on, {}, { '/.claude-plugin/plugin.json': '{"version":"9.8.7"}' })
     const kept = store(on, { [STORE.token]: TOKEN, [STORE.identity]: me, [STORE.devices]: [a.stored()] }, o.limit)
     const runs: string[][] = []
     const written: Record<string, string> = {}
@@ -687,6 +687,13 @@ describe('the session on the relay', () => {
 
   // A ticket that should not be on the card (another project's, or done with) is swiped away on the phone, as ✕ hide
   // does on the computer: kept for this project, so neither screen shows it until the person names it again.
+  // "Is the phone up to date?" needs the computer's side too: each snapshot names the Streams version it runs.
+  test('the snapshot names the Streams version this computer runs', OPTIONS, async ($, on) => {
+    const { clock, seen } = await withPhone($, on)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.session.version).toBe('9.8.7')
+  })
+
   test('a swipe on a ticket hides it from the card, here and on the computer', OPTIONS, async ($, on) => {
     const { a, relay, clock, acked, kept } = await withPhone($, on)
     relay.from(a, a.command({ id: 'c1', kind: 'hideTicket', ticket: 'TL-260' }))
