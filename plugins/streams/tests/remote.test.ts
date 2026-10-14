@@ -6,7 +6,7 @@ import { relayProtocols } from '../hooks/remote/device'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId, relayHash, relayPairToken } from '../hooks/remote/seal'
-import { ACTIVE_POLL_MS, DAY_MS, IDLE_POLL_MS, PAIRING_MS, createLink, devicesOf, envLine, envOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
+import { ACTIVE_POLL_MS, DAY_MS, IDLE_POLL_MS, PAIRING_MS, createLink, isOwnerOnly, devicesOf, envLine, envOf, guardOf, type Device, type Identity, type OutFrame, type Pairing } from '../hooks/remote/link'
 import { CHUNK_B64, HEARTBEAT_MS, NO_DEVICE_MS, commandOf, type Ack, type PhoneCommand, type Snapshot } from '../hooks/remote/snapshot'
 import { FETCH_MS, HOSTED_RELAY, SITE, STORE, TICK_MS, TICK_STUCK_MS, applyOps, opsOf, projectName, rosterOf, tokenFor } from '../hooks/remote/index'
 import { accountRow } from '../hooks/ui/statusCard'
@@ -370,12 +370,15 @@ function session(on: On, env: Record<string, string> = {}, files: Record<string,
   on('prompt.submit', async (_$, e) => {
     if (promptHangs) return new Promise<never>(() => {})
     submitted.push(e.text)
+    contexts.push([...(e.context ?? [])])
     return { text: e.text }
   })
   return clock
 }
 /** Prompts the session submitted, in order (reset by each test that reads it). */
 const submitted: string[] = []
+/** What each of those prompts carried for the model beside its text. */
+const contexts: string[][] = []
 /** While set, a prompt the session submits never comes back, as one the terminal holds. */
 let promptHangs = false
 
@@ -517,7 +520,15 @@ describe('the session on the relay', () => {
     // The prompt box takes a fill: no dialog holds the keys (the engine refuses one while a dialog does).
     on('prompt.fill', async () => ({ isFilled: true, text: '' }) as never)
     on('classic.PermissionRequest', async () => ({}) as never)
+    const shells: string[] = []
     on('tool.call', async (_$, e) => {
+      // A `!` command from the phone runs as the Bash tool: recorded, and answered as a shell would.
+      if (e.tool === 'Bash') {
+        const command = (e as unknown as { command: string }).command
+        shells.push(command)
+        if (command.startsWith('rm ')) return { deny: 'denied by your permission rules' } as never
+        return { result: { stdout: `ran: ${command}`, stderr: '', interrupted: false } } as never
+      }
       const q = (e as unknown as { questions: { question: string }[] }).questions[0]!.question
       const label = await new Promise<string>(r => (st.dialog = r))
       return { result: { questions: (e as unknown as { questions: unknown }).questions, answers: { [q]: label } } } as never
@@ -548,7 +559,7 @@ describe('the session on the relay', () => {
       void p.then(v => (box.value = v))
       return box
     }
-    return { a, relay, clock, seen, acked, st, watch, runs, written, kept }
+    return { a, relay, clock, seen, acked, st, watch, runs, written, kept, shells }
   }
 
   /** History an older session wrote back, the way plugins before 1.3 kept it: 400 long rows. */
@@ -592,6 +603,16 @@ describe('the session on the relay', () => {
     expect((kept.get(STORE.invites) as { secret: string; role: string }[]).map(i => [i.secret, i.role])).toEqual([[secret, 'contributor']])
   })
 
+  // A guest who may prompt may still not run anything on the owner's computer: a slash command or a `!` shell
+  // command from a contributor is refused like any other owner-only command; text that only mentions one is fine.
+  test('slash and ! commands are the owner\'s alone', () => {
+    expect(isOwnerOnly({ id: 'c1', kind: 'answer', streamId: '', text: '!ls' })).toBe(true)
+    expect(isOwnerOnly({ id: 'c1', kind: 'answer', streamId: '', text: '  /logout' })).toBe(true)
+    expect(isOwnerOnly({ id: 'c1', kind: 'answer', streamId: '', text: 'run !ls or /logout for me' })).toBe(false)
+    expect(isOwnerOnly({ id: 'c1', kind: 'invite', role: 'viewer' })).toBe(true)
+    expect(isOwnerOnly({ id: 'c1', kind: 'stop' })).toBe(false)
+  })
+
   test('an invite whose secret is not one the phone makes is refused, not kept: a guessable secret would let anyone in', () => {
     expect(commandOf({ id: 'c1', kind: 'invite', role: 'viewer', secret: 'abc' })).toBe(undefined)
     expect(commandOf({ id: 'c1', kind: 'invite', role: 'viewer', secret: 'S'.repeat(43) })).toMatchObject({ secret: 'S'.repeat(43) })
@@ -633,6 +654,35 @@ describe('the session on the relay', () => {
     expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
     expect(acked.find(x => x.id === 'c3')).toMatchObject({ ok: false, why: 'unknown command' })
     expect(acked.find(x => x.id === 'c4')).toMatchObject({ ok: false, why: 'command failed' })
+  })
+
+  // `!` typed on the phone is a shell command on the computer, as in the terminal: it runs (through Claude Code's own
+  // Bash tool, so the permission rules still decide), the stream shows it and what it printed, and Claude reads the
+  // output with the next prompt. No model turn of its own, and never as text sent to Claude.
+  test('a ! command from the phone runs on the computer, shows its output, and reaches Claude with the next prompt', OPTIONS, async ($, on) => {
+    const { a, relay, clock, acked, shells, seen } = await withPhone($, on)
+    await $.prompt.submit({ text: '#ops check the build', wait: false, origin: { kind: 'composer' } })
+    submitted.length = 0
+    relay.from(a, a.command({ id: 'c1', kind: 'answer', streamId: 'ops', text: '!git status --short' }))
+    relay.from(a, a.command({ id: 'c2', kind: 'answer', streamId: 'ops', text: '! rm -rf build' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(shells).toEqual(['git status --short', 'rm -rf build'])
+    expect(submitted).toEqual([])
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
+    // The permission rules said no: the phone is told it was denied, and nothing reaches Claude.
+    expect(acked.find(x => x.id === 'c2')).toMatchObject({ ok: false, why: 'denied' })
+    await clock.advance(ACTIVE_POLL_MS)
+    const rows = seen.at(-1)!.streams.flatMap(s => s.rows ?? []).map(r => r.text)
+    expect(rows).toContain('! git status --short')
+    expect(rows.some(t => t.includes('ran: git status --short'))).toBe(true)
+    contexts.length = 0
+    await $.prompt.submit({ text: 'what changed?', wait: false, origin: { kind: 'composer' } })
+    expect(contexts.at(-1)!.join('\n')).toContain('ran: git status --short')
+    expect(contexts.at(-1)!.join('\n')).not.toContain('rm -rf build')
+    // Once: the prompt after it does not carry it again.
+    await $.prompt.submit({ text: 'and now?', wait: false, origin: { kind: 'composer' } })
+    expect(contexts.at(-1)!.join('\n')).not.toContain('git status')
   })
 
   test('a photo sent in chunks is saved on the Mac and the prompt names its path, for Claude to read', OPTIONS, async ($, on) => {
