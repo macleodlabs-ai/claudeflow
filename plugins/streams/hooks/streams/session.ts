@@ -165,7 +165,8 @@ async function trimStore($: $, own: string): Promise<void> {
     const old = (await $.store.get(key)) as Saved | undefined
     if (!old?.rows) continue
     const size = JSON.stringify(old).length
-    const cut = savedOf(old.streams, old.rows, old.loopStream, old.sources)
+    // Keys this version does not know (a newer Streams' own) stay: only what savedOf trims is cut.
+    const cut = { ...old, ...savedOf(old.streams, old.rows, old.loopStream, old.sources) }
     const cutSize = JSON.stringify(cut).length
     if (cutSize < size) await $.store.set(key, cut)
     sizes.push({ key, size: cutSize })

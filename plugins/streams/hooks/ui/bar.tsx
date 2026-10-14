@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { Health, Stream } from '../../types'
-import { PANE, PANE_KEY, hiddenOf, hiddenTicketsKey, type PaneSaved } from '../state'
+import { PANE, PANE_KEY, hiddenOf, hiddenTicketsKey, withHidden, type PaneSaved } from '../state'
 import { BADGE_BG, BADGE_FG, HEALTH_GLYPH, completeTag, partialTag, tagMatches, type BadgeKind } from '../classify'
 import { closePrompt, continuePrompt, gitStatus } from '../status'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
@@ -178,7 +178,7 @@ export function wireBar(on: On) {
           // Hidden or closed: off the card until the person names the ticket again (status.ts ticketLines).
           if (what !== 'continue') {
             const key = hiddenTicketsKey(await $.session.cwd())
-            await $.store.set(key, { ...hiddenOf(await $.store.get(key)), [id]: await $.clock.now() })
+            await $.store.set(key, withHidden(hiddenOf(await $.store.get(key)), id, await $.clock.now()))
           }
           if (what === 'hide') return
           await $.prompt.submit({ text: what === 'continue' ? continuePrompt(id) : closePrompt(id), asUser: true })

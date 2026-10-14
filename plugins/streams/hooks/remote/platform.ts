@@ -28,3 +28,7 @@ export const decodeArgv = (p: Platform, from: string, to: string): string[] | un
   p === 'darwin' ? ['/usr/bin/base64', '-D', '-i', from, '-o', to] : p === 'linux' ? ['sh', '-c', 'base64 -d -- "$1" > "$2"', 'sh', from, to] : undefined
 
 export const removeArgv = (p: Platform, file: string): string[] | undefined => (p === 'win32' ? undefined : ['rm', '-f', file])
+
+/** Removes the folders directly in `dir` last changed over `days` days ago: the files of old prompts from a phone. */
+export const pruneArgv = (p: Platform, dir: string, days: number): string[] | undefined =>
+  p === 'win32' ? undefined : ['find', dir, '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-mtime', `+${days}`, '-exec', 'rm', '-rf', '{}', '+']

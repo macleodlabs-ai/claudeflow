@@ -16,7 +16,8 @@ const RECENT_ROW_CHARS = 2_500
 
 /** A subagent's card. Its start and end, not its running time: a running clock would make every snapshot news. */
 export type PhoneAgent = { id: string; description: string; status: AgentRun['status']; tools: number; startedAt: number; endedAt?: number; last: string }
-export type PhoneRow = { kind: StreamRow['kind']; text: string; at: number }
+/** `shell`: a `!` command run from a phone, or what it printed (remote/index.tsx): never sent to a guest. */
+export type PhoneRow = { kind: StreamRow['kind']; text: string; at: number; shell?: true }
 export type PhoneStream = {
   id: string
   name: string
@@ -307,6 +308,25 @@ export type SnapshotInput = {
 /** The account a session runs as: the last folder of its config dir (`~/.claude-clients/macleod` is macleod). */
 export const accountOf = (configDir: string): string => configDir.replace(/\/+$/, '').split('/').pop() || 'default'
 
+/** A row of a `!` command run from a phone, or of its output (remote/index.tsx `sh:`, `sho:`). */
+export const isShellRow = (id: string): boolean => /^sho?:/.test(id)
+
+/**
+ * A snapshot as a guest's device gets it: no `!` command or its output, a permission prompt's tool and not what it
+ * would run (a command's text carries tokens, hosts and paths), and every row at the short length, recent replies
+ * included.
+ */
+export function forGuest(s: Snapshot): Snapshot {
+  return {
+    ...s,
+    permissions: s.permissions.map(p => ({ ...p, summary: p.tool })),
+    streams: s.streams.map(st => ({
+      ...st,
+      rows: st.rows.filter(r => !r.shell).map(r => (r.text.length > ROW_CHARS + 1 ? { ...r, text: `${r.text.slice(0, ROW_CHARS)}…` } : r)),
+    })),
+  }
+}
+
 /** The streams in status order, each with its live agents and latest rows; code bodies stay on the Mac. */
 export function snapshotOf(x: SnapshotInput): Snapshot {
   const streams = x.lines.flatMap(l => {
@@ -344,7 +364,7 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
         .slice(-PHONE_ROWS)
         .map((r, i, all) => {
           const max = i >= all.length - RECENT_ROWS ? RECENT_ROW_CHARS : ROW_CHARS
-          return { kind: r.kind, text: r.text.length > max ? `${r.text.slice(0, max)}…` : r.text, at: r.at }
+          return { kind: r.kind, text: r.text.length > max ? `${r.text.slice(0, max)}…` : r.text, at: r.at, ...(isShellRow(r.id) ? { shell: true as const } : {}) }
         }),
     }
     return [card]

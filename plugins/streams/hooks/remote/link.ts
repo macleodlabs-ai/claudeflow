@@ -1,6 +1,6 @@
-import { b64u, channel, connectionKeys, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, relayHash, relayPairToken, verifyPasskey } from './seal'
+import { b64u, channel, connectionKeys, deviceFingerprint, fromB64u, newIdentity, pairingProof, passkeyChallenge, randomId, relayHash, relayPairToken, verifyPasskey } from './seal'
 import { proofParts } from './device'
-import { HEARTBEAT_MS, commandOf, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
+import { HEARTBEAT_MS, commandOf, forGuest, type Ack, type PasskeyAssertion, type PhoneCommand, type Snapshot } from './snapshot'
 import { createNotifier, type Hint } from './notify'
 
 // One session's side of the protocol, with no engine in it: it
@@ -60,8 +60,11 @@ export type Role = 'viewer' | 'contributor'
  */
 export type Pairing = { secret: string; until: number; code?: string; codeSecret?: string; approved?: string[]; denied?: string[] }
 
-/** A device that pairs by the typed code and waits for the person to approve it. */
-export type PendingPair = { id: string; label: string; env?: Device['env'] }
+/**
+ * A device that pairs by the typed code and waits for the person to approve it. `fingerprint`: of the key it said
+ * hello with (seal.ts deviceFingerprint), what the person approves it by; its label is its own to choose.
+ */
+export type PendingPair = { id: string; label: string; fingerprint: string; env?: Device['env'] }
 /**
  * A shared invite: a pairing secret for one project and role, and how many days the access lasts. It is one person's:
  * until it expires, using it again (the Home Screen app after Safari) moves their access to the new device.
@@ -189,14 +192,19 @@ const assertionOf = (v: unknown): PasskeyAssertion | undefined => {
 /** An ack that does not settle its command: sent again under the same id, it runs again (index.tsx `saveFiles`). */
 export const RETRY_WHY = 'file missing'
 
-/** What only the owner's devices may ask: sharing the project and managing who it is shared with. */
-const OWNER_ONLY: readonly string[] = ['invite', 'setRole', 'extend', 'forgetDevice']
+/**
+ * What only the owner's devices may ask: sharing the project and managing who it is shared with, and running or
+ * stopping work on the computer (a loop's tick now, a Workflow run).
+ */
+const OWNER_ONLY: readonly string[] = ['invite', 'setRole', 'extend', 'forgetDevice', 'runTick', 'stopTask']
 
 /**
- * What only the owner's own devices may send: sharing and devices, and anything that runs on the computer rather than
- * asking Claude (a slash command or a `!` shell command typed as the prompt).
+ * What only the owner's own devices may send: sharing and devices, anything that runs on the computer rather than
+ * asking Claude (a slash command or a `!` shell command typed as the prompt), and consent: an Allow, or an answer to
+ * Claude's question (any option may be the one that goes ahead). A guest may deny.
  */
-export const isOwnerOnly = (c: PhoneCommand): boolean => OWNER_ONLY.includes(c.kind) || (c.kind === 'answer' && /^\s*[/!]/.test(c.text))
+export const isOwnerOnly = (c: PhoneCommand): boolean =>
+  OWNER_ONLY.includes(c.kind) || c.kind === 'choose' || (c.kind === 'permission' && c.decision === 'allow') || (c.kind === 'answer' && /^\s*[/!]/.test(c.text))
 
 /**
  * One open, sealed connection with a device. `welcome` is the frame that opened it, sent again as it was when the same
@@ -357,7 +365,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
     }
     const eph = newIdentity()
     const nonce = randomId(32)
-    const k = connectionKeys({ ownSk: o.identity.sk, peerPk: h.pk, ownEphSk: eph.sk, peerEphPk: h.eph, sessionNonce: nonce, deviceNonce: h.nonce })
+    const k = connectionKeys({ ownSk: o.identity.sk, peerPk: h.pk, ownEphSk: eph.sk, peerEphPk: h.eph, sessionNonce: nonce, deviceNonce: h.nonce, session: o.session })
     // `hello`: which hello this answers, so a late welcome for an older one is not taken with this one's keys.
     const frame: OutFrame = { to: device.id, data: { t: 'welcome', session: o.session, eph: eph.pk, nonce, hello: h.eph } }
     conns.set(device.id, {
@@ -389,7 +397,7 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       if (isCode && !pairing!.approved?.includes(h.device)) {
         const label = typeof h.label === 'string' && h.label.trim() ? h.label.trim().slice(0, 60) : `device ${h.device.slice(0, 6)}`
         const env = envOf(h.env)
-        if (!waiting.some(p => p.id === h.device)) waiting.push({ id: h.device, label, ...(env ? { env } : {}) })
+        if (!waiting.some(p => p.id === h.device)) waiting.push({ id: h.device, label, fingerprint: deviceFingerprint(h.pk), ...(env ? { env } : {}) })
         return undefined
       }
       const isOwner = isQr || isCode
@@ -452,7 +460,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       queueAck(conn.device.id, { t: 'ack', id: c.id, ok: false, why: 'read only' })
       return undefined
     }
-    // An Allow needs no Face ID of its own: the channel it came on was opened by the unlock's passkey check.
+    // An Allow (the owner's alone, above) needs no Face ID of its own: the channel it came on was opened by the
+    // unlock's passkey check.
     return c
   }
 
@@ -526,7 +535,8 @@ export function createLink(o: { identity: Identity; session: string; origin: str
       c.last = { body, at: now }
       const { people, ...shared } = s
       const role = roleOf(c.device)
-      const mine: Snapshot = role ? { ...shared, you: { role, until: c.device.until ?? 0 } } : { ...shared, ...(people ? { people } : {}) }
+      // A guest sees the project, not the owner's computer (snapshot.ts forGuest).
+      const mine: Snapshot = role ? { ...forGuest(shared), you: { role, until: c.device.until ?? 0 } } : { ...shared, ...(people ? { people } : {}) }
       out.push({ to: id, data: { t: 'box', b: c.ch.seal({ t: 'snapshot', snapshot: mine }) } })
     }
     return out

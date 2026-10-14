@@ -110,10 +110,12 @@ export function createDevice(o: { device: DeviceKeys; room: string; accountPk: s
     receive(from: string, d: Record<string, unknown>): Received | undefined {
       // A welcome naming another hello answers an older connection's: its keys are not this hello's.
       if (d.t === 'welcome' && typeof d.hello === 'string' && d.hello !== hello?.eph.pk) return undefined
+      // A welcome is taken only from the session it names: the keys bind that id (seal.ts connectionKeys).
+      if (d.t === 'welcome' && d.session !== from) return undefined
       if (d.t === 'welcome' && hello && typeof d.eph === 'string' && typeof d.nonce === 'string') {
         const id = `${d.eph}.${d.nonce}`
         if (channels.get(from)?.from !== id) {
-          const k = connectionKeys({ ownSk: o.device.sk, peerPk: o.accountPk, ownEphSk: hello.eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: hello.nonce })
+          const k = connectionKeys({ ownSk: o.device.sk, peerPk: o.accountPk, ownEphSk: hello.eph.sk, peerEphPk: d.eph, sessionNonce: d.nonce, deviceNonce: hello.nonce, session: from })
           channels.set(from, { ch: channel(k.deviceToSession, k.sessionToDevice), from: id })
         }
         return { t: 'welcome', session: from }
