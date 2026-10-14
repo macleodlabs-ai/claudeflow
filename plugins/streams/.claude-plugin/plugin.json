@@ -1,6 +1,6 @@
 {
   "name": "streams",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Untangles the interleaved work in a Claude Code session (prompts, mid-turn asides, subagents, loops) into colour-coded streams with a live navigator pane, a status bar of pills and per-stream focus.",
   "types": "./types/index.d.ts",
   "author": {
@@ -49,6 +49,12 @@
         "fine"
       ],
       "default": "broad"
+    },
+    "mergeSuggestions": {
+      "type": "boolean",
+      "title": "Suggest merges",
+      "description": "Every 30 minutes, with 5 or more active streams, ask Haiku whether some are one goal (one small call); the pane and the phone offer that group to merge, or dismiss.",
+      "default": true
     }
   }
 }

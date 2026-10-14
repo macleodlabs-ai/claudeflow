@@ -4,6 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import { PANE, PANE_KEY, savedOf, historyToDrop, jobs, mem, storeKey, unmatched, type PaneSaved, type Saved } from '../state'
 import { ago } from '../classify'
 import { ARCHIVE_LOOK_MS, archivableOf, idleOf } from './archive'
+import { SUGGEST_MIN, SUGGEST_MS, SUGGEST_SYSTEM, parseSuggestion, suggestPrompt, suggestionKey } from './suggest'
 import { colorOf, streamsNow, type Facts } from './model'
 
 // A session's start (its streams restored, the commands declared, the pane opened) and its heartbeat, which also
@@ -26,6 +27,8 @@ const verdictsA = atom({ plugin: 'streams', key: 'verdicts' } as const, {})
 const inflightA = atom({ plugin: 'streams', key: 'inflight' } as const, {})
 const outcomeA = atom({ plugin: 'streams', key: 'outcome' } as const, {})
 const healthA = atom({ plugin: 'streams', key: 'health' } as const, {})
+const suggestionA = atom({ plugin: 'streams', key: 'mergeSuggestion' } as const, null)
+const dismissedA = atom({ plugin: 'streams', key: 'mergeDismissed' } as const, [])
 const foldA = atom({ plugin: 'streams', key: 'fold' } as const, {})
 const historyFiledA = atom({ plugin: 'streams', key: 'historyFiled' } as const, false)
 const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const, false)
@@ -34,6 +37,9 @@ const COLOR = { plugin: 'streams', key: 'streamColor' } as const
 /** The `autoArchiveHours` setting (0: off), and when the heartbeat last looked for streams to archive. */
 let archiveHours = 24
 let archiveLookedAt = 0
+/** The `mergeSuggestions` setting, and when the heartbeat last asked for one (the session's start, at first). */
+let isSuggesting = true
+let suggestedAt = 0
 
 /**
  * Archives what archive.ts says is finished and long quiet, as the pane's ✕ does: off the bar and the list, out of
@@ -137,6 +143,12 @@ async function beat($: $) {
     const ids = archivableOf({ now: n, streams, loops: facts.loops, hours: archiveHours, at: now })
     if (ids.length) await autoArchive($, ids)
   }
+  // Every SUGGEST_MS from the session's start, one small call may offer a merge (not awaited: a model call never
+  // holds up the heartbeat).
+  if (isSuggesting && now - suggestedAt >= SUGGEST_MS) {
+    suggestedAt = now
+    void suggestMerge($).catch(() => {})
+  }
 }
 
 /** How often a session trims the shared store of history that sessions on older plugins keep writing back. */
@@ -161,14 +173,26 @@ async function trimStore($: $, own: string): Promise<void> {
   for (const key of historyToDrop(sizes, own)) await $.store.delete(key)
 }
 
-export function wireSession(on: On, opts: { autoArchiveHours: number }) {
+/** Asks the model whether some active streams are one goal; offers the group it names (streams/suggest.ts). */
+async function suggestMerge($: $) {
+  const [streams, suggestion, dismissed, loops] = await Promise.all([read($, streamsA), read($, suggestionA), read($, dismissedA), read($, loopsA)])
+  const active = streams.filter(s => !s.archived)
+  if (suggestion || active.length < SUGGEST_MIN) return
+  const r = await $.model.complete({ model: 'haiku', system: SUGGEST_SYSTEM, prompt: suggestPrompt(active), maxTokens: 120, timeoutMs: 30_000 })
+  const s = r.isAnswered ? parseSuggestion(r.text, active, Object.keys(loops)) : undefined
+  if (s && !dismissed.includes(suggestionKey(s))) await update($, suggestionA, () => s)
+}
+
+export function wireSession(on: On, opts: { autoArchiveHours: number; suggestMerges?: boolean }) {
   archiveHours = opts.autoArchiveHours
+  isSuggesting = opts.suggestMerges !== false
   on('command.run', { command: 'streams' }, async ($, e, next) => {
     if (e.args.trim().split(/\s+/).join(' ') !== 'archive idle') return next(e)
     const n = await archiveIdle($)
     return { text: n ? `Archived ${n} idle stream${n === 1 ? '' : 's'}. Restore any from "archived" in the pane.` : 'No idle streams to archive.' }
   })
   on('session.start', async ($, e, next) => {
+    suggestedAt = await $.clock.now()
     const saved = (await $.store.get(storeKey(e.cwd))) as Saved | undefined
     if (saved && (await read($, streamsA)).length === 0) {
       await update($, streamsA, () => saved.streams)

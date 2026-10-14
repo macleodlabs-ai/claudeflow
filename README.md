@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.1.1" src="https://img.shields.io/badge/version-2.1.1-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.2.0" src="https://img.shields.io/badge/version-2.2.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 299 passing" src="https://img.shields.io/badge/tests-299%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 307 passing" src="https://img.shields.io/badge/tests-307%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -231,6 +231,7 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | Archive or restore | `✕` beside a stream; `▸ archived (N)` lists them |
 | Archive all idle | `✕ idle (N)` at the top of the pane, or `/streams archive idle`: every stream not running a turn |
 | Merge streams | `⇢` on the stream to merge, then `⇣` on the stream to keep; `↶ undo merge` puts it back |
+| Suggested merges | "these look like one goal: merge a, b → c" at the top of the pane: `merge` folds them (each undoable), `dismiss` puts the offer away for good |
 | Collapse everything | `collapse all` / `expand all` at the top of the pane |
 | Fold the pane away | `⇥ hide` (<kbd>h</kbd>) folds the docked pane to a `◂ streams` tab at the right of the bar; the tab (<kbd>s</kbd>) brings it back at the width it had. It stays folded in new sessions until you open it |
 | Switch a stream's chat view | The stream header shows `view ◉ full ○ compact`: full draws the chat as the session does, with markdown, syntax-highlighted code and diffs; compact is one line per row. Every card in the all-streams list has the same `◉ full ○ compact` beside its fold and `✕`, and its recent rows follow it: it is one choice for the whole pane. Click either, or press <kbd>v</kbd> in the pane |
@@ -266,6 +267,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | --- | :---: | --- |
 | `autoArchiveHours` | `24` | A finished stream (by its status, or found finished by the completion check) with no activity for this many hours archives itself. It stays under `▸ archived` in the pane, and a restored one stays until it has been active again. Never a running, waiting, looping or failed stream. `0`: off. |
 | `streamGrouping` | `broad` | How readily a prompt starts a new stream. `broad`: one stream per larger goal (a project, a release), taking in its fixes and follow-ups. `balanced`: a goal and closely related work. `fine`: one stream per task. |
+| `mergeSuggestions` | `true` | Every 30 minutes, with 5 or more active streams, ask Haiku (one small call) whether some are one goal, and offer that group to merge. |
 | `chatStyle` | `full` | How the pane draws a stream's chat, in its own view and in each card's recent rows: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `◉ full ○ compact` switch on a stream's header or any card's header changes it for the session. |
 | `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
@@ -284,7 +286,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams mod | `plugins/streams` | `claude plugin test .` (299 tests) and `claude plugin validate --strict .` |
+| The streams mod | `plugins/streams` | `claude plugin test .` (307 tests) and `claude plugin validate --strict .` |
 
 ---
 

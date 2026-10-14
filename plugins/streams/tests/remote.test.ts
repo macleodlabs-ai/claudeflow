@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import { decodeArgv, mkdirArgv, openArgv, platformOf, removeArgv, sleepArgv } from '../hooks/remote/platform'
 import { relayProtocols } from '../hooks/remote/device'
+import { SUGGEST_MS, SUGGEST_SYSTEM } from '../hooks/streams/suggest'
 
 import { p256 } from '../hooks/vendor/noble'
 import { fromB64u, newIdentity, passkeyChallenge, publicKeyOf, randomId, relayHash, relayPairToken } from '../hooks/remote/seal'
@@ -718,6 +719,30 @@ describe('the session on the relay', () => {
     await clock.advance(ACTIVE_POLL_MS)
     await clock.advance(ACTIVE_POLL_MS)
     expect(acked.find(x => x.id === 'm2')).toMatchObject({ ok: false })
+  })
+
+  // A suggested merge reaches the phone too: the snapshot carries it, and the phone merges or dismisses it.
+  test('the phone sees a suggested merge, and merges or dismisses it', OPTIONS, async ($, on) => {
+    on('model.complete', async (_$, e) => {
+      const text = e.system === SUGGEST_SYSTEM ? '{"into":"launch","from":["badges","relay"]}' : '[]'
+      return { value: { isAnswered: true, text, usage: { inputTokens: 0, outputTokens: 0 } } } as never
+    })
+    const { a, relay, clock, acked, seen } = await withPhone($, on)
+    for (const id of ['launch', 'badges', 'relay', 'site', 'docs']) await $.prompt.submit({ text: `#${id} work on ${id}`, wait: false, origin: { kind: 'composer' } })
+    await clock.advance(SUGGEST_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.suggestion).toEqual({ into: 'launch', from: ['badges', 'relay'] })
+    relay.from(a, a.command({ id: 's1', kind: 'acceptSuggestion' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 's1')).toMatchObject({ ok: true })
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.streams.map(s => s.id).sort()).toEqual(['docs', 'launch', 'site'])
+    expect(seen.at(-1)!.suggestion).toBe(undefined)
+    relay.from(a, a.command({ id: 's2', kind: 'dismissSuggestion' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 's2')).toMatchObject({ ok: false })
   })
 
   test('a swipe on a ticket hides it from the card, here and on the computer', OPTIONS, async ($, on) => {

@@ -4,7 +4,8 @@ import type { EngineInterface, On, RenderElement } from 'claude-code'
 import type { ChatStyle, Stream } from '../../types'
 import { PANE, PANE_KEY, savedOf, mem, storeKey, type PaneSaved, type Saved } from '../state'
 import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, rowKey, type Fold } from '../classify'
-import { merged, undone } from '../streams/merge'
+import { merged, mergedAll, undone } from '../streams/merge'
+import { suggestionKey } from '../streams/suggest'
 import { colorOf, streamsNow, type Facts } from '../streams/model'
 import { foldQuiet, lapsed } from '../streams/loops'
 import { idleOf } from '../streams/archive'
@@ -40,6 +41,8 @@ const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 const updatingA = atom({ plugin: 'streams', key: 'updating' } as const, false)
 const mergingFromA = atom({ plugin: 'streams', key: 'mergingFrom' } as const, '')
+const suggestionA = atom({ plugin: 'streams', key: 'mergeSuggestion' } as const, null)
+const dismissedA = atom({ plugin: 'streams', key: 'mergeDismissed' } as const, [])
 const mergesA = atom({ plugin: 'streams', key: 'merges' } as const, [])
 const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
 
@@ -95,12 +98,16 @@ async function setArchived($: $, id: string, archived: boolean) {
   await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
 }
 
-/** ⇣ after ⇢, or ↶: a merge or its undo (streams/merge.ts), written here as /stream merge writes it in routing.ts. */
-async function paneMerge($: $, from: string, into: string) {
+/**
+ * ⇣ after ⇢, a suggested merge's `merge` (several streams), or ↶ (no `from`): a merge or its undo (streams/merge.ts),
+ * written here as /stream merge writes it in routing.ts.
+ */
+async function paneMerge($: $, from: string | readonly string[], into: string) {
   await update($, mergingFromA, () => '')
+  await update($, suggestionA, () => null)
   const [streams, rows, agentStream, agents, merges, loops] = await Promise.all([read($, streamsA), read($, rowsA), read($, agentStreamA), read($, agentsA), read($, mergesA), read($, loopsA)])
   const state = { streams, rows, agentStream, agents, merges }
-  const r = from ? merged(state, from, into, Object.keys(loops)) : undone(state)
+  const r = typeof from !== 'string' ? mergedAll(state, from, into, Object.keys(loops)) : from ? merged(state, from, into, Object.keys(loops)) : undone(state)
   if (typeof r === 'string') return void $.ui.toast(r)
   await update($, streamsA, () => [...r.streams])
   await update($, rowsA, () => [...r.rows])
@@ -192,7 +199,7 @@ export function wirePane(on: On) {
             onPress={() => update($, chatStyleA, () => st)}
           />
         ))
-      const [mergingFrom, merges] = await Promise.all([read($, mergingFromA), read($, mergesA)])
+      const [mergingFrom, merges, suggestion] = await Promise.all([read($, mergingFromA), read($, mergesA), read($, suggestionA)])
       // ⇢ picks a stream to merge; ⇣ on another merges it there; ⇢ again cancels (streams/merge.ts).
       const mergeButton = (s: Stream) =>
         s.archived ? null : !mergingFrom ? (
@@ -326,6 +333,22 @@ export function wirePane(on: On) {
             {focus ? <Button key="unfocus" plain dimColor label="show all" onPress={() => focusOn($, '')} /> : null}
             {hideButton}
           </Box>
+          {suggestion ? (
+            <Box gap={1}>
+              <Text dimColor>these look like one goal:</Text>
+              <Button key="suggest-merge" plain label={`merge ${suggestion.from.join(', ')} → ${suggestion.into}`} onPress={() => paneMerge($, suggestion.from, suggestion.into)} />
+              <Button
+                key="suggest-dismiss"
+                plain
+                dimColor
+                label="dismiss"
+                onPress={async () => {
+                  await update($, dismissedA, list => [...list, suggestionKey(suggestion)].slice(-50))
+                  await update($, suggestionA, () => null)
+                }}
+              />
+            </Box>
+          ) : null}
           {mergingFrom ? (
             <Box gap={1}>
               <Text bold>{`merging ${mergingFrom}: press ⇣ on the stream to keep`}</Text>

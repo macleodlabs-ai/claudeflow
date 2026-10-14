@@ -158,6 +158,10 @@ declare module 'claude-code' {
       workflows: Record<string, Workflow>
       /** The completion check's verdicts, by stream id (`completionCheck`). */
       verdicts: Record<string, Verdict>
+      /** A merge the heartbeat suggests (streams/suggest.ts), until merged or dismissed; null when none. */
+      mergeSuggestion: { into: string; from: string[] } | null
+      /** Suggested merges the person dismissed this session (suggestionKey), never offered again. */
+      mergeDismissed: string[]
       /** The stream the pane's ⇢ picked to merge, while a ⇣ on the stream to keep is awaited; '' when none. */
       mergingFrom: string
       /** Merges done this session, newest last, for `/stream undo` (streams/routing.ts). */

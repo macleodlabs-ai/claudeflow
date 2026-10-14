@@ -4,7 +4,8 @@ import type { EngineInterface, On } from 'claude-code'
 import { hiddenOf, hiddenTicketsKey, keepRows, savedOf, mem, storeKey, type Saved } from '../state'
 import { gitStatus } from '../status'
 import { afterCall } from '../streams/loops'
-import { merged, undone } from '../streams/merge'
+import { merged, mergedAll, undone } from '../streams/merge'
+import { suggestionKey } from '../streams/suggest'
 import { rowKey } from '../classify'
 import { cardOf, colorOf, streamsNow, type Facts } from '../streams/model'
 import { DAY_MS, INVITE_MS, PAIRING_MS, SHARE_DAYS, createLink, devicesOf, envLine, identityOf, invitesOf, originOf, pairingOf, roleOf, withPaired, KEPT_MARGIN, RETRY_WHY, type Device, type KeptConn, type Link, type PendingPair } from './link'
@@ -43,6 +44,8 @@ const currentA = atom({ plugin: 'streams', key: 'current' } as const, '')
 const rowsA = atom({ plugin: 'streams', key: 'rows' } as const, [])
 const mergesA = atom({ plugin: 'streams', key: 'merges' } as const, [])
 const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
+const suggestionA = atom({ plugin: 'streams', key: 'mergeSuggestion' } as const, null)
+const dismissedA = atom({ plugin: 'streams', key: 'mergeDismissed' } as const, [])
 const sourcesA = atom({ plugin: 'streams', key: 'sources' } as const, { since: 0, files: [] as string[] })
 const busyA = atom({ plugin: 'streams', key: 'busy' } as const, false)
 const agentsA = atom({ plugin: 'streams', key: 'agents' } as const, {})
@@ -493,6 +496,7 @@ async function snapshotNow($: $, session: Snapshot['session']): Promise<Snapshot
     now,
     archived: streams.filter(s => s.archived).slice(-30).map(s => ({ id: s.id, name: s.name, color: colorOf(s) })),
     merged: await read($, mergesA).then(m => (m.length ? { stream: m.at(-1)!.stream.id, into: m.at(-1)!.into } : undefined)),
+    suggestion: (await read($, suggestionA)) ?? undefined,
   })
 }
 
@@ -802,10 +806,20 @@ async function phoneCommand($: $, c: PhoneCommand): Promise<Omit<Ack, 't' | 'id'
   }
   // A drag on the phone merges one stream into another; Undo reverses the last merge (streams/merge.ts), as
   // /stream merge and /stream undo do. $ calls stay in this file, at the call site.
-  if (c.kind === 'merge' || c.kind === 'undoMerge') {
-    const [streams, rows, agentStream, agents, merges, loops] = await Promise.all([read($, streamsA), read($, rowsA), read($, agentStreamA), read($, agentsA), read($, mergesA), read($, loopsA)])
+  if (c.kind === 'dismissSuggestion') {
+    const s = await read($, suggestionA)
+    if (!s) return { ok: false }
+    await update($, dismissedA, list => [...list, suggestionKey(s)].slice(-50))
+    await update($, suggestionA, () => null)
+    return { ok: true }
+  }
+  if (c.kind === 'merge' || c.kind === 'undoMerge' || c.kind === 'acceptSuggestion') {
+    const [streams, rows, agentStream, agents, merges, loops, suggestion] = await Promise.all([read($, streamsA), read($, rowsA), read($, agentStreamA), read($, agentsA), read($, mergesA), read($, loopsA), read($, suggestionA)])
     const state = { streams, rows, agentStream, agents, merges }
-    const r = c.kind === 'merge' ? merged(state, c.streamId, c.into, Object.keys(loops)) : undone(state)
+    if (c.kind === 'acceptSuggestion' && !suggestion) return { ok: false }
+    if (c.kind === 'acceptSuggestion') await update($, suggestionA, () => null)
+    const r =
+      c.kind === 'acceptSuggestion' ? mergedAll(state, suggestion!.from, suggestion!.into, Object.keys(loops)) : c.kind === 'merge' ? merged(state, c.streamId, c.into, Object.keys(loops)) : undone(state)
     if (typeof r === 'string') return { ok: false, ...(r.startsWith('No stream') ? { why: 'no such stream' as const } : {}) }
     await update($, streamsA, () => [...r.streams])
     await update($, rowsA, () => [...r.rows])
