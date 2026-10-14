@@ -183,7 +183,7 @@ declare module 'claude-code' {
       /** What the session answered for the person (a recommended option nobody chose), shown in the band until `until`. */
       remoteNote: { text: string; until: number }
       /** Devices that typed the pairing code, waiting for /streams phone approve or deny, until the pairing ends. */
-      pairAsk: { asks: { id: string; label: string; env?: { os?: string; browser?: string; app?: string; home?: boolean } }[]; until: number }
+      pairAsk: { asks: { id: string; label: string; fingerprint: string; env?: { os?: string; browser?: string; app?: string; home?: boolean } }[]; until: number }
       /** This mod's version, from its plugin.json, for the status card. */
       version: { v: string }
       /** The welcome above the prompt, once after installing, until the first prompt (`remote`: offer Streams Remote). */

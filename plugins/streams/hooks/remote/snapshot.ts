@@ -16,7 +16,8 @@ const RECENT_ROW_CHARS = 2_500
 
 /** A subagent's card. Its start and end, not its running time: a running clock would make every snapshot news. */
 export type PhoneAgent = { id: string; description: string; status: AgentRun['status']; tools: number; startedAt: number; endedAt?: number; last: string }
-export type PhoneRow = { kind: StreamRow['kind']; text: string; at: number }
+/** `shell`: a `!` command run from a phone, or what it printed (remote/index.tsx): never sent to a guest. */
+export type PhoneRow = { kind: StreamRow['kind']; text: string; at: number; shell?: true }
 export type PhoneStream = {
   id: string
   name: string
@@ -90,13 +91,25 @@ export type Summary = { workflows: number; agentsRunning: number; failures: numb
  * raised (epoch ms). It has no deadline: it waits until the phone or the Mac answers, or no device has looked for
  * NO_DEVICE_MS. `at` is `since` again, for apps from before `since`.
  */
-export type PendingPermission = { id: string; tool: string; summary: string; at: number; since?: number }
+export type PendingPermission = { id: string; tool: string; summary: string; at: number; since?: number } & Held & {
+  /** Why: the tool's own `description` (Bash, Task), else what Claude said in this turn; one line, ≤200. */
+  why?: string
+  /** The fuller request, plain text, ≤1,500 (permissionDetail). */
+  detail?: string
+}
+
+/**
+ * Where a held prompt or question comes from, for a phone that sees several sessions and streams: `stream` the call
+ * is filed in (absent when the session cannot tell), `agent` the subagent's description when a subagent made it
+ * (≤80, one line), `project` the session's folder name.
+ */
+export type Held = { stream?: { id: string; name: string }; agent?: string; project?: string }
 
 /**
  * One of Claude's questions with options, held for an answer like a permission. The option whose label ends in
  * "(Recommended)" is the one taken when nobody answers (NO_DEVICE_MS).
  */
-export type PendingQuestion = { id: string; question: string; header: string; options: { label: string; description?: string; isRecommended: boolean }[]; since: number }
+export type PendingQuestion = { id: string; question: string; header: string; options: { label: string; description?: string; isRecommended: boolean }[]; since: number } & Held
 
 /** How a held prompt or question ended. `label`: the option chosen, for a question. */
 export type Settled = { id: string; why: AckWhy; label?: string; at: number }
@@ -210,6 +223,70 @@ export const permissionSummary = (tool: string, input: unknown): string => {
   return oneLine(`${tool}: ${text}`, 300)
 }
 
+/** The longest detail a held permission carries. */
+export const DETAIL_CHARS = 1_500
+const ESCAPES = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]/g
+/** Plain text over lines: no terminal escapes or control characters, at most `n` characters. */
+const clip = (text: string, n: number): string => {
+  const t = text.replace(ESCAPES, '').trim()
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t
+}
+
+/** What a tool call asks to do, in full (as `clip` allows): a command, a file and its change, a URL and its question. */
+export const permissionDetail = (tool: string, input: unknown): string => {
+  const i = (input ?? {}) as Record<string, unknown>
+  const s = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const change = (o: unknown, n: unknown) => `- ${oneLine(s(o), 200)}\n+ ${oneLine(s(n), 200)}`
+  const edits = Array.isArray(i.edits) ? (i.edits as Record<string, unknown>[]).slice(0, 3) : []
+  const lines = s(i.content).split('\n')
+  const text =
+    tool === 'Bash' ? s(i.command)
+    : tool === 'Edit' ? `${s(i.file_path)}\n${change(i.old_string, i.new_string)}`
+    : tool === 'MultiEdit' ? [s(i.file_path), ...edits.map(e => change(e?.old_string, e?.new_string))].join('\n')
+    : tool === 'Write' ? [s(i.file_path), ...lines.slice(0, 10), ...(lines.length > 10 ? ['…'] : [])].join('\n')
+    : tool === 'WebFetch' ? [s(i.url), s(i.prompt)].filter(Boolean).join('\n')
+    : tool === 'Read' || tool === 'NotebookEdit' ? s(i.file_path) || s(i.notebook_path)
+    : tool === 'Glob' || tool === 'Grep' ? `${s(i.pattern)}${s(i.path) ? ` in ${s(i.path)}` : ''}`
+    : tool.startsWith('mcp__') ? `${tool} ${JSON.stringify(input ?? {})}`
+    : JSON.stringify(input ?? {})
+  return clip(text, DETAIL_CHARS)
+}
+
+/** What the session knows that places a held call: its streams, rows and agents, and the stream current now. */
+export type HeldFacts = {
+  /** The subagent that made the call, when one did (PermissionRequest `agent_id`, tool.call `agentId`). */
+  agentId?: string
+  agentStream: Readonly<Record<string, string>>
+  agents: Readonly<Record<string, AgentRun>>
+  current: string
+  streams: readonly Stream[]
+  rows: readonly StreamRow[]
+  project?: string
+}
+
+/**
+ * Where a held call comes from (Held), why (`why`) and what it asks (`detail`). A subagent's call is in the stream
+ * that agent was filed in; the main turn's in the current stream; an agent never filed has none (no guess). The
+ * reason is the tool's `description`, else the latest reply since the last prompt in that stream (that agent's own).
+ */
+export function heldOf(tool: string, input: unknown, f: HeldFacts): Held & { why?: string; detail?: string } {
+  const sid = f.agentId ? f.agentStream[f.agentId] : f.current
+  const st = sid ? f.streams.find(x => x.id === sid) : undefined
+  const agent = f.agentId && st ? f.agents[f.agentId]?.description : undefined
+  const mine = st ? f.rows.filter(r => r.streamId === st.id && (f.agentId ? r.agentId === f.agentId : !r.agentId)) : []
+  const lastPrompt = mine.findLastIndex(r => r.kind === 'prompt')
+  const said = mine.slice(lastPrompt + 1).findLast(r => r.kind === 'reply')?.text
+  const description = (input as { description?: unknown } | undefined)?.description
+  const why = typeof description === 'string' && description.trim() ? description : said
+  return {
+    ...(st ? { stream: { id: st.id, name: oneLine(st.name, 80) } } : {}),
+    ...(agent ? { agent: oneLine(agent, 80) } : {}),
+    ...(f.project ? { project: oneLine(f.project, 80) } : {}),
+    ...(why && oneLine(why, 200) ? { why: oneLine(why, 200) } : {}),
+    detail: permissionDetail(tool, input),
+  }
+}
+
 /** A task or stream id as the session makes them: short, no spaces, no markup. */
 const isId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,80}$/.test(v)
 
@@ -307,6 +384,25 @@ export type SnapshotInput = {
 /** The account a session runs as: the last folder of its config dir (`~/.claude-clients/macleod` is macleod). */
 export const accountOf = (configDir: string): string => configDir.replace(/\/+$/, '').split('/').pop() || 'default'
 
+/** A row of a `!` command run from a phone, or of its output (remote/index.tsx `sh:`, `sho:`). */
+export const isShellRow = (id: string): boolean => /^sho?:/.test(id)
+
+/**
+ * A snapshot as a guest's device gets it: no `!` command or its output, a permission prompt's tool and not what it
+ * would run (a command's text carries tokens, hosts and paths), and every row at the short length, recent replies
+ * included.
+ */
+export function forGuest(s: Snapshot): Snapshot {
+  return {
+    ...s,
+    permissions: s.permissions.map(({ why: _why, detail: _detail, ...p }) => ({ ...p, summary: p.tool })),
+    streams: s.streams.map(st => ({
+      ...st,
+      rows: st.rows.filter(r => !r.shell).map(r => (r.text.length > ROW_CHARS + 1 ? { ...r, text: `${r.text.slice(0, ROW_CHARS)}…` } : r)),
+    })),
+  }
+}
+
 /** The streams in status order, each with its live agents and latest rows; code bodies stay on the Mac. */
 export function snapshotOf(x: SnapshotInput): Snapshot {
   const streams = x.lines.flatMap(l => {
@@ -344,7 +440,7 @@ export function snapshotOf(x: SnapshotInput): Snapshot {
         .slice(-PHONE_ROWS)
         .map((r, i, all) => {
           const max = i >= all.length - RECENT_ROWS ? RECENT_ROW_CHARS : ROW_CHARS
-          return { kind: r.kind, text: r.text.length > max ? `${r.text.slice(0, max)}…` : r.text, at: r.at }
+          return { kind: r.kind, text: r.text.length > max ? `${r.text.slice(0, max)}…` : r.text, at: r.at, ...(isShellRow(r.id) ? { shell: true as const } : {}) }
         }),
     }
     return [card]

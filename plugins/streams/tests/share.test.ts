@@ -174,10 +174,11 @@ describe('sharing a project', () => {
     expect([...acksTo(got.read, friend.id), ...acksTo(later.read, friend.id)]).toContainEqual(expect.objectContaining({ id: 'c1', ok: false, why: 'read only' }))
   })
 
-  test('a contributor acts as the owner does in the project, permissions included, but cannot share it further', () => {
+  test('a contributor prompts and may deny a permission, but cannot allow one (the owner\'s consent) or share it further', () => {
     const { owner, friend, relay, link, first } = shared('contributor')
     const devices = [owner.stored(), first.paired.find(d => d.id === friend.id)!]
-    relay.from(friend, friend.command({ id: 'c1', kind: 'permission', requestId: 'toolu_1', decision: 'allow' }))
+    relay.from(friend, friend.command({ id: 'c0', kind: 'permission', requestId: 'toolu_1', decision: 'allow' }))
+    relay.from(friend, friend.command({ id: 'c1', kind: 'permission', requestId: 'toolu_1', decision: 'deny' }))
     relay.from(friend, friend.command({ id: 'c2', kind: 'invite', role: 'contributor' }))
     const got = cycle(link, relay, { devices, now: T0 + 1000 })
     expect(got.commands.map(c => c.command.id)).toEqual(['c1'])

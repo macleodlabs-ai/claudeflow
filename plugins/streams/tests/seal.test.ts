@@ -28,10 +28,10 @@ function connect(sessionPk = '', devicePk = '') {
   const sessionNonce = randomId(32)
   const deviceNonce = randomId(32)
   const atSession = connectionKeys({
-    ownSk: session.sk, peerPk: devicePk || device.pk, ownEphSk: sEph.sk, peerEphPk: dEph.pk, sessionNonce, deviceNonce,
+    ownSk: session.sk, peerPk: devicePk || device.pk, ownEphSk: sEph.sk, peerEphPk: dEph.pk, sessionNonce, deviceNonce, session: 'sess-1',
   })
   const atDevice = connectionKeys({
-    ownSk: device.sk, peerPk: sessionPk || session.pk, ownEphSk: dEph.sk, peerEphPk: sEph.pk, sessionNonce, deviceNonce,
+    ownSk: device.sk, peerPk: sessionPk || session.pk, ownEphSk: dEph.sk, peerEphPk: sEph.pk, sessionNonce, deviceNonce, session: 'sess-1',
   })
   return {
     session: channel(atSession.sessionToDevice, atSession.deviceToSession),

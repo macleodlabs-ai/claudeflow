@@ -154,3 +154,10 @@ export const hiddenTicketsKey = (cwd: string) => `hiddenTickets:${cwd}`
 /** A stored hidden-tickets record, or none. */
 export const hiddenOf = (v: unknown): Record<string, number> =>
   v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => typeof e[1] === 'number')) : {}
+
+/** The most tickets a project keeps hidden: the newest, so hiding one now and then never grows the store for ever. */
+export const MAX_HIDDEN_TICKETS = 200
+
+/** A hidden-tickets record with `ticket` hidden at `now`, keeping the newest MAX_HIDDEN_TICKETS. */
+export const withHidden = (hidden: Record<string, number>, ticket: string, now: number): Record<string, number> =>
+  Object.fromEntries(Object.entries({ ...hidden, [ticket]: now }).sort((a, b) => b[1] - a[1]).slice(0, MAX_HIDDEN_TICKETS))
