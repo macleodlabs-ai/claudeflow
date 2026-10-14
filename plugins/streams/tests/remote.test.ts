@@ -694,6 +694,32 @@ describe('the session on the relay', () => {
     expect(seen.at(-1)!.session.version).toBe('9.8.7')
   })
 
+  // Streams that are one goal are merged from the phone too (a drag onto the stream to keep), and a mistaken merge is
+  // undone there: the snapshot names the last merge, so the phone can offer Undo.
+  test('the phone merges one stream into another and undoes it', OPTIONS, async ($, on) => {
+    const { a, relay, clock, acked, seen } = await withPhone($, on)
+    await $.prompt.submit({ text: '#launch ship the relay', wait: false, origin: { kind: 'composer' } })
+    await $.prompt.submit({ text: '#badges fix the README badges', wait: false, origin: { kind: 'composer' } })
+    relay.from(a, a.command({ id: 'm1', kind: 'merge', streamId: 'badges', into: 'launch' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'm1')).toMatchObject({ ok: true })
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.streams.map(s => s.id)).toEqual(['launch'])
+    expect(seen.at(-1)!.merged).toEqual({ stream: 'badges', into: 'launch' })
+    relay.from(a, a.command({ id: 'u1', kind: 'undoMerge' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'u1')).toMatchObject({ ok: true })
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(seen.at(-1)!.streams.map(s => s.id).sort()).toEqual(['badges', 'launch'])
+    expect(seen.at(-1)!.merged).toBe(undefined)
+    relay.from(a, a.command({ id: 'm2', kind: 'merge', streamId: 'nope', into: 'launch' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(acked.find(x => x.id === 'm2')).toMatchObject({ ok: false })
+  })
+
   test('a swipe on a ticket hides it from the card, here and on the computer', OPTIONS, async ($, on) => {
     const { a, relay, clock, acked, kept } = await withPhone($, on)
     relay.from(a, a.command({ id: 'c1', kind: 'hideTicket', ticket: 'APP-260' }))

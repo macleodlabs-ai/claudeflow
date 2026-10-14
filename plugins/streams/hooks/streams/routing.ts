@@ -5,6 +5,7 @@ import type { Stream } from '../../types'
 import { keepRows, savedOf, mem, storeKey, type Saved } from '../state'
 import { buildPrompt, systemFor, type Grouping, fallbackName, isFollowUp, loopKey, oneLine, parseTag, parseVerdict, rowKey, slug, textKey } from '../classify'
 import { colorOf, streamsNow, touched, uuidOf, withStream, type Facts } from './model'
+import { merged, undone, type MergeResult, type MergeState } from './merge'
 import { afterNotification, loopsAt } from './loops'
 
 // Which stream a prompt belongs to: by #tag, a loop's own stream, the task that sent a notice, or Haiku's
@@ -140,63 +141,25 @@ async function moveLast($: $, name: string): Promise<string> {
   return `Moved the last prompt and ${moving.length - 1} row${moving.length === 2 ? '' : 's'} after it from ${from} to ${to}.`
 }
 
-/**
- * `/stream merge <from> <into>`: every row of `from`, its transcript lines and its agents, filed under `into`, and
- * `from` taken off the list. The pane's and the phone's merge run this command. `/stream undo` reverses it.
- */
-async function mergeStreams($: $, fromName: string, intoName: string): Promise<string> {
-  const streams = await read($, streamsA)
-  const find = (n: string) => streams.find(s => s.id === slug(n) || s.name.toLowerCase() === n.trim().toLowerCase())
-  const from = find(fromName)
-  const into = find(intoName)
-  if (!from) return `No stream named ${fromName}.`
-  if (!into) return `No stream named ${intoName}.`
-  if (from.id === into.id) return 'A stream cannot merge into itself.'
-  if ((await read($, loopsA))[from.id]) return `${from.id} has a loop running: stop it first.`
-  const rows = (await read($, rowsA)).filter(r => r.streamId === from.id)
-  const agentIds = Object.entries(await read($, agentStreamA)).flatMap(([a, sid]) => (sid === from.id ? [a] : []))
-  await update($, rowsA, list => list.map(r => (r.streamId === from.id ? { ...r, streamId: into.id } : r)))
-  await Promise.all(
-    rows.flatMap(r => [fileAs($, uuidOf(r), into.id), ...(r.toolId ? [fileAs($, r.toolId, into.id)] : []), ...(r.kind === 'reply' ? [fileAs($, textKey(r.text), into.id)] : [])]),
-  )
-  if (agentIds.length) await update($, agentStreamA, m => ({ ...m, ...Object.fromEntries(agentIds.map(a => [a, into.id])) }))
-  await update($, agentsA, m => Object.fromEntries(Object.entries(m).map(([k, a]) => [k, a.streamId === from.id ? { ...a, streamId: into.id } : a])))
-  await update($, streamsA, list =>
-    list
-      .filter(s => s.id !== from.id)
-      .map(s => (s.id === into.id ? { ...s, rows: s.rows + rows.length, agents: s.agents + from.agents, lastAt: Math.max(s.lastAt, from.lastAt), archived: false } : s)),
-  )
-  if ((await read($, currentA)) === from.id) await update($, currentA, () => into.id)
-  if ((await read($, focusA)) === from.id) await update($, focusA, () => into.id)
-  if ((await read($, viewA)) === from.id) await update($, viewA, () => into.id)
-  await update($, mergesA, list => [...list.slice(-19), { stream: from, into: into.id, rows: rows.map(r => r.id), agents: agentIds }])
+/** Writes what a merge or its undo made (streams/merge.ts): state, transcript lines, the stream in view, and the save. */
+async function applyMerge($: $, r: MergeResult) {
+  await update($, streamsA, () => [...r.streams])
+  await update($, rowsA, () => [...r.rows])
+  await update($, agentStreamA, () => ({ ...r.agentStream }))
+  await update($, agentsA, () => ({ ...r.agents }))
+  await update($, mergesA, () => [...r.merges])
+  await Promise.all(r.files.map(f => fileAs($, f.key, f.streamId)))
+  if ((await read($, currentA)) === r.from) await update($, currentA, () => r.to)
+  if ((await read($, focusA)) === r.from) await update($, focusA, () => r.to)
+  if ((await read($, viewA)) === r.from) await update($, viewA, () => r.to)
   await paintStreams($)
   await save($)
-  return `Merged ${from.id} into ${into.id} (${rows.length} row${rows.length === 1 ? '' : 's'}). /stream undo puts it back.`
 }
 
-/** `/stream undo`: the last merge reversed: the stream back on the list, with exactly the rows and agents that left it. */
-async function undoMerge($: $): Promise<string> {
-  const last = (await read($, mergesA)).at(-1)
-  if (!last) return 'Nothing to undo.'
-  const back = last.stream.id
-  const ids = new Set(last.rows)
-  const agents = new Set(last.agents)
-  const rows = (await read($, rowsA)).filter(r => ids.has(r.id))
-  await update($, rowsA, list => list.map(r => (ids.has(r.id) ? { ...r, streamId: back } : r)))
-  await Promise.all(
-    rows.flatMap(r => [fileAs($, uuidOf(r), back), ...(r.toolId ? [fileAs($, r.toolId, back)] : []), ...(r.kind === 'reply' ? [fileAs($, textKey(r.text), back)] : [])]),
-  )
-  if (agents.size) await update($, agentStreamA, m => ({ ...m, ...Object.fromEntries([...agents].map(a => [a, back])) }))
-  await update($, agentsA, m => Object.fromEntries(Object.entries(m).map(([k, a]) => [k, agents.has(k) ? { ...a, streamId: back } : a])))
-  await update($, streamsA, list => [
-    ...list.map(s => (s.id === last.into ? { ...s, rows: Math.max(0, s.rows - rows.length), agents: Math.max(0, s.agents - last.stream.agents) } : s)),
-    ...(list.some(s => s.id === back) ? [] : [last.stream]),
-  ])
-  await update($, mergesA, list => list.slice(0, -1))
-  await paintStreams($)
-  await save($)
-  return `Undid the merge: ${back} is back with its ${rows.length} row${rows.length === 1 ? '' : 's'}.`
+/** The state a merge reads. */
+async function mergeState($: $): Promise<MergeState> {
+  const [streams, rows, agentStream, agents, merges] = await Promise.all([read($, streamsA), read($, rowsA), read($, agentStreamA), read($, agentsA), read($, mergesA)])
+  return { streams, rows, agentStream, agents, merges }
 }
 
 /** The `streamGrouping` setting, as register.tsx read it. */
@@ -216,10 +179,15 @@ export function wireRouting(on: On, opts: { grouping?: Grouping } = {}) {
     }
     const move = /^move\s+(.+)$/.exec(arg)
     if (move?.[1]) return { text: await moveLast($, move[1]) }
-    if (arg === 'undo') return { text: await undoMerge($) }
-    if (/^merge\b/.test(arg)) {
+    // `/stream merge <from> <into>` folds a stream into another; `/stream undo` puts the last merge back (merge.ts).
+    if (arg === 'undo' || /^merge\b/.test(arg)) {
       const [, from, into] = arg.split(/\s+/)
-      return { text: from && into ? await mergeStreams($, from, into) : 'Usage: /stream merge <stream> <into stream>' }
+      if (arg !== 'undo' && !(from && into)) return { text: 'Usage: /stream merge <stream> <into stream>' }
+      const state = await mergeState($)
+      const r = arg === 'undo' ? undone(state) : merged(state, from!, into!, Object.keys(await read($, loopsA)))
+      if (typeof r === 'string') return { text: r }
+      await applyMerge($, r)
+      return { text: r.text }
     }
     const id = await ensureStream($, arg, '')
     await update($, currentA, () => id)
