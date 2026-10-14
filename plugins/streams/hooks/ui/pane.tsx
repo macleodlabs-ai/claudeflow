@@ -3,7 +3,8 @@ import type { EngineInterface, On, RenderElement } from 'claude-code'
 
 import type { ChatStyle, Stream } from '../../types'
 import { PANE, PANE_KEY, savedOf, mem, storeKey, type PaneSaved, type Saved } from '../state'
-import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, type Fold } from '../classify'
+import { FOLD_LABEL, HEALTH_GLYPH, HEALTH_TEXT, NEXT_FOLD, ago, oneLine, rowKey, type Fold } from '../classify'
+import { merged, undone } from '../streams/merge'
 import { colorOf, streamsNow, type Facts } from '../streams/model'
 import { foldQuiet, lapsed } from '../streams/loops'
 import { idleOf } from '../streams/archive'
@@ -38,6 +39,9 @@ const importProgressA = atom({ plugin: 'streams', key: 'importProgress' } as con
 const paneCollapsedA = atom({ plugin: 'streams', key: 'paneCollapsed' } as const, false)
 const updatesA = atom({ plugin: 'streams', key: 'updates' } as const, [])
 const updatingA = atom({ plugin: 'streams', key: 'updating' } as const, false)
+const mergingFromA = atom({ plugin: 'streams', key: 'mergingFrom' } as const, '')
+const mergesA = atom({ plugin: 'streams', key: 'merges' } as const, [])
+const agentStreamA = atom({ plugin: 'streams', key: 'agentStream' } as const, {})
 
 type PaneRender = Parameters<$['ui']['resolve']>[0] & {
   props: { bodyColumns: number; placement: string; scroll?: { offset: number; bodyRows: number } }
@@ -89,6 +93,27 @@ async function setArchived($: $, id: string, archived: boolean) {
   }
   const [cwd, streams, rows, loopStream] = await Promise.all([$.session.cwd(), read($, streamsA), read($, rowsA), read($, loopStreamA)])
   await $.store.set(storeKey(cwd), savedOf(streams, rows, loopStream, await read($, sourcesA)))
+}
+
+/** ⇣ after ⇢, or ↶: a merge or its undo (streams/merge.ts), written here as /stream merge writes it in routing.ts. */
+async function paneMerge($: $, from: string, into: string) {
+  await update($, mergingFromA, () => '')
+  const [streams, rows, agentStream, agents, merges, loops] = await Promise.all([read($, streamsA), read($, rowsA), read($, agentStreamA), read($, agentsA), read($, mergesA), read($, loopsA)])
+  const state = { streams, rows, agentStream, agents, merges }
+  const r = from ? merged(state, from, into, Object.keys(loops)) : undone(state)
+  if (typeof r === 'string') return void $.ui.toast(r)
+  await update($, streamsA, () => [...r.streams])
+  await update($, rowsA, () => [...r.rows])
+  await update($, agentStreamA, () => ({ ...r.agentStream }))
+  await update($, agentsA, () => ({ ...r.agents }))
+  await update($, mergesA, () => [...r.merges])
+  await Promise.all(r.files.map(f => $.state.set({ plugin: 'streams', key: 'rowStream', id: rowKey(f.key) }, f.streamId)))
+  if ((await read($, currentA)) === r.from) await update($, currentA, () => r.to)
+  if ((await read($, focusA)) === r.from) await update($, focusA, () => r.to)
+  if ((await read($, viewA)) === r.from) await update($, viewA, () => r.to)
+  const [cwd, loopStream] = await Promise.all([$.session.cwd(), read($, loopStreamA)])
+  await $.store.set(storeKey(cwd), savedOf([...r.streams], [...r.rows], loopStream, await read($, sourcesA)))
+  $.ui.toast(r.text)
 }
 
 /** `✕ idle`: archives these streams at once, as their ✕ would one by one. */
@@ -167,6 +192,16 @@ export function wirePane(on: On) {
             onPress={() => update($, chatStyleA, () => st)}
           />
         ))
+      const [mergingFrom, merges] = await Promise.all([read($, mergingFromA), read($, mergesA)])
+      // ⇢ picks a stream to merge; ⇣ on another merges it there; ⇢ again cancels (streams/merge.ts).
+      const mergeButton = (s: Stream) =>
+        s.archived ? null : !mergingFrom ? (
+          <Button key={`merge:${s.id}`} plain dimColor label="⇢" onPress={() => update($, mergingFromA, () => s.id)} />
+        ) : mergingFrom === s.id ? (
+          <Button key={`merge:${s.id}`} plain label="⇢" onPress={() => update($, mergingFromA, () => '')} />
+        ) : (
+          <Button key={`into:${s.id}`} plain label="⇣" onPress={() => paneMerge($, mergingFrom, s.id)} />
+        )
       const archiveButton = (s: Stream) =>
         s.archived ? (
           <Button key={`restore:${s.id}`} plain dimColor label="restore" onPress={() => setArchived($, s.id, false)} />
@@ -237,15 +272,16 @@ export function wirePane(on: On) {
                 plain
                 dimColor={isArchived}
                 hover={{ color: colorOf(s), bold: true }}
-                // The header keeps one line at any width: fold, full/compact and ✕ take 24 columns plus the fold label,
+                // The header keeps one line at any width: fold, full/compact, ⇢ and ✕ take 26 columns plus the fold label,
                 // and the name gives way first.
-                label={isArchived ? `${s.name}${focus === s.id ? ' ◉' : ''}` : oneLine(`${s.name}${focus === s.id ? ' ◉' : ''}`, Math.max(6, width - 24 - FOLD_LABEL[f].length))}
+                label={isArchived ? `${s.name}${focus === s.id ? ' ◉' : ''}` : oneLine(`${s.name}${focus === s.id ? ' ◉' : ''}`, Math.max(6, width - 26 - FOLD_LABEL[f].length))}
                 onPress={() => openStream($, s.id)}
               />
               {isArchived ? null : (
                 <Button key={`fold:${s.id}`} plain dimColor label={FOLD_LABEL[f]} onPress={() => update($, foldA, m => ({ ...m, [s.id]: NEXT_FOLD[f] }))} />
               )}
               {isArchived ? null : styleButtons(st => `style:${s.id}:${st}`, s.id === active[0]?.id)}
+              {mergeButton(s)}
               {archiveButton(s)}
             </Box>
             <Text wrap="truncate">
@@ -290,7 +326,14 @@ export function wirePane(on: On) {
             {focus ? <Button key="unfocus" plain dimColor label="show all" onPress={() => focusOn($, '')} /> : null}
             {hideButton}
           </Box>
+          {mergingFrom ? (
+            <Box gap={1}>
+              <Text bold>{`merging ${mergingFrom}: press ⇣ on the stream to keep`}</Text>
+              <Button key="merge-cancel" plain dimColor label="cancel" onPress={() => update($, mergingFromA, () => '')} />
+            </Box>
+          ) : null}
           <Box gap={1}>
+            {merges.length ? <Button key="undo-merge" plain dimColor label={`↶ undo merge (${merges.at(-1)!.stream.id})`} onPress={() => paneMerge($, '', '')} /> : null}
             <Button key="fold-all" plain dimColor label="collapse all" onPress={() => update($, foldA, () => Object.fromEntries(active.map(s => [s.id, 'none' as const])))} />
             <Button key="unfold-all" plain dimColor label="expand all" onPress={() => update($, foldA, () => Object.fromEntries(active.map(s => [s.id, 'all' as const])))} />
             {idle.length ? <Button key="archive-idle" plain dimColor label={`✕ idle (${idle.length})`} onPress={() => archiveAll($, idle)} /> : null}
