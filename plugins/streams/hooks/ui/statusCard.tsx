@@ -25,7 +25,7 @@ export type Card = {
 export function accountRow(a: Card['account'], now: number): { state: string; detail: string; hint: string; isLive: boolean } | undefined {
   if (!a || !a.at) return undefined
   const day = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
-  if (a.paidUntil > now) return a.status === 'past_due' ? { state: 'payment failed', detail: `paid until ${day(a.paidUntil)}`, hint: '/streams billing', isLive: true } : { state: 'paid', detail: `until ${day(a.paidUntil)}`, hint: '/streams account', isLive: true }
+  if (a.paidUntil > now) return a.status === 'payment_failed' ? { state: 'payment failed', detail: `paid until ${day(a.paidUntil)}`, hint: '/streams billing', isLive: true } : { state: 'paid', detail: `until ${day(a.paidUntil)}`, hint: '/streams account', isLive: true }
   if (a.trialEndsAt > now) return { state: 'trial', detail: `ends ${day(a.trialEndsAt)}`, hint: '/streams account', isLive: true }
   return { state: 'ended', detail: 'phone off, the free mod keeps working', hint: '/streams billing', isLive: false }
 }

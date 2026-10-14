@@ -945,7 +945,7 @@ async function phoneCommand($: $, c: PhoneCommand, from?: Device): Promise<Omit<
 let connecting: { relay: string; device: string; until: number; every: number; nextAt: number } | undefined
 
 /** What `/streams phone` says before this account has signed in to Streams. */
-export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run `/streams connect` to sign in with GitHub or email (3-day free trial).'
+export const NOT_CONNECTED = 'Streams on your phone needs a Streams account: run `/streams connect` to sign in with GitHub or email (free trial).'
 export const SIGNING_IN = 'Waiting for you to finish signing in to Streams in your browser. Run this again once you have.'
 
 /** What a command says without a token: to sign in, or, while a `/streams connect` is under way, to finish doing so. */
@@ -1247,7 +1247,7 @@ export function wireRemote(on: On, opts: RemoteOptions) {
                 <Text bold color="#6ff0c0">On your phone too: </Text>
                 <Text dimColor>Streams Remote puts every session on your phone. </Text>
                 <Text bold>/streams connect</Text>
-                <Text dimColor> starts a 3-day free trial.</Text>
+                <Text dimColor> starts a free trial.</Text>
               </Text>
             ) : null}
             <Text key="w3" dimColor>
