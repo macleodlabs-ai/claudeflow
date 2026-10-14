@@ -6,9 +6,9 @@
 
 <p>
   <a href="LICENSE"><img alt="License: Proprietary" src="https://img.shields.io/badge/license-proprietary-7c83ff?style=for-the-badge"></a>
-  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.0.10" src="https://img.shields.io/badge/version-2.0.10-5fe4f2?style=for-the-badge"></a>
+  <a href="https://github.com/macleodlabs-ai/claudeflow/releases"><img alt="Version 2.1.0" src="https://img.shields.io/badge/version-2.1.0-5fe4f2?style=for-the-badge"></a>
   <img alt="Claude Code 2.1.287+" src="https://img.shields.io/badge/Claude%20Code-2.1.287%2B-b9a2ff?style=for-the-badge">
-  <img alt="Tests 291 passing" src="https://img.shields.io/badge/tests-291%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
+  <img alt="Tests 297 passing" src="https://img.shields.io/badge/tests-297%20passing-2fd67b?style=for-the-badge&logo=checkmarx&logoColor=white">
 </p>
 <p>
   <a href="#-install"><img alt="Install: /plugin marketplace add macleodlabs-ai/claudeflow" src="https://img.shields.io/badge/%2Fplugin%20marketplace%20add-macleodlabs--ai%2Fclaudeflow-070a1f?style=for-the-badge&logo=gnubash&logoColor=white&labelColor=7c83ff"></a>
@@ -213,6 +213,8 @@ claude --plugin-dir ./claudeflow/plugins/streams
 | `/stream <name>` | Focus one stream; others fold to stubs |
 | `/stream off` | Show every stream again |
 | `/stream move <name>` | Refile the last prompt, and everything after it, under another stream (created if new) when it was sorted wrongly |
+| `/stream merge <from> <into>` | Fold a whole stream into another: its rows, transcript lines and agents |
+| `/stream undo` | Put back the last merge exactly |
 | `/stream` | List streams with their summaries |
 | `/streams import` | List this project's past sessions |
 | `/streams import <id>` | File a past session into streams (re-importing replaces, never duplicates) |
@@ -262,6 +264,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 | Setting | Default | Description |
 | --- | :---: | --- |
 | `autoArchiveHours` | `24` | A finished stream (by its status, or found finished by the completion check) with no activity for this many hours archives itself. It stays under `▸ archived` in the pane, and a restored one stays until it has been active again. Never a running, waiting, looping or failed stream. `0`: off. |
+| `streamGrouping` | `broad` | How readily a prompt starts a new stream. `broad`: one stream per larger goal (a project, a release), taking in its fixes and follow-ups. `balanced`: a goal and closely related work. `fine`: one stream per task. |
 | `chatStyle` | `full` | How the pane draws a stream's chat, in its own view and in each card's recent rows: `full`, as the session draws it, with markdown, syntax-highlighted commands and file contents, and edits as coloured diffs; or `compact`, one line per row. The `◉ full ○ compact` switch on a stream's header or any card's header changes it for the session. |
 | `completionCheck` | `true` | Streams that show WAITING or stalled are sent to Haiku in one small call (when the session starts, after a turn ends while idle, when the status card opens, and for any stuck 5 minutes). One it finds finished shows DONE with `checked ✓` and the reason, in the terminal, the pane and on the phone. A stream is asked again only after something new happens in it; with nothing waiting or stalled, no call is made. |
 | `diagnostics` | `false` | Writes `debug.json` into the plugin folder every few seconds: what the pane last drew, rows it could not place, and the last background error. Turn on only when troubleshooting. |
@@ -280,7 +283,7 @@ Settings live in `/config` under **streams**, or in `settings.json`:
 
 | Part | Where | Check |
 | --- | --- | --- |
-| The streams mod | `plugins/streams` | `claude plugin test .` (291 tests) and `claude plugin validate --strict .` |
+| The streams mod | `plugins/streams` | `claude plugin test .` (297 tests) and `claude plugin validate --strict .` |
 
 ---
 
