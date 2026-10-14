@@ -150,6 +150,8 @@ export type Pulse = {
   liveAgents: number
   inflight: number
   outcome?: 'answer' | 'aborted' | 'refusal' | 'error'
+  /** A turn has run in the stream, or it has a row other than a prompt sent mid-turn, or an agent. Left out, it has. */
+  hasRun?: boolean
 }
 
 /** One heartbeat's verdict. A running tool (a long build) earns a longer silence before it counts as stalled. */
@@ -159,6 +161,8 @@ export const healthOf = (p: Pulse): Health => {
     return quiet > (p.inflight > 0 ? STALL_IN_TOOL_MS : STALL_MS) ? 'stalled' : 'running'
   }
   if (p.outcome === 'error' || p.outcome === 'refusal') return 'error'
+  // DONE is a turn that finished: a stream holding only a prompt sent mid-turn has not run yet.
+  if (p.hasRun === false) return 'idle'
   return quiet < DONE_MS ? 'done' : 'idle'
 }
 

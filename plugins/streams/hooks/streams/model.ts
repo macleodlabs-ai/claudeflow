@@ -64,6 +64,12 @@ function healthsOf(f: Facts, streams: readonly Stream[]): Record<string, Health>
         liveAgents: running.filter(a => a.streamId === s.id).length,
         inflight: f.inflight[s.id] ?? 0,
         outcome: f.outcome[s.id],
+        hasRun:
+          s.startedAt !== undefined ||
+          f.outcome[s.id] !== undefined ||
+          // Rows `q:` are prompts sent mid-turn (routing.ts), filed before any turn ran for them.
+          f.rows.some(r => r.streamId === s.id && !r.id.startsWith('q:')) ||
+          Object.values(f.agents).some(a => a.streamId === s.id),
       })),
     ]),
   )

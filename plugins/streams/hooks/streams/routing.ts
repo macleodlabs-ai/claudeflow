@@ -209,7 +209,7 @@ export function wireRouting(on: On) {
       await touch($, id, s => ({ rows: s.rows + 1 }))
     } else {
       await update($, currentA, () => id)
-      await touch($, id)
+      await touch($, id, s => (s.startedAt === undefined ? { startedAt: s.lastAt } : {}))
     }
     return next(text === e.text ? e : { ...e, text })
   }).catch(($, e, next) => next(e))

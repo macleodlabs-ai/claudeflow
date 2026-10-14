@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import type { Stream } from '../types'
+import type { Stream, StreamRow } from '../types'
 import { isNewer, manifestPathOf, pluginsDirOf, updatesOf } from '../hooks/updates/versions'
 import { PHONE_ROWS, accountOf, commandOf, permissionSummary, snapshotOf, type SnapshotInput } from '../hooks/remote/snapshot'
 import { snapshotKey } from '../hooks/remote/link'
@@ -1447,5 +1447,22 @@ describe('the update button', () => {
     expect(ran.some(c => c.endsWith('plugin update streams@m'))).toBe(true)
     await clock.advance(500)
     expect(reloads).toBe(1)
+  })
+})
+
+// Seen live: a prompt sent while another turn ran made its stream at once, and that stream read DONE (green ✓) before
+// anything had happened in it. DONE is a turn that finished; a stream nothing has run in yet is not done.
+describe('a stream nothing has run in yet', () => {
+  const facts = (rows: Facts['rows'], outcome: Facts['outcome'] = {}): Facts => ({ busy: true, current: 'other', agents: {}, inflight: {}, outcome, rows, loops: {}, workflows: {}, verdicts: {}, now: 1_000 })
+  const streams = [{ id: 'queued', name: 'queued', summary: '', createdAt: 900, lastAt: 900, rows: 0, agents: 0, loops: 0 }] as Stream[]
+  const prompt = { id: 'q:900', streamId: 'queued', kind: 'prompt', text: 'fix the sticky error', at: 900 } as StreamRow
+  test('is not DONE while it holds only a prompt sent mid-turn', () => {
+    expect(streamsNow(facts([]), streams).health.queued).toBe('idle')
+    expect(streamsNow(facts([prompt]), streams).health.queued).toBe('idle')
+  })
+  test('is DONE once a turn in it has answered', () => {
+    const reply = { id: 'r', streamId: 'queued', kind: 'reply', text: 'Fixed.', at: 950 } as StreamRow
+    expect(streamsNow(facts([prompt, reply]), streams).health.queued).toBe('done')
+    expect(streamsNow(facts([prompt], { queued: 'answer' }), streams).health.queued).toBe('done')
   })
 })
