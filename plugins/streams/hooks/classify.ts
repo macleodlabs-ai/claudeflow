@@ -75,6 +75,33 @@ A stream marked finished is done: use it only when the message plainly reopens t
 after a finished "repo setup" stream, "add badges to the README" is new work, not more repo setup.
 When unsure between a finished stream and a new one, start a new one.`
 
+const REPLY_FORMAT = `Reply with JSON only, one of:
+{"stream":"<existing id>"}
+{"new":"<2-4 word name>","summary":"<one-line summary>"}`
+
+/** `streamGrouping` broad (the default): a stream is a larger goal, and related work joins it. */
+export const BROAD_SYSTEM = `You sort a developer's messages to a coding agent into workstreams.
+A workstream is a larger goal: a project, a release or an initiative ("launch the billing service", "checkout redesign"),
+taking in its features, fixes, questions and follow-ups.
+${REPLY_FORMAT}
+Use an existing stream whenever the message serves its larger goal, even when that stream is finished: a bug found after
+a launch belongs to the launch, and a README change for a product belongs to that product's stream.
+Start a new stream only for work clearly unrelated to every existing one, and name it for its larger goal, not the task.`
+
+/** `streamGrouping` balanced: a goal and the work closely related to it. */
+export const BALANCED_SYSTEM = `You sort a developer's messages to a coding agent into workstreams.
+A workstream is one goal and the work closely related to it: its fixes, follow-ups and questions.
+${REPLY_FORMAT}
+Use an existing stream when the message continues it, or is closely related work on the same feature or area.
+A finished stream takes a message that reopens or extends its goal; new work unrelated to its goal starts a new stream.
+When unsure, use the closest active stream.`
+
+/** How readily a prompt starts a new stream (the `streamGrouping` setting). */
+export type Grouping = 'broad' | 'balanced' | 'fine'
+export const groupingOf = (v: unknown): Grouping => (v === 'fine' || v === 'balanced' ? v : 'broad')
+/** The sorter's instructions for a grouping: fine is SYSTEM, one goal per stream. */
+export const systemFor = (g: Grouping): string => (g === 'fine' ? SYSTEM : g === 'balanced' ? BALANCED_SYSTEM : BROAD_SYSTEM)
+
 /** A stream idle this long, or one whose work is done, is offered to the classifier as finished. */
 export const FINISHED_MS = 30 * 60_000
 
