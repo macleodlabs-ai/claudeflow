@@ -51,6 +51,7 @@ export function statusCard(ui: ElementTable, c: Card, act: { close: () => unknow
         </Text>
         <Text dimColor>· ctrl+x tab, then ↑↓ scroll · q close</Text>
         <Box flexGrow={1} />
+        {c.version ? <Text dimColor>{`v${c.version}`}</Text> : null}
         <Button key="status-close" plain dimColor label="✕ close" hotkey="q" onPress={act.close} />
       </Box>
       <Box key="st-head">
