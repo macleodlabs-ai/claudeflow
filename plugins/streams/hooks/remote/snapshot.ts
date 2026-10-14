@@ -142,6 +142,7 @@ export type PasskeyAssertion = { authenticatorData: string; clientDataJSON: stri
 /**
  * Why a command was or was not done, or how a held prompt ended. `allowed`, `denied`, `chosen`, `answered on Mac`,
  * `moved to Mac` (nobody answered, so the terminal asks) and `chose recommended` also answer a late tap.
+ * `unknown command` and `command failed`: a slash command sent from the phone; the phone names it from what it sent.
  */
 export type AckWhy =
   | 'allowed'
@@ -155,7 +156,9 @@ export type AckWhy =
   | 'file missing'
   | 'read only'
   | 'no such stream'
-const ACK_WHY: readonly string[] = ['allowed', 'denied', 'chosen', 'answered on Mac', 'moved to Mac', 'chose recommended', 'passkey not verified', 'unknown request', 'file missing', 'read only', 'no such stream']
+  | 'unknown command'
+  | 'command failed'
+const ACK_WHY: readonly string[] = ['allowed', 'denied', 'chosen', 'answered on Mac', 'moved to Mac', 'chose recommended', 'passkey not verified', 'unknown request', 'file missing', 'read only', 'no such stream', 'unknown command', 'command failed']
 
 /**
  * The session's answer to one command (session → device, sealed like a snapshot): definite feedback for the phone on

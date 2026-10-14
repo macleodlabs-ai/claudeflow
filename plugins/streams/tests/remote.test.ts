@@ -610,6 +610,31 @@ describe('the session on the relay', () => {
     }
   })
 
+  // Seen live: /reload-plugins typed on the phone came back as "Your computer couldn't do that". A slash command is
+  // not a prompt: it runs as the command, as typed on the computer, and a failure says why instead of a shrug.
+  test('a slash command sent from the phone runs as that command, not as a prompt, and a failure says why', OPTIONS, async ($, on) => {
+    submitted.length = 0
+    const ran: { command: string; args: string }[] = []
+    on('command.run', async (_$, e) => {
+      ran.push({ command: e.command, args: e.args })
+      if (e.command === 'boom') throw new Error('it broke')
+      return { text: 'Reloaded' }
+    })
+    on('command.list', async () => ({ value: ['reload-plugins', 'compact', 'boom'].map(name => ({ name, description: '', source: 'builtin' })) }) as never)
+    const { a, relay, clock, acked } = await withPhone($, on)
+    relay.from(a, a.command({ id: 'c1', kind: 'answer', streamId: '', text: ' /reload-plugins ' }))
+    relay.from(a, a.command({ id: 'c2', kind: 'answer', streamId: '', text: '/compact keep the plan' }))
+    relay.from(a, a.command({ id: 'c3', kind: 'answer', streamId: '', text: '/nope' }))
+    relay.from(a, a.command({ id: 'c4', kind: 'answer', streamId: '', text: '/boom' }))
+    await clock.advance(ACTIVE_POLL_MS)
+    await clock.advance(ACTIVE_POLL_MS)
+    expect(ran).toEqual([{ command: 'reload-plugins', args: '' }, { command: 'compact', args: 'keep the plan' }, { command: 'boom', args: '' }])
+    expect(submitted).toEqual([])
+    expect(acked.find(x => x.id === 'c1')).toMatchObject({ ok: true })
+    expect(acked.find(x => x.id === 'c3')).toMatchObject({ ok: false, why: 'unknown command' })
+    expect(acked.find(x => x.id === 'c4')).toMatchObject({ ok: false, why: 'command failed' })
+  })
+
   test('a photo sent in chunks is saved on the Mac and the prompt names its path, for Claude to read', OPTIONS, async ($, on) => {
     // A plugin's prompt cannot carry an image, so the file goes to disk and the prompt points at it.
     submitted.length = 0
